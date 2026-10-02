@@ -26,8 +26,6 @@ import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.NetWorkUtil
 import com.RobinNotBad.BiliClient.util.PerformanceManager
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
-import org.json.JSONException
-import org.json.JSONObject
 import java.io.IOException
 
 @SuppressLint("CustomSplashScreen")
@@ -59,6 +57,13 @@ class SplashActivity : Activity() {
         handler.removeCallbacks(typewriterRunnable)
     }
 
+    override fun onDestroy() {
+        // 打字机 Runnable 通过 handler 间接持有 Activity 并持续 postDelayed，
+        // 不随生命周期停止就会泄漏。这里统一停掉（等价于对方 onDestroy 里 cancel splashTimer）。
+        stopTypewriter()
+        super.onDestroy()
+    }
+
     override fun attachBaseContext(newBase: Context?) {
         super.attachBaseContext(BiliTerminal.getFitDisplayContext(newBase))
     }
@@ -79,27 +84,62 @@ class SplashActivity : Activity() {
         proceedSplashFlow()
     }
 
+    /**
+     * 本地是否还持有登录凭证。
+     *
+     * 判据用 Cookie 里的 SESSDATA：它是 Web 端唯一的身份凭证，只要它还在，就说明用户
+     * 仍然是"已登录"状态。刷新接口的返回值（false / 解析异常 / 服务端抖动 / 返回体缺 data）
+     * 都只能说明"这次问不到服务端"，不能证明凭证失效——这正是之前"一次网络波动就清空登录态、
+     * 强制用户重新登录"的根因。
+     */
+    private fun hasLocalSession(): Boolean {
+        val cookie = SharedPreferencesUtil.getString(SharedPreferencesUtil.cookies, "")
+        return NetWorkUtil.getInfoFromCookie("SESSDATA", cookie).isNotEmpty()
+    }
+
     @Throws(IOException::class)
     private fun checkCookieRefresh() {
+        // CookieRefreshApi.cookieInfo() 内部直接 `result.getJSONObject("data")`，
+        // 网络抖动、返回体缺 data、服务端 code != 0 都会抛异常。这类失败与"登录已失效"
+        // 无法从返回值区分，因此单独兜住它、跳过本次刷新检查，绝不清登录态。
+        val cookieInfo = try {
+            CookieRefreshApi.cookieInfo()
+        } catch (e: Exception) {
+            Log.e("Cookies", "cookieInfo 获取/解析失败，跳过本次刷新检查：${e.message}")
+            return
+        }
+
+        if (!cookieInfo.optBoolean("refresh")) return
+
+        Log.e("Cookies", "需要刷新")
+        if (SharedPreferencesUtil.getString(SharedPreferencesUtil.refresh_token, "") == "") {
+            Log.e("Cookies", "没有 refresh_token，跳过刷新")
+            return
+        }
+
         try {
-            val cookieInfo = CookieRefreshApi.cookieInfo()
-            if (cookieInfo.optBoolean("refresh")) {
-                Log.e("Cookies", "需要刷新")
-                if (SharedPreferencesUtil.getString(SharedPreferencesUtil.refresh_token, "") != "") {
-                    val correspondPath = CookieRefreshApi.getCorrespondPath(cookieInfo.getLong("timestamp"))
-                    Log.e("CorrespondPath", correspondPath)
-                    val refreshCsrf = CookieRefreshApi.getRefreshCsrf(correspondPath)
-                    Log.e("RefreshCsrf", refreshCsrf)
-                    if (CookieRefreshApi.refreshCookie(refreshCsrf)) {
-                        MsgUtil.showMsg("Cookies已刷新")
-                        AccountManager.saveCurrentAccount()
-                    } else {
-                        MsgUtil.showMsgLong("登录信息过期，请重新登录！")
-                        resetLogin()
-                    }
-                }
+            val correspondPath = CookieRefreshApi.getCorrespondPath(cookieInfo.getLong("timestamp"))
+            Log.e("CorrespondPath", correspondPath)
+            val refreshCsrf = CookieRefreshApi.getRefreshCsrf(correspondPath)
+            Log.e("RefreshCsrf", refreshCsrf)
+            if (CookieRefreshApi.refreshCookie(refreshCsrf)) {
+                MsgUtil.showMsg("Cookies已刷新")
+                AccountManager.saveCurrentAccount()
+                return
             }
-        } catch (e: JSONException) {
+            // 刷新返回 false 的全部来源——correspondPath / refresh_csrf 取空、confirm 接口
+            // code != 0、新 Cookie 缺 DedeUserID（此时 CookieRefreshApi 已回退旧 Cookie）——
+            // 都不是"凭证失效"，所以这里只记日志、保留登录态。
+            Log.e("Cookies", "Cookie 刷新未成功，保留本地登录态")
+        } catch (e: Exception) {
+            // 放宽到 Exception：原实现只接 JSONException，其余异常（IOException 等）会穿透到外层。
+            // 刷新流程里的任何异常都只代表这次刷新没成功，不应清登录态。
+            Log.e("Cookies", "Cookie 刷新异常，保留本地登录态：${e.message}")
+        }
+
+        // 只有本地连 SESSDATA 都没有了，才是明确意义上的"未登录/凭证失效"，
+        // 这时才需要提示并清空登录态引导用户重新登录。
+        if (!hasLocalSession()) {
             MsgUtil.showMsgLong("登录信息过期，请重新登录！")
             resetLogin()
         }
@@ -210,7 +250,9 @@ class SplashActivity : Activity() {
                     }
                     CenterThreadPool.run { AppInfoApi.check(this@SplashActivity) }
 
-                } catch (e: JSONException) {
+                } catch (e: Exception) {
+                    // 放宽到 Exception：原来只接 JSONException，其它异常会直接打断启动流程
+                    // （闪退或停在启动页）。任何失败都退化成进本地列表页，保证能进主界面。
                     stopTypewriter()
                     runOnUiThread { MsgUtil.err(e) }
                     val intent = Intent()

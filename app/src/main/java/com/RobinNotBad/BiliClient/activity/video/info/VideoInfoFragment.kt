@@ -121,6 +121,16 @@ class VideoInfoFragment : BaseFragment() {
     }
 
     private var videoInfo: VideoInfo? = null
+
+    /**
+     * 当前视频的播放数据（aid / cid / 清晰度 / 续播进度等）。
+     *
+     * 它在 [initView] 里由 [CenterThreadPool] 的**后台线程**赋值，而 [playClick] /
+     * [startDownloadFlow] 在**主线程**读取。没有 @Volatile 时两者之间没有 happens-before 边，
+     * 主线程可能读到非 null 但字段尚未写完的半成品对象（点播放拿到上一个视频 / 空 url）。
+     * 写方是"一次性发布完整对象"、读方只读不写，所以 @Volatile 足够，无需加锁。
+     */
+    @Volatile
     private var playerData: PlayerData? = null
     private var aid: Long = 0
     private var bvid: String? = null
@@ -135,6 +145,19 @@ class VideoInfoFragment : BaseFragment() {
     private var shakeAnimation: Animation? = null
     private var tripleActionRunnable: Runnable? = null
     private var isTripleInProgress = false
+
+    // 点赞/投币/三连的"请求进行中"标志。这三个接口都不是幂等的（重复投币会重复扣币、
+    // 重复点赞会撞 65006 把本地状态位改错），而按钮是可以被连点的，所以点击路径上必须互斥。
+    // 标志由主线程（点击）写、由子线程（请求结束的 finally）写、由主线程读，
+    // 跨线程可见性靠 @Volatile 保证；请求一结束就复位，用户不需要为下一次操作等待。
+    @Volatile
+    private var isLikeRequesting = false
+
+    @Volatile
+    private var isCoinRequesting = false
+
+    @Volatile
+    private var isTripleRequesting = false
 
     companion object {
         @JvmStatic
@@ -278,10 +301,18 @@ class VideoInfoFragment : BaseFragment() {
 
         CenterThreadPool.run {
             try {
-                playerData = videoInfo!!.toPlayerData(0)
-                PlayerApi.getVideo(playerData!!, false)
-                if (playerData == null) return@run
-                HistoryApi.reportHistory(videoInfo!!.aid, playerData!!.cidHistory, (playerData!!.progress / 1000).toLong())
+                // 用局部变量完成"装配"，最后再整体发布给 playerData 字段：
+                // 这样主线程读到的 playerData 要么是 null（还显示"加载中"），要么是 aid/cid
+                // 都已经填好、PlayerApi.getVideo 也已经补全 url/qn/续播进度的完整对象，
+                // 不会出现"读到上一个视频的数据"。原来的 `playerData = ...; playerData!!; if (playerData == null)`
+                // 是自相矛盾的死代码，这里一并去掉。
+                val data = videoInfo!!.toPlayerData(0)
+                PlayerApi.getVideo(data, false)
+                // progress 为 0 说明服务端没有这个分P的观看记录，此时按 cidHistory 上报 0
+                // 会把服务端该分P的续播进度覆盖掉，所以跳过上报。
+                if (data.progress > 0)
+                    HistoryApi.reportHistory(videoInfo!!.aid, data.cidHistory, (data.progress / 1000).toLong())
+                playerData = data
             } catch (e: Exception) {
                 MsgUtil.err(e)
             }
@@ -350,12 +381,20 @@ class VideoInfoFragment : BaseFragment() {
         }
 
         rootview.findViewById<View>(R.id.layout_like).setOnClickListener {
+            // 请求进行中时忽略重复点击：点赞接口不幂等，弱网下用户连点会在上一次返回前发出多个请求，
+            // 后来的 "65006 已经点赞过了" 分支还会把本地状态位改掉，导致图标与实际状态不一致。
+            // 复位必须放在 finally，否则任何一条异常路径都会让按钮永久失效。
+            if (isLikeRequesting) {
+                MsgUtil.showMsg("正在处理中…")
+                return@setOnClickListener
+            }
+            isLikeRequesting = true
             CenterThreadPool.run {
-                if (SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0) == 0L) {
-                    MsgUtil.showMsg("还没有登录喵~")
-                    return@run
-                }
                 try {
+                    if (SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0) == 0L) {
+                        MsgUtil.showMsg("还没有登录喵~")
+                        return@run
+                    }
                     val result = LikeCoinFavApi.like(videoInfo!!.aid, if (videoInfo!!.stats.liked) 2 else 1)
                     if (result == 0) {
                         videoInfo!!.stats.liked = !videoInfo!!.stats.liked
@@ -381,18 +420,26 @@ class VideoInfoFragment : BaseFragment() {
                     }
                 } catch (e: Exception) {
                     MsgUtil.err(e)
+                } finally {
+                    isLikeRequesting = false
                 }
             }
         }
 
         rootview.findViewById<View>(R.id.layout_coin).setOnClickListener {
+            // 同点赞：投币接口不幂等，连点会真的重复扣币，必须做进行中互斥（复位同样放 finally）。
+            if (isCoinRequesting) {
+                MsgUtil.showMsg("正在处理中…")
+                return@setOnClickListener
+            }
+            isCoinRequesting = true
             CenterThreadPool.run {
-                if (SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0) == 0L) {
-                    MsgUtil.showMsg("还没有登录喵~")
-                    return@run
-                }
-                if (videoInfo!!.stats.coined < videoInfo!!.stats.coin_limit) {
-                    try {
+                try {
+                    if (SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0) == 0L) {
+                        MsgUtil.showMsg("还没有登录喵~")
+                        return@run
+                    }
+                    if (videoInfo!!.stats.coined < videoInfo!!.stats.coin_limit) {
                         val result = LikeCoinFavApi.coin(videoInfo!!.aid, 1)
                         if (result == 0) {
                             if (++coinAdd <= 2) videoInfo!!.stats.coined++
@@ -410,11 +457,13 @@ class VideoInfoFragment : BaseFragment() {
                             }
                             MsgUtil.showMsg(msg)
                         }
-                    } catch (e: Exception) {
-                        MsgUtil.err(e)
+                    } else {
+                        MsgUtil.showMsg("投币数量到达上限")
                     }
-                } else {
-                    MsgUtil.showMsg("投币数量到达上限")
+                } catch (e: Exception) {
+                    MsgUtil.err(e)
+                } finally {
+                    isCoinRequesting = false
                 }
             }
         }
@@ -519,19 +568,27 @@ class VideoInfoFragment : BaseFragment() {
                     coin.clearAnimation()
                     fav.clearAnimation()
 
-                    CenterThreadPool.run {
-                        try {
-                            val code = LikeCoinFavApi.triple(aid)
-                            if (code == 0) {
-                                runOnUiThread {
-                                    coin.setImageResource(R.drawable.icon_coin_1)
-                                    like.setImageResource(R.drawable.icon_like_1)
-                                    fav.setImageResource(R.drawable.icon_fav_1)
-                                }
-                                MsgUtil.showMsg("三连成功")
-                            } else MsgUtil.showMsg("三连失败，错误码：" + code)
-                        } catch (e: Exception) {
-                            MsgUtil.err("三连失败", e)
+                    // 三连 = 一键点赞 + 投币（都不幂等）。延迟任务在一次长按内只会触发一次，
+                    // 但用户能在上一次请求返回前再次长按，所以这里仍要做进行中互斥；
+                    // 注意不能复用 isTripleInProgress——它在长按按下时就已置 true，会把请求本身挡掉。
+                    if (!isTripleRequesting) {
+                        isTripleRequesting = true
+                        CenterThreadPool.run {
+                            try {
+                                val code = LikeCoinFavApi.triple(aid)
+                                if (code == 0) {
+                                    runOnUiThread {
+                                        coin.setImageResource(R.drawable.icon_coin_1)
+                                        like.setImageResource(R.drawable.icon_like_1)
+                                        fav.setImageResource(R.drawable.icon_fav_1)
+                                    }
+                                    MsgUtil.showMsg("三连成功")
+                                } else MsgUtil.showMsg("三连失败，错误码：" + code)
+                            } catch (e: Exception) {
+                                MsgUtil.err("三连失败", e)
+                            } finally {
+                                isTripleRequesting = false
+                            }
                         }
                     }
                 }
@@ -613,12 +670,20 @@ class VideoInfoFragment : BaseFragment() {
             return
         }
 
-        Glide.get(getAppContext()).clearMemory()
-        if (videoInfo!!.pagenames.size == 1) PlayerApi.startGettingUrl(playerData!!)
-        else
-            startActivity(Intent(requireContext(), MultiPageActivity::class.java).putExtra("data", playerData))
+        // playerData 由后台线程的历史上报任务赋值，任务未完成时它是 null，原来直接 !! 会 NPE；
+        // 再用 aid 校验一次，确保交给播放器的不是"上一个视频"残留的数据。
+        val data = playerData
+        if (data == null || data.aid != videoInfo!!.aid) {
+            MsgUtil.showMsg("视频信息还在加载中")
+            return
+        }
 
-        playerData!!.timeStamp = 0
+        Glide.get(getAppContext()).clearMemory()
+        if (videoInfo!!.pagenames.size == 1) PlayerApi.startGettingUrl(data)
+        else
+            startActivity(Intent(requireContext(), MultiPageActivity::class.java).putExtra("data", data))
+
+        data.timeStamp = 0
     }
 
     private fun downloadClick() {
@@ -641,10 +706,17 @@ class VideoInfoFragment : BaseFragment() {
             MsgUtil.showMsg(if (fileSign.exists()) "已在下载队列\n如有异常，长按可清空文件" else "已下载完成")
         } else {
             if (videoInfo!!.pagenames.size > 1) {
+                // 与 playClick 同理：多P下载要把当前分P数据交给 MultiPageActivity，
+                // 后台任务未就绪时 playerData 为 null，原来直接塞进去会 NullPointerException。
+                val data = playerData
+                if (data == null || data.aid != videoInfo!!.aid) {
+                    MsgUtil.showMsg("视频信息还在加载中")
+                    return
+                }
                 val intent = Intent()
                 intent.setClass(requireContext(), MultiPageActivity::class.java)
                     .putExtra("download", 1)
-                    .putExtra("data", playerData)
+                    .putExtra("data", data)
                 startActivity(intent)
             } else {
                 startActivity(Intent(requireContext(), QualityChooserActivity::class.java)

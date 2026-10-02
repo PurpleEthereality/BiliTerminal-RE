@@ -20,6 +20,10 @@ open class RefreshMainActivity : InstanceActivity() {
     /** 列表底部"正在加载…／没有更多了"状态条（布局里的 loadMoreTip，不在列表项内） */
     private var loadMoreTip: TextView? = null
     var listener: OnLoadMoreListener? = null
+    // @Volatile：子类在 CenterThreadPool 后台线程写（如 DynamicActivity 的翻页回调），
+    // 滚动监听却在主线程读，两者没有 happens-before 边，主线程可能长期读到陈旧的 false，
+    // 表现为"到底后仍继续翻页"或"不显示『没有更多了』"。
+    @Volatile
     var bottom: Boolean = false
     var page: Int = 1
     var lastLoadTimestamp: Long = 0

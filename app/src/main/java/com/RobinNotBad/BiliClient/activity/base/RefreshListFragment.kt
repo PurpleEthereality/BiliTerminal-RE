@@ -21,6 +21,16 @@ open class RefreshListFragment : BaseFragment() {
     lateinit var recyclerView: RecyclerView
     var emptyView: TextView? = null
     var listener: OnLoadMoreListener? = null
+
+    /**
+     * 是否已到列表底部（没有更多数据）。
+     *
+     * 子类在网络回调（[com.RobinNotBad.BiliClient.util.CenterThreadPool] 的后台线程）里赋值，
+     * 而 [onViewCreated] 注册的滚动监听在**主线程**读它来决定要不要继续翻页。普通 `Boolean`
+     * 字段没有 happens-before 边，主线程可能长期读到陈旧的 false，表现为"到底了还无限翻页"。
+     * 故必须 @Volatile 保证可见性（与 RefreshListActivity.bottom 保持一致）。
+     */
+    @Volatile
     var bottom: Boolean = false
     var page: Int = 1
     var lastLoadTimestamp: Long = 0
