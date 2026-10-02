@@ -108,6 +108,39 @@ jobs:
       - name: 构建签名发行 APK
         run: ./gradlew :app:assembleRelease
 
+      # 发布说明与 Release 附件里都附上每个 APK 的 MD5，方便用户核对下载完整性 / 确认包没被换过。
+      # 上游也只在部分版本提供过 MD5 表（见 docs/review/upstream-fork-audit.md §五 E1）。
+      - name: 生成 APK 校验值（MD5）
+        id: md5
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(app/build/outputs/apk/release/*.apk)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::没有找到任何 release APK"
+            exit 1
+          fi
+          out_dir=app/build/outputs/apk/release
+          : > "$out_dir/md5sums.txt"
+          sums=""
+          for f in "${files[@]}"; do
+            sum=$(md5sum "$f" | cut -d' ' -f1)
+            size=$(stat -c%s "$f")
+            name=$(basename "$f")
+            # md5sums.txt 用标准的 `sum  filename` 两列格式，用户在 APK 同目录下
+            # 直接 `md5sum -c md5sums.txt` 就能校验；尺寸只在发布说明里展示。
+            printf '%s  %s\n' "$sum" "$name" >> "$out_dir/md5sums.txt"
+            echo "$name = $sum ($size bytes)"
+            sums="${sums}${sum}  ${name}  (${size} 字节)"$'\n'
+          done
+          echo "--- md5sums.txt ---"
+          cat "$out_dir/md5sums.txt"
+          {
+            echo "sums<<MD5_EOF"
+            printf '%s' "$sums"
+            echo "MD5_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: 上传 APK 到 artifact
         uses: actions/upload-artifact@v4
         with:
@@ -125,6 +158,7 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           INPUT_TAG: ${{ inputs.tag }}
           INPUT_BODY: ${{ inputs.release_body }}
+          MD5_SUMS: ${{ steps.md5.outputs.sums }}
         run: |
           if [ "$EVENT_NAME" = "push" ]; then
             tag="$REF_NAME"
@@ -132,18 +166,34 @@ jobs:
             tag="$INPUT_TAG"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          # APK 校验值区块。Release 附件里另有一份标准格式的 md5sums.txt，两条路都留着，
+          # 避免 GitHub 在 generate_release_notes 模式下改写 body 时把它弄丢。
+          # 注意 $MD5_SUMS 来自 $GITHUB_OUTPUT，末尾不带换行，这里必须自己补一个，
+          # 否则收尾的 ``` 会粘到最后一行校验值后面。
+          md5_section=$(printf '### APK 校验值（MD5）\n\n```\n%s\n```\n' "$MD5_SUMS")
+
+          if [ -n "$INPUT_BODY" ]; then
+            final_body=$(printf '%s\n\n%s' "$INPUT_BODY" "$md5_section")
+          else
+            final_body="$md5_section"
+          fi
+
           # 单独给出 has_body 供下游判断，不再用 "inputs.release_body == ''" 表达分支
           # —— push 事件下 inputs.* 恒为空，那种写法只是碰巧算出期望结果。
+          # 这里 has_body 现在表示"body 是否由用户提供"，用于决定要不要让 GitHub 自动补 commits 摘要；
+          # 自动补时 GitHub 会把我们给的 body 前置到自动生成的说明前面。
           if [ -n "$INPUT_BODY" ]; then
-            {
-              echo "has_body=true"
-              echo "body<<RELEASE_BODY_EOF"
-              printf '%s\n' "$INPUT_BODY"
-              echo "RELEASE_BODY_EOF"
-            } >> "$GITHUB_OUTPUT"
+            echo "has_body=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_body=false" >> "$GITHUB_OUTPUT"
           fi
+          {
+            echo "body<<RELEASE_BODY_EOF"
+            printf '%s\n' "$final_body"
+            echo "RELEASE_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
           echo "DEBUG event=$EVENT_NAME tag=$tag has_body=$(grep '^has_body=' "$GITHUB_OUTPUT" | cut -d= -f2-)"
 
       - name: 创建 GitHub Release
@@ -156,7 +206,9 @@ jobs:
           # 未提供时用 generate_release_notes 自动生成 commits 摘要（同样是 Markdown）。
           body: ${{ steps.tag.outputs.body }}
           generate_release_notes: ${{ steps.tag.outputs.has_body != 'true' }}
-          files: app/build/outputs/apk/release/*.apk
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/release/md5sums.txt
           target_commitish: main
           draft: false
           prerelease: false
