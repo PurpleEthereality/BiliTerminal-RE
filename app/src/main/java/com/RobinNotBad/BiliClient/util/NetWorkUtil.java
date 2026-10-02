@@ -1,8 +1,5 @@
 package com.RobinNotBad.BiliClient.util;
 
-import android.annotation.SuppressLint;
-import android.os.Build;
-
 import androidx.annotation.NonNull;
 
 import org.json.JSONException;
@@ -21,15 +18,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.Inflater;
 
-import javax.net.ssl.SSLSocketFactory;
-import javax.net.ssl.X509TrustManager;
-
 import okhttp3.Dns;
+import okhttp3.HttpUrl;
 import okhttp3.Interceptor;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -55,7 +51,13 @@ public class NetWorkUtil {
         String cookies = cachedCookies;
         if (cookies == null) {
             cookies = SharedPreferencesUtil.getString(SharedPreferencesUtil.cookies, "");
-            cachedCookies = cookies;
+            // 只有 SharedPreferences 已就绪时才允许写缓存：webHeaders 的静态初始化可能
+            // 发生在 Application.onCreate 赋值 sharedPreferences 之前，此时读到的必然是
+            // 默认空串。若把它当成真实 Cookie 缓存下来，整个进程会一直误判为"未登录"，
+            // 直到下一次 Cookie 写入才恢复。
+            if (SharedPreferencesUtil.sharedPreferences != null) {
+                cachedCookies = cookies;
+            }
         }
         return cookies;
     }
@@ -109,10 +111,24 @@ public class NetWorkUtil {
                             if (request.url().host().equals("b23.tv") && !isSslRedirect && (handler = request.tag(RedirectHandler.class)) != null) {
                                 handler.handleRedirect(location);
                             } else {
+                                // 安全边界（审计 S1）：手动跟跳会把完整请求头（含登录 Cookie）带到新地址，
+                                // 因此 Location 必须解析成绝对地址并落在 B 站域名白名单内才允许跟随。
+                                // 被劫持/伪造的 302 再也无法把凭据引到任意主机：命中不了就原样返回这枚 3xx。
+                                HttpUrl target = request.url().resolve(location);
+                                if (target == null || !isBilibiliHost(target.host())) {
+                                    return response;
+                                }
+                                // 用 request tag 累计跳数，封死"白名单内互相跳转"构成的无限重定向环
+                                Integer hopsTag = request.tag(Integer.class);
+                                int hops = hopsTag != null ? hopsTag : 0;
+                                if (hops >= 5) {
+                                    return response;
+                                }
                                 // 手动跟进重定向前必须先关闭原响应，否则连接泄漏
                                 response.close();
                                 Request newRequest = request.newBuilder()
-                                        .url(location)
+                                        .url(target)
+                                        .tag(Integer.class, hops + 1)
                                         .build();
                                 return chain.proceed(newRequest);
                             }
@@ -128,32 +144,42 @@ public class NetWorkUtil {
         return INSTANCE.get();
     }
 
+    /**
+     * 本方法历史上在 Android 5.1 及以下会启用 trust-all 证书校验（信任任意自签证书）。
+     * 本项目 minSdk 24，`Build.VERSION.SDK_INT > 22` 恒成立，该分支永不执行；
+     * 但把它留在源码里等于给未来预留了一个"静默降级 TLS"的开关——一旦有人下调 minSdk
+     * 或在别处复制这段代码，登录 Cookie 就会立刻可被中间人截获。
+     * 所以收敛为无条件返回调用方传入的 builder（使用系统默认证书校验）。
+     * 方法签名保留：CustomGlideModule 与本类仍按此入口构造 OkHttpClient。
+     */
     public synchronized static OkHttpClient.Builder setOkHttpSsl(OkHttpClient.Builder okhttpBuilder) {
-        if (Build.VERSION.SDK_INT > 22) return okhttpBuilder;
-        try {
-            @SuppressLint("CustomX509TrustManager") final X509TrustManager trustAllCert =
-                    new X509TrustManager() {
-                        @SuppressLint("TrustAllX509TrustManager")
-                        @Override
-                        public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) {
-                        }
-
-                        @SuppressLint("TrustAllX509TrustManager")
-                        @Override
-                        public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) {
-                        }
-
-                        @Override
-                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-                            return new java.security.cert.X509Certificate[]{};
-                        }
-                    };
-            final SSLSocketFactory sslSocketFactory = new SSLSocketFactoryCompat(trustAllCert);
-            okhttpBuilder.sslSocketFactory(sslSocketFactory, trustAllCert);
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
         return okhttpBuilder;
+    }
+
+    /**
+     * akamai 镜像白名单（B 站 PCDN/直链会跳到这里）。
+     * 必须用精确主机名而不是 `endsWith(".akamaized.net")`：akamaized.net 是 Akamai 的共享域，
+     * 后缀放行等于允许任意第三方 akamaized.net 主机接到携带登录 Cookie 的跟跳请求。
+     */
+    private static final List<String> BILIBILI_AKAMAI_MIRROR_HOSTS = Arrays.asList(
+            "upos-sz-mirrorakam.akamaized.net",
+            "upos-hz-mirrorakam.akamaized.net");
+
+    /**
+     * 判断主机是否属于 B 站自有/可信域名。
+     * 供手动跟随重定向（本类拦截器）与 OpusApi 手动跟跳复用：
+     * 只有命中白名单才允许把带 Cookie 的请求发过去，否则一律停止跟随（fail-closed）。
+     * 注意 bilibili.cn 是本项目在对方白名单之外额外放行的 B 站自有域名。
+     */
+    public static boolean isBilibiliHost(String host) {
+        if (host == null) return false;
+        String h = host.toLowerCase(Locale.ROOT);
+        return h.equals("b23.tv")
+                || h.equals("bilibili.com") || h.endsWith(".bilibili.com")
+                || h.equals("bilibili.cn") || h.endsWith(".bilibili.cn")
+                || h.endsWith(".bilivideo.com")
+                || h.endsWith(".hdslb.com")
+                || BILIBILI_AKAMAI_MIRROR_HOSTS.contains(h);
     }
 
     public static JSONObject getJson(String url) throws IOException, JSONException {
@@ -399,7 +425,9 @@ public class NetWorkUtil {
             if (index == 0) continue;   //如果没有等号，跳过
 
             String key = newCookie.substring(0, index);    //key=
-            Logu.d("newCookie", newCookie);
+            // 只记录 Cookie 键名，绝不记录值：轮换后的 SESSDATA/bili_jct 等本身就是登录凭证，
+            // 写进日志等于把会话明文留在了设备与 logcat 里（审计 S2）
+            Logu.d("newCookie", newCookie.substring(0, Math.max(key.length() - 1, 0)));
 
             boolean added = false;
             for (int i = 0; i < oldCookies.size(); i++) {  //查找旧cookie表有没有
@@ -459,31 +487,46 @@ public class NetWorkUtil {
     }
 
     public static final String USER_AGENT_WEB = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36";
-    public static final ArrayList<String> webHeaders = new ArrayList<>() {{
-        add("Cookie");
-        add(getCachedCookies());
 
-        add("Origin");
-        add("https://www.bilibili.com");
+    /**
+     * 全局请求头快照。volatile + 每次整体替换（copy-on-write）：
+     * 原实现是 `static final ArrayList` 被 refreshHeaders() 原地 set(1, ...)，
+     * 而所有 API 都在多线程里按索引遍历它——读线程可能看到"改了一半"的表，
+     * 非 volatile 还会让它长期读到旧值（可见性问题）。改成 volatile 引用后，
+     * 读线程要么拿到完整旧快照、要么拿到完整新快照，且不需要加锁。
+     * 语义不变：全项目没有任何调用点原地修改该列表（唯一原地 set 就在 refreshHeaders）。
+     */
+    public static volatile ArrayList<String> webHeaders = buildWebHeaders();
 
-        add("Referer");
-        add("https://www.bilibili.com/");
+    /** 构造一份全新的请求头列表；每次调用返回独立对象，避免共享可变状态。 */
+    private static ArrayList<String> buildWebHeaders() {
+        ArrayList<String> headers = new ArrayList<>();
+        headers.add("Cookie");
+        headers.add(getCachedCookies());
 
-        add("User-Agent");
-        add(USER_AGENT_WEB);
+        headers.add("Origin");
+        headers.add("https://www.bilibili.com");
 
-        add("Sec-Ch-Ua");
-        add("\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"");
+        headers.add("Referer");
+        headers.add("https://www.bilibili.com/");
 
-        add("Sec-Ch-Ua-Platform");
-        add("\"Windows\"");
+        headers.add("User-Agent");
+        headers.add(USER_AGENT_WEB);
 
-        add("Sec-Ch-Ua-Mobile");
-        add("?0");
-    }};
+        headers.add("Sec-Ch-Ua");
+        headers.add("\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"");
+
+        headers.add("Sec-Ch-Ua-Platform");
+        headers.add("\"Windows\"");
+
+        headers.add("Sec-Ch-Ua-Mobile");
+        headers.add("?0");
+        return headers;
+    }
 
     public static void refreshHeaders() {
-        webHeaders.set(1, getCachedCookies());
+        // 整体替换而非原地 set：见 webHeaders 字段注释（并发读线程不能看到半成品表）
+        webHeaders = buildWebHeaders();
     }
 
     public static class FormData {
@@ -568,7 +611,12 @@ public class NetWorkUtil {
         try {
             byte[] buf = new byte[2048];
             while (!decompresser.finished()) {
+                // 数据被截断/损坏时，inflate 会恒返回 0、finished() 恒为 false 且不抛异常
+                // （外层 catch 兜不住），原写法就是 100% CPU 的死循环（审计 P15）。
+                // needsInput/needsDictionary 表示流已无法继续推进，直接跳出（此时返回的是已解出的部分数据）。
+                if (decompresser.needsInput() || decompresser.needsDictionary()) break;
                 int i = decompresser.inflate(buf);
+                if (i == 0) break;
                 out.write(buf, 0, i);
             }
             output = out.toByteArray();

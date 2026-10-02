@@ -65,7 +65,10 @@ public class SharedPreferencesUtil {
     }
 
     public static String getString(String key, String def) {
-        return sharedPreferences.getString(key, def);
+        // sharedPreferences 由 Application.onCreate 赋值，静态初始化或早期调用可能早于赋值，
+        // 直接解引用会 NPE。未就绪时返回调用方传入的默认值（BiliTerminal.kt 有 getString(key, null)
+        // 的调用点，故这里必须原样返回 def，不能擅自把 null 换成空串）。
+        return sharedPreferences != null ? sharedPreferences.getString(key, def) : def;
     }
 
     public static void putString(String key, String value) {
@@ -73,7 +76,8 @@ public class SharedPreferencesUtil {
     }
 
     public static int getInt(String key, int def) {
-        return sharedPreferences.getInt(key, def);
+        // 同 getString：sharedPreferences 未就绪时不能解引用，返回默认值（审计 P10）
+        return sharedPreferences != null ? sharedPreferences.getInt(key, def) : def;
     }
 
     public static void putInt(String key, int value) {
@@ -81,7 +85,8 @@ public class SharedPreferencesUtil {
     }
 
     public static long getLong(String key, long def) {
-        return sharedPreferences.getLong(key, def);
+        // 同 getString：sharedPreferences 未就绪时不能解引用，返回默认值（审计 P10）
+        return sharedPreferences != null ? sharedPreferences.getLong(key, def) : def;
     }
 
     public static void putLong(String key, long value) {
@@ -89,7 +94,8 @@ public class SharedPreferencesUtil {
     }
 
     public static boolean getBoolean(String key, boolean def) {
-        return sharedPreferences.getBoolean(key, def);
+        // 同 getString：sharedPreferences 未就绪时不能解引用，返回默认值（审计 P10）
+        return sharedPreferences != null ? sharedPreferences.getBoolean(key, def) : def;
     }
 
     public static void putBoolean(String key, boolean value) {
@@ -101,7 +107,8 @@ public class SharedPreferencesUtil {
     }
 
     public static float getFloat(String key, float def) {
-        return sharedPreferences.getFloat(key, def);
+        // 同 getString：sharedPreferences 未就绪时不能解引用，返回默认值（审计 P10）
+        return sharedPreferences != null ? sharedPreferences.getFloat(key, def) : def;
     }
 
     public static void removeValue(String key) {

@@ -82,11 +82,12 @@ public class CookieRefreshApi {
         JSONObject result = new JSONObject(Objects.requireNonNull(response.body()).string());
         if (result.getInt("code") == 0) {
             String refreshToken_new = result.getJSONObject("data").getString("refresh_token");
-            Logu.v("新的RefreshToken", refreshToken_new);
 
             String cookies_new = SharedPreferencesUtil.getString(SharedPreferencesUtil.cookies, "");
-            Logu.v("新的cookies", cookies_new);
 
+            // 绝不打印新的 refresh_token / 完整 Cookie：它们本身就是登录凭证，一旦进日志
+            // （logcat、崩溃上报、用户截图）就等于登录态失窃。排查需要时只记录长度这类非敏感信息（审计 S2）。
+            Logu.v("Cookie刷新", "refresh_token长度=" + refreshToken_new.length() + "，cookies长度=" + cookies_new.length());
 
             //使老的Cookie失效
             int confirmCode = new JSONObject(Objects.requireNonNull(NetWorkUtil.post("https://passport.bilibili.com/x/passport-login/web/confirm/refresh", "csrf=" + NetWorkUtil.getInfoFromCookie("bili_jct", cookies_new) + "&refresh_token=" + SharedPreferencesUtil.getString(SharedPreferencesUtil.refresh_token, ""), NetWorkUtil.webHeaders).body()).string()).getInt("code");

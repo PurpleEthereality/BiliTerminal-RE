@@ -24,6 +24,12 @@ public class Cookies {
     }
 
     public void set(String key, String value) {
+        // value 为 null 时必须移除该键而不是 put(null)：后续 toString() 用字符串拼接，
+        // put 进去会被拼成字面量 "key=null" 并污染整条 Cookie 串发给服务端（审计附带项）
+        if (value == null) {
+            cookieMap.remove(key);
+            return;
+        }
         cookieMap.put(key, value);
     }
 

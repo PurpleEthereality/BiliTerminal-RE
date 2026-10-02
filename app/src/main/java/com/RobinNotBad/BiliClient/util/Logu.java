@@ -68,7 +68,17 @@ public class Logu {
     }
 
     private static String getCaller() {
-        StackTraceElement caller = Thread.currentThread().getStackTrace()[4];
+        // 原来硬编码取 stack[4]，等于把"调用深度"写死：v(String) 与 v(String,String) 这类
+        // 重载深度不同，一旦深度变化就会取到上一层调用者甚至越界。改为从栈顶向下找
+        // 第一个不属于 Logu 的帧——那才是真正调用日志方法的业务代码。
+        StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+        StackTraceElement caller = stack[stack.length - 1];
+        for (int i = 3; i < stack.length; i++) {
+            if (!stack[i].getClassName().equals(Logu.class.getName())) {
+                caller = stack[i];
+                break;
+            }
+        }
         String name = caller.getClassName();
         int index = name.length();
         for (; index > 1; index--) {

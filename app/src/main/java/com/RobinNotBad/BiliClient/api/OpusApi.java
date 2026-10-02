@@ -16,6 +16,7 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.util.ArrayList;
 
+import okhttp3.HttpUrl;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 
@@ -44,8 +45,15 @@ public class OpusApi {
                 for (int i = 0; i < 5; i++) {
                     String location = response.header("Location");
                     if (location == null || location.isEmpty()) break;
+                    // Location 可能是 "//www.bilibili.com/..." 这种协议相对地址，直接丢给
+                    // Request.Builder.url 会抛 IllegalArgumentException。基于当前响应的 URL
+                    // 解析成绝对地址，既兼容协议相对/相对路径，也避免白名单比对上拿到 null host。
+                    HttpUrl target = response.request().url().resolve(location);
                     response.close();
-                    response = NetWorkUtil.getHtml(location);
+                    // 安全边界（审计 P9）：跟跳会带上完整登录 Cookie，目标必须落在 B 站域名白名单内；
+                    // 命中不了就放弃这次抓取，绝不把凭据带到任意主机。
+                    if (target == null || !NetWorkUtil.isBilibiliHost(target.host())) return opus;
+                    response = NetWorkUtil.getHtml(target.toString());
                 }
                 ResponseBody responseBody = response.body();
                 if (responseBody != null) {
