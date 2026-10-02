@@ -21,7 +21,8 @@ class SettingTerminalPlayerActivity : RefreshListActivity() {
             add(SettingSection("switch", "双击优先还原屏幕", SettingsKeys.PLAYER_DOUBLETAP_RESTORE_SCREEN, "双击时若处于横屏则优先退出全屏，而不是暂停", "false"))
             add(SettingSection("input_int", "快进快退秒数", SettingsKeys.PLAYER_DOUBLETAP_SEEK_SECONDS, "", "10"))
             add(SettingSection("switch", "洗脑循环", SettingsKeys.PLAYER_LOOP, "", "false"))
-            add(SettingSection("switch", "熄屏继续播放", SettingsKeys.PLAYER_BACKGROUND, "", "false"))
+            add(SettingSection("switch", "后台/熄屏继续播放", SettingsKeys.PLAYER_BACKGROUND,
+                "退到后台或熄屏时继续播放，并挂出通知栏遥控", "false"))
             add(SettingSection("switch", "默认横屏", SettingsKeys.PLAYER_AUTOLANDSCAPE, "", "false"))
             add(SettingSection("switch", "从历史位置播放", SettingsKeys.PLAYER_FROM_LAST,
                 getString(R.string.desc_fromlast),

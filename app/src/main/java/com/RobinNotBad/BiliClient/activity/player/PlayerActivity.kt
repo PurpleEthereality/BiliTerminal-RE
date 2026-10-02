@@ -60,6 +60,7 @@ import com.RobinNotBad.BiliClient.model.ViewPoint
 import com.RobinNotBad.BiliClient.player.DanmakuManager
 import com.RobinNotBad.BiliClient.player.PlayerSurfaceBinder
 import com.RobinNotBad.BiliClient.player.SurfaceTarget
+import com.RobinNotBad.BiliClient.service.PlaybackService
 import com.RobinNotBad.BiliClient.ui.widget.BatteryView
 import com.RobinNotBad.BiliClient.ui.widget.HighEnergyProgressBar
 import com.RobinNotBad.BiliClient.ui.widget.recycler.CustomLinearManager
@@ -1625,6 +1626,34 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         finish()
     }
 
+    //======= 后台播放服务（PlaybackService）状态桥 =======
+    // 播放器实例与全部播放状态仍只归本页持有，服务只是"保活 + 通知栏遥控"的壳。
+    // 下面这些方法会被服务每秒的定时线程调用，所以只允许读内存字段，
+    // 绝不能在服务线程里做 ijkPlayer.currentPosition 这类 JNI 调用（会取原生锁）。
+    // 需要动手作的一律 runOnUiThread 回主线程。
+
+    fun serviceGone(): Boolean = destroyed
+
+    fun serviceIsPlaying(): Boolean = isPlaying && isPrepared && !destroyed
+
+    fun serviceTitle(): String = videoTitle ?: ""
+
+    fun servicePositionMs(): Int = video_now
+
+    fun serviceDurationMs(): Int = video_all
+
+    fun serviceTogglePlay() {
+        runOnUiThread { if (!destroyed && !isFinishing) controlVideo() }
+    }
+
+    fun serviceStopPlayback() {
+        runOnUiThread { if (!isFinishing) finish() }
+    }
+
+    fun serviceReportNow() {
+        runOnUiThread { reportProgressNow(true, "后台服务兜底") }
+    }
+
     override fun onPause() {
         super.onPause()
         Logu.v("onPause")
@@ -1632,12 +1661,19 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         reportProgressNow(false, "切后台")
         if (!SharedPreferencesUtil.getBoolean("player_background", false)) {
             playerPause()
+        } else if (!isFinishing && isPrepared && !finishWatching) {
+            // 开了"后台/熄屏继续播放"：交给前台服务保活，同时挂出通知栏遥控。
+            // 起前台服务放在 onPause 是刻意的——此时应用还有可见界面，落在 Android 12
+            // 后台启动限制的豁免范围内；退到完全后台后再起会被平台直接拒绝。
+            PlaybackService.start(this, this)
         }
     }
 
     override fun onResume() {
         super.onResume()
         Logu.v("onResume")
+        // 回到前台后通知栏遥控没有存在意义，服务持有的弱引用也不再需要
+        PlaybackService.stop(this)
     }
 
     override fun onStop() {
@@ -1665,6 +1701,10 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         // 且只依赖内存里的 video_now（不碰 ijkPlayer 的 JNI 调用）。正常退出时会被去重拦掉。
         reportProgressNow(true, "销毁兜底")
         destroyed = true
+
+        // 无论哪种退出原因（用户返回、被系统回收、后台通知里点"关闭"），
+        // 后台播放服务与它的常驻通知都不能留存。
+        PlaybackService.stop(this)
 
         cancelAllTimers()
 

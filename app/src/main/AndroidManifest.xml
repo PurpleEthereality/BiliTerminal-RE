@@ -20,6 +20,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 14 起前台服务必须声明类型，播放保活走 mediaPlayback -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- UETool 调试悬浮窗所需的系统悬浮窗权限（仅 Debug 构建需要用户手动授权开启） -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
@@ -40,6 +42,9 @@
         tools:targetApi="m">
         <service android:name=".service.DownloadService"
             android:foregroundServiceType="dataSync"
+            android:enabled="true"/>
+        <service android:name=".service.PlaybackService"
+            android:foregroundServiceType="mediaPlayback"
             android:enabled="true"/>
 
         <provider android:name="androidx.core.content.FileProvider"
