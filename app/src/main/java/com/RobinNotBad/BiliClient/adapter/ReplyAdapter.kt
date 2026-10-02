@@ -44,6 +44,8 @@ import com.RobinNotBad.BiliClient.ui.appearance.ColorScheme
 import com.RobinNotBad.BiliClient.listener.OnItemClickListener
 import java.io.IOException
 import java.util.ArrayList
+import java.util.Collections
+import java.util.HashSet
 import org.json.JSONException
 
 @SuppressLint("ClickableViewAccessibility")
@@ -66,6 +68,11 @@ class ReplyAdapter(
     private val roundSmallPx = context.resources.getDimension(R.dimen.round_small).toInt()
     private val likeDrawable0 = ContextCompat.getDrawable(context, R.drawable.icon_reply_like0)
     private val likeDrawable1 = ContextCompat.getDrawable(context, R.drawable.icon_reply_like1)
+
+    // 点赞去重：记录正在请求中的评论 rpid。
+    // 不加这个的话用户连点会连发好几次点赞/取消请求，服务端按最后一次算而界面按每次算，
+    // 结果就是点赞状态和服务端对不上。用同步 Set 是因为它会被点击线程和请求线程同时访问。
+    private val likingRpids: MutableSet<Long> = Collections.synchronizedSet(HashSet<Long>())
 
     fun setOnSortSwitchListener(listener: OnItemClickListener) {
         this.listener = listener
@@ -303,49 +310,62 @@ class ReplyAdapter(
             }
 
             replyHolder.likeCount.setOnClickListener {
+                // 客户端去重：同一条评论的点赞请求还没回来之前，后续连点直接忽略，
+                // 否则会连发好几次点赞/取消，服务端只认最后一次，界面状态就和服务端对不上了
+                if (!likingRpids.add(reply.rpid)) {
+                    MsgUtil.showMsg("正在处理中")
+                    return@setOnClickListener
+                }
                 CenterThreadPool.run {
-                    if (SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0) == 0L) {
-                        (context as Activity).runOnUiThread { MsgUtil.showMsg("还没有登录喵~") }
-                        return@run
-                    }
-                    if (!reply.liked) {
-                        try {
-                            if (ReplyApi.likeReply(oid, reply.rpid, true) == 0) {
-                                reply.liked = true
-                                (context as Activity).runOnUiThread {
-                                    MsgUtil.showMsg("点赞成功")
-                                    replyHolder.likeCount.text = StringUtil.toWan((++reply.likeCount).toLong())
-                                    replyHolder.likeCount.setTextColor(ColorScheme.LIKE_COLOR)
-                                    replyHolder.likeCount.setCompoundDrawablesWithIntrinsicBounds(
-                                            likeDrawable1, null, null,
-                                            null)
-                                }
-                            } else
-                                (context as Activity).runOnUiThread { MsgUtil.showMsg("点赞失败") }
-                        } catch (e: IOException) {
-                            e.printStackTrace()
-                        } catch (e: JSONException) {
-                            e.printStackTrace()
+                    try {
+                        if (SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0) == 0L) {
+                            (context as Activity).runOnUiThread { MsgUtil.showMsg("还没有登录喵~") }
+                            return@run
                         }
-                    } else {
-                        try {
-                            if (ReplyApi.likeReply(oid, reply.rpid, false) == 0) {
-                                reply.liked = false
-                                (context as Activity).runOnUiThread {
-                                    MsgUtil.showMsg("取消成功")
-                                    replyHolder.likeCount.text = StringUtil.toWan((--reply.likeCount).toLong())
-                                    replyHolder.likeCount.setTextColor(Color.rgb(0xff, 0xff, 0xff))
-                                    replyHolder.likeCount.setCompoundDrawablesWithIntrinsicBounds(
-                                            likeDrawable0, null, null,
-                                            null)
-                                }
-                            } else
-                                (context as Activity).runOnUiThread { MsgUtil.showMsg("取消失败") }
-                        } catch (e: IOException) {
-                            e.printStackTrace()
-                        } catch (e: JSONException) {
-                            e.printStackTrace()
+                        if (!reply.liked) {
+                            try {
+                                // 点赞必须带上评论所属的评论区类型：动态/专栏的评论传 1 会被服务端拒绝
+                                if (ReplyApi.likeReply(oid, reply.rpid, replyType, true) == 0) {
+                                    reply.liked = true
+                                    (context as Activity).runOnUiThread {
+                                        MsgUtil.showMsg("点赞成功")
+                                        replyHolder.likeCount.text = StringUtil.toWan((++reply.likeCount).toLong())
+                                        replyHolder.likeCount.setTextColor(ColorScheme.LIKE_COLOR)
+                                        replyHolder.likeCount.setCompoundDrawablesWithIntrinsicBounds(
+                                                likeDrawable1, null, null,
+                                                null)
+                                    }
+                                } else
+                                    (context as Activity).runOnUiThread { MsgUtil.showMsg("点赞失败") }
+                            } catch (e: IOException) {
+                                e.printStackTrace()
+                            } catch (e: JSONException) {
+                                e.printStackTrace()
+                            }
+                        } else {
+                            try {
+                                if (ReplyApi.likeReply(oid, reply.rpid, replyType, false) == 0) {
+                                    reply.liked = false
+                                    (context as Activity).runOnUiThread {
+                                        MsgUtil.showMsg("取消成功")
+                                        replyHolder.likeCount.text = StringUtil.toWan((--reply.likeCount).toLong())
+                                        replyHolder.likeCount.setTextColor(Color.rgb(0xff, 0xff, 0xff))
+                                        replyHolder.likeCount.setCompoundDrawablesWithIntrinsicBounds(
+                                                likeDrawable0, null, null,
+                                                null)
+                                    }
+                                } else
+                                    (context as Activity).runOnUiThread { MsgUtil.showMsg("取消失败") }
+                            } catch (e: IOException) {
+                                e.printStackTrace()
+                            } catch (e: JSONException) {
+                                e.printStackTrace()
+                            }
                         }
+                    } finally {
+                        // 成功、失败、未登录、抛异常都必须摘掉标志，
+                        // 否则这条评论会永久卡在"正在处理中"，再也点不动
+                        likingRpids.remove(reply.rpid)
                     }
                 }
             }
@@ -364,10 +384,16 @@ class ReplyAdapter(
                                 try {
                                     val result = ReplyApi.deleteReply(oid, reply.rpid, replyType)
                                     if (result == 0) {
-                                        replyList.removeAt(realPosition)
                                         (context as Activity).runOnUiThread {
-                                            notifyItemRemoved(position)
-                                            notifyItemRangeChanged(position, replyList.size - position)
+                                            // 数据改动必须和 notify 一样在主线程执行：
+                                            // 原来 removeAt 在后台线程做、notify 在主线程做，
+                                            // 主线程读到的可能还是旧列表，会删错行甚至下标越界崩溃
+                                            if (realPosition >= 0 && realPosition < replyList.size) {
+                                                replyList.removeAt(realPosition)
+                                                notifyItemRemoved(position)
+                                                // adapter 第 0 位是"写评论"头部，所以剩余待刷新项数要 +1
+                                                notifyItemRangeChanged(position, replyList.size + 1 - position)
+                                            }
                                             longClickPosition = -1
                                             MsgUtil.showMsg("删除成功~")
                                             if (realPosition == 0 && isDetail) {

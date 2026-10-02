@@ -35,6 +35,23 @@ public class ReplyApi {
     public static final int REPLY_TYPE_DYNAMIC = 17;
     public static final String TOP_TIP = "[置顶]";
 
+    /** 投稿图片的业务标识（动态、专栏等走投稿流程的图片）。 */
+    public static final String BIZ_DYNAMIC = "new_dyn";
+    /** 评论图片的业务标识，评论带图必须用这个，用 new_dyn 会被服务端当成动态图处理。 */
+    public static final String BIZ_REPLY = "new_reply";
+
+    /** getRepliesLazy 返回码：请求或解析失败。 */
+    public static final int PAGE_ERROR = -1;
+    /** getRepliesLazy 返回码：正常拿到一页评论。 */
+    public static final int PAGE_OK = 0;
+    /** getRepliesLazy 返回码：已经到底了。 */
+    public static final int PAGE_END = 1;
+    /**
+     * getRepliesLazy 返回码：服务端返回了空页，但游标显示还没到底。
+     * 这不是"到底了"，上层应当带着原游标重试，否则这一段评论会被整段丢掉。
+     */
+    public static final int PAGE_EMPTY = 2;
+
     /**
      * @param originId       评论区id，为评论所属内容的id，例如视频aid
      * @param rpid           父评论的id，无父评论则为0
@@ -95,7 +112,8 @@ public class ReplyApi {
      * @param pagination 页
      * @param type       评论区类型
      * @param sort       排序方式
-     * @return 返回码（0=继续加载，1=到底了，-1=错误）与下一页的pagination
+     * @return 返回码（见 {@link #PAGE_ERROR}/{@link #PAGE_OK}/{@link #PAGE_END}/{@link #PAGE_EMPTY}）与下一页的pagination。
+     *         {@link #PAGE_EMPTY} 时第二个值是把原游标原样带回，调用方应带原游标重试而不是当成到底。
      */
     @NonNull
     public static Pair<Integer, String> getRepliesLazy(long oid, long rpid, String pagination, int type, int sort, List<Reply> replyArrayList) throws JSONException, IOException {
@@ -120,24 +138,35 @@ public class ReplyApi {
         if (all.getInt("code") == 0 && !all.isNull("data")) {
             JSONObject data = all.getJSONObject("data");
             JSONObject cursor = data.getJSONObject("cursor");
+            JSONObject paginationReply = cursor.optJSONObject("pagination_reply");
+            String nextOffset = paginationReply == null ? null : paginationReply.optString("next_offset");
+            // 是否真的到底，由服务端的 is_end 与游标共同决定
+            boolean isEnd = cursor.optBoolean("is_end", false) || TextUtils.isEmpty(nextOffset);
             if (!data.isNull("replies") && data.getJSONArray("replies").length() > 0) {
                 if (rpid <= 0 && data.has("top_replies") && !data.isNull("top_replies") && cursor.getBoolean("is_begin"))
                     analyzeReplyArray(true, data.getJSONArray("top_replies"), replyArrayList);
                 JSONArray replies = data.getJSONArray("replies");
                 analyzeReplyArray(true, replies, replyArrayList);
-                JSONObject paginationReply = cursor.optJSONObject("pagination_reply");
-                String nextOffset = paginationReply == null ? null : paginationReply.optString("next_offset");
-                if (cursor.optBoolean("is_end", false) || TextUtils.isEmpty(nextOffset)) {
-                    return new Pair<>(1, "");
+                if (isEnd) {
+                    return new Pair<>(PAGE_END, "");
                 } else {
-                    return new Pair<>(0, nextOffset);
+                    return new Pair<>(PAGE_OK, nextOffset);
                 }
             } else if (rpid <= 0 && data.has("top_replies") && !data.isNull("top_replies") && cursor.getBoolean("is_begin")) {
                 analyzeReplyArray(true, data.getJSONArray("top_replies"), replyArrayList);
-                return new Pair<>(1, "");
-            } else return new Pair<>(1, "");
-        } else return new Pair<>(-1, "");
-    }  //-1错误,0正常，1到底了
+                return new Pair<>(PAGE_END, "");
+            } else {
+                // 空页。服务端偶发会回一页空 replies，如果这时游标还没到底，就不能当成"评论到底"，
+                // 否则这一段评论会整段缺失。返回 PAGE_EMPTY 并把原游标带回去让上层重试。
+                // 首页（pagination 为空）不给重试机会，避免"这个视频本来就没评论"时白白重试 5 次。
+                if (isEnd || TextUtils.isEmpty(pagination)) {
+                    return new Pair<>(PAGE_END, "");
+                } else {
+                    return new Pair<>(PAGE_EMPTY, pagination);
+                }
+            }
+        } else return new Pair<>(PAGE_ERROR, "");
+    }  //-1错误,0正常，1到底了，2空页(未到底，可带原游标重试)
 
     public static void analyzeReplyArray(boolean isRoot, JSONArray replies, List<Reply> replyArrayList) throws JSONException {
         for (int i = 0; i < replies.length(); i++) {
@@ -179,20 +208,37 @@ public class ReplyApi {
     /**
      * 上传评论图片（大会员带图评论）。
      *
-     * @param imageData 已压缩的 JPEG 图片数据
+     * <p>这个重载假定图片已被压成 JPEG，只为兼容旧调用；能拿到真实类型时请用
+     * {@link #uploadReplyImage(byte[], String, String, String)}，
+     * 否则 GIF/PNG 原样上传会被服务端按 JPEG 处理，动图变静帧、透明通道丢失。
+     *
+     * @param imageData JPEG 图片数据
      * @param fileName  文件名（含扩展名）
      */
     public static Result<UploadImageData> uploadReplyImage(byte[] imageData, String fileName) {
+        return uploadReplyImage(imageData, fileName, "image/jpeg", BIZ_REPLY);
+    }
+
+    /**
+     * 上传评论图片（大会员带图评论）。
+     *
+     * @param imageData 图片数据
+     * @param fileName  文件名（含扩展名）
+     * @param mimeType  图片真实的 MIME 类型。必须与数据真实格式一致（GIF/PNG 原样透传时尤其重要），
+     *                  否则服务端按 image/jpeg 解码会丢掉动图帧与透明通道
+     * @param biz       业务标识，评论图必须传 {@link #BIZ_REPLY}
+     */
+    public static Result<UploadImageData> uploadReplyImage(byte[] imageData, String fileName, String mimeType, String biz) {
         String url = "https://api.bilibili.com/x/dynamic/feed/draw/upload_bfs";
         String cookiesStr = SharedPreferencesUtil.getString(SharedPreferencesUtil.cookies, "");
         String csrf = NetWorkUtil.getInfoFromCookie("bili_jct", cookiesStr);
         try {
-            okhttp3.RequestBody fileBody = okhttp3.RequestBody.create(okhttp3.MediaType.parse("image/jpeg"), imageData);
+            okhttp3.RequestBody fileBody = okhttp3.RequestBody.create(okhttp3.MediaType.parse(mimeType), imageData);
             okhttp3.MultipartBody multipartBody = new okhttp3.MultipartBody.Builder()
                     .setType(okhttp3.MultipartBody.FORM)
                     .addFormDataPart("file_up", fileName, fileBody)
                     .addFormDataPart("category", "daily")
-                    .addFormDataPart("biz", "new_dyn")
+                    .addFormDataPart("biz", biz)
                     .addFormDataPart("csrf", csrf)
                     .build();
             okhttp3.Request request = new okhttp3.Request.Builder()
@@ -240,9 +286,31 @@ public class ReplyApi {
         return new Pair<>(result.getInt("code"), reply == null ? null : new Reply(root != 0, reply));
     }
 
+    /**
+     * 给评论点赞/取消点赞。
+     *
+     * <p>这个重载固定按视频评论区（type=1）发送，只为兼容旧调用；新代码请用
+     * {@link #likeReply(long, long, int, boolean)} 并传入真实评论区类型，
+     * 否则对动态/专栏的评论点赞会被服务端静默拒绝（评论数不动、也不报错）。
+     */
     public static int likeReply(long oid, long root, boolean action) throws IOException, JSONException {
+        return likeReply(oid, root, REPLY_TYPE_VIDEO, action);
+    }
+
+    /**
+     * 给评论点赞/取消点赞。
+     *
+     * @param oid    oid
+     * @param root   要操作的评论 rpid
+     * @param type   必须是该评论所属的评论区类型（1=视频 11=图片动态 12=专栏 17=文字动态等）。
+     *               这里原来硬编码为 1，导致给动态/专栏的评论点赞被服务端拒绝，
+     *               故拆出这个带 type 的重载，调用方必须传对。
+     * @param action true=点赞 false=取消
+     * @return 返回码
+     */
+    public static int likeReply(long oid, long root, int type, boolean action) throws IOException, JSONException {
         String url = "https://api.bilibili.com/x/v2/reply/action";
-        String arg = "oid=" + oid + "&type=1&rpid=" + root + "&action=" + (action ? "1" : "0") + "&jsonp=jsonp&csrf=" + SharedPreferencesUtil.getString("csrf", "");
+        String arg = "oid=" + oid + "&type=" + type + "&rpid=" + root + "&action=" + (action ? "1" : "0") + "&jsonp=jsonp&csrf=" + SharedPreferencesUtil.getString("csrf", "");
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, arg, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-点赞评论", result.toString());
         return result.getInt("code");

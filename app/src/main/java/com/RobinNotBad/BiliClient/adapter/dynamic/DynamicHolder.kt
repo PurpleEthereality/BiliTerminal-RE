@@ -44,12 +44,19 @@ import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 import com.bumptech.glide.request.RequestOptions
 import java.io.IOException
+import java.util.Collections
+import java.util.HashSet
 
 class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Boolean) :
     RecyclerView.ViewHolder(itemView) {
 
     companion object {
         const val GO_TO_INFO_REQUEST = 71
+
+        // 动态点赞去重：记录正在请求中的 dynamicId。
+        // 放在 companion 里而不是实例字段，是因为 ViewHolder 会被回收复用，
+        // 实例字段会随着复用被重置而失去去重效果。用同步 Set 是因为它会被点击线程和请求线程同时访问。
+        private val likingDynamicIds: MutableSet<Long> = Collections.synchronizedSet(HashSet<Long>())
 
         @JvmStatic
         fun removeDynamicFromList(
@@ -669,43 +676,56 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
                 likeCount!!.visibility = View.GONE
             }
             likeCount!!.setOnClickListener {
+                // 客户端去重：同一条动态的点赞请求还没回来之前，后续连点直接忽略。
+                // 不加的话用户连点会连发好几次点赞/取消，服务端只认最后一次，
+                // 而界面每次点击都改一次计数，结果就是点赞状态与服务端对不上
+                if (!likingDynamicIds.add(dynamic.dynamicId)) {
+                    MsgUtil.showMsg("正在处理中")
+                    return@setOnClickListener
+                }
                 CenterThreadPool.run {
-                    if (!dynamic.stats.liked) {
-                        try {
-                            if (DynamicApi.likeDynamic(dynamic.dynamicId, true) == 0) {
-                                dynamic.stats.liked = true
-                                (context as Activity).runOnUiThread {
-                                    MsgUtil.showMsg("点赞成功")
-                                    likeCount!!.text = StringUtil.toWan((++dynamic.stats.like).toLong())
-                                    likeCount!!.setTextColor(ColorScheme.LIKE_COLOR)
-                                    likeCount!!.setCompoundDrawablesWithIntrinsicBounds(
-                                        ContextCompat.getDrawable(context, R.drawable.icon_reply_like1), null, null,
-                                        null
-                                    )
-                                }
-                            } else
-                                (context as Activity).runOnUiThread { MsgUtil.showMsg("点赞失败") }
-                        } catch (e: IOException) {
-                            MsgUtil.err(e)
+                    try {
+                        if (!dynamic.stats.liked) {
+                            try {
+                                if (DynamicApi.likeDynamic(dynamic.dynamicId, true) == 0) {
+                                    dynamic.stats.liked = true
+                                    (context as Activity).runOnUiThread {
+                                        MsgUtil.showMsg("点赞成功")
+                                        likeCount!!.text = StringUtil.toWan((++dynamic.stats.like).toLong())
+                                        likeCount!!.setTextColor(ColorScheme.LIKE_COLOR)
+                                        likeCount!!.setCompoundDrawablesWithIntrinsicBounds(
+                                            ContextCompat.getDrawable(context, R.drawable.icon_reply_like1), null, null,
+                                            null
+                                        )
+                                    }
+                                } else
+                                    (context as Activity).runOnUiThread { MsgUtil.showMsg("点赞失败") }
+                            } catch (e: IOException) {
+                                MsgUtil.err(e)
+                            }
+                        } else {
+                            try {
+                                if (DynamicApi.likeDynamic(dynamic.dynamicId, false) == 0) {
+                                    dynamic.stats.liked = false
+                                    (context as Activity).runOnUiThread {
+                                        MsgUtil.showMsg("取消成功")
+                                        likeCount!!.text = StringUtil.toWan((--dynamic.stats.like).toLong())
+                                        likeCount!!.setTextColor(ColorScheme.TEXT_PRIMARY)
+                                        likeCount!!.setCompoundDrawablesWithIntrinsicBounds(
+                                            ContextCompat.getDrawable(context, R.drawable.icon_reply_like0), null, null,
+                                            null
+                                        )
+                                    }
+                                } else
+                                    (context as Activity).runOnUiThread { MsgUtil.showMsg("取消失败") }
+                            } catch (e: IOException) {
+                                e.printStackTrace()
+                            }
                         }
-                    } else {
-                        try {
-                            if (DynamicApi.likeDynamic(dynamic.dynamicId, false) == 0) {
-                                dynamic.stats.liked = false
-                                (context as Activity).runOnUiThread {
-                                    MsgUtil.showMsg("取消成功")
-                                    likeCount!!.text = StringUtil.toWan((--dynamic.stats.like).toLong())
-                                    likeCount!!.setTextColor(ColorScheme.TEXT_PRIMARY)
-                                    likeCount!!.setCompoundDrawablesWithIntrinsicBounds(
-                                        ContextCompat.getDrawable(context, R.drawable.icon_reply_like0), null, null,
-                                        null
-                                    )
-                                }
-                            } else
-                                (context as Activity).runOnUiThread { MsgUtil.showMsg("取消失败") }
-                        } catch (e: IOException) {
-                            e.printStackTrace()
-                        }
+                    } finally {
+                        // 成功、失败、抛异常都必须摘掉标志，
+                        // 否则这条动态会永久卡在"正在处理中"，再也点不动
+                        likingDynamicIds.remove(dynamic.dynamicId)
                     }
                 }
             }

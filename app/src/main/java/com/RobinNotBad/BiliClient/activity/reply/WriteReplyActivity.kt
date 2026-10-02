@@ -29,6 +29,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.util.Locale
 
 class WriteReplyActivity : BaseActivity() {
 
@@ -43,6 +44,15 @@ class WriteReplyActivity : BaseActivity() {
             12035 to "被拉黑了...",
             12051 to "重复评论，请勿刷屏！"
         )
+
+        // 单张图片的绝对上限，超过就不传了（手表上传大文件基本必失败，还容易 OOM）
+        private const val MAX_IMAGE_SIZE = 25L * 1024 * 1024
+        // GIF 不能重新编码，只能原样透传，所以额外给一个更小的上限，避免动图把上传拖垮
+        private const val GIF_MAX_SIZE = 20L * 1024 * 1024
+        // PNG 原样透传的上限；超过这个体积还是压成 JPEG，否则上传体验会崩
+        private const val PNG_MAX_SIZE = 8L * 1024 * 1024
+        // 压缩时的最长边上限，避免手表直接解码原图就 OOM
+        private const val MAX_COMPRESS_EDGE = 2048
     }
 
     private lateinit var editText: EditText
@@ -180,8 +190,12 @@ class WriteReplyActivity : BaseActivity() {
         updateImageText()
         CenterThreadPool.run {
             try {
-                val compressed = compressImage(uri)
-                val data = ReplyApi.uploadReplyImage(compressed, System.currentTimeMillis().toString() + ".jpg").getOrNull()
+                val prepared = prepareImage(uri)
+                // 文件名与 MIME 都按图片真实格式传，否则服务端一律按 JPEG 解析，
+                // GIF 会变成静帧、PNG 透明通道会被填成底色
+                val data = ReplyApi.uploadReplyImage(
+                    prepared.raw, prepared.fileName, prepared.mimeType, ReplyApi.BIZ_REPLY
+                ).getOrNull()
                 if (data == null) {
                     runOnUiThread {
                         MsgUtil.showMsg("图片上传失败")
@@ -203,15 +217,103 @@ class WriteReplyActivity : BaseActivity() {
         }
     }
 
-    private fun compressImage(uri: Uri): ByteArray {
-        val inputStream: InputStream = contentResolver.openInputStream(uri) ?: throw IOException("无法读取图片")
-        val bitmap: Bitmap = BitmapFactory.decodeStream(inputStream)
-        inputStream.close()
-        if (bitmap == null) throw IOException("解码图片失败")
+    /** 待上传的图片：raw 是原始字节，fileName/mimeType 决定服务端按什么格式解析。 */
+    private class PreparedImage(val raw: ByteArray, val fileName: String, val mimeType: String)
+
+    /**
+     * 准备要上传的图片。
+     *
+     * 不能一律解码后压成 JPEG：那样 GIF 动图会变成一张静帧、PNG 的透明通道会被填成黑/白底，
+     * 而这两类都是评论里很常见的图。所以这里按真实类型分流：
+     * - GIF：动图无法用 [Bitmap] 重新编码，只能原样透传（超过 20MB 才拒绝）
+     * - PNG 且不超过 8MB：原样透传，保住透明通道
+     * - 其余（过大的 PNG、JPEG、WEBP 等）：按最长边采样后压成 JPEG 90
+     */
+    private fun prepareImage(uri: Uri): PreparedImage {
+        val type = resolveImageType(uri)
+        val now = System.currentTimeMillis()
+
+        // 先按文件描述符探一下体积，超大图直接拒绝，避免在手表上把整张图读进内存就 OOM
+        val declaredSize = getDeclaredSize(uri)
+        if (declaredSize > MAX_IMAGE_SIZE) throw IOException("图片过大（超过25MB）")
+
+        val raw = readAllBytes(uri)
+        if (raw.size > MAX_IMAGE_SIZE) throw IOException("图片过大（超过25MB）")
+
+        if (type == "image/gif") {
+            if (raw.size > GIF_MAX_SIZE) throw IOException("GIF过大（超过20MB），请换一张")
+            return PreparedImage(raw, "img_$now.gif", "image/gif")
+        }
+        if (type == "image/png" && raw.size <= PNG_MAX_SIZE) {
+            return PreparedImage(raw, "img_$now.png", "image/png")
+        }
+
+        val bitmap = decodeScaled(raw) ?: throw IOException("解码图片失败")
         val outputStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream)
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, outputStream)
         bitmap.recycle()
-        return outputStream.toByteArray()
+        return PreparedImage(outputStream.toByteArray(), "img_$now.jpg", "image/jpeg")
+    }
+
+    /**
+     * 判断图片真实类型。优先用 content provider 声明的类型；
+     * 有些 provider 不返回类型，这时按文件头魔数嗅探兜底。
+     */
+    private fun resolveImageType(uri: Uri): String {
+        val declared = contentResolver.getType(uri)?.lowercase(Locale.ROOT)
+        if (declared != null && declared.startsWith("image/") && declared != "image/*") return declared
+        return try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                val head = ByteArray(12)
+                val len = input.read(head)
+                sniffImageType(head, len)
+            } ?: "image/jpeg"
+        } catch (e: Exception) {
+            "image/jpeg"
+        }
+    }
+
+    private fun sniffImageType(head: ByteArray, len: Int): String {
+        // 用字节值而不是字符字面量比较，避免编码/字符转换带来的歧义。
+        // 注意必须 `and 0xFF`：Java 的 byte 是有符号的，0x89 直接 toInt 会变成负数
+        fun b(index: Int) = head[index].toInt() and 0xFF
+
+        if (len >= 6 && b(0) == 0x47 && b(1) == 0x49 && b(2) == 0x46)
+            return "image/gif"                                  // "GIF"
+        if (len >= 8 && b(0) == 0x89 && b(1) == 0x50 && b(2) == 0x4E && b(3) == 0x47)
+            return "image/png"                                  // ‰PNG
+        if (len >= 3 && b(0) == 0xFF && b(1) == 0xD8 && b(2) == 0xFF)
+            return "image/jpeg"                                 // JPEG SOI
+        if (len >= 12 && b(8) == 0x57 && b(9) == 0x45 && b(10) == 0x42 && b(11) == 0x50)
+            return "image/webp"                                 // RIFF....WEBP
+        return "image/jpeg"
+    }
+
+    private fun readAllBytes(uri: Uri): ByteArray {
+        val inputStream: InputStream = contentResolver.openInputStream(uri) ?: throw IOException("无法读取图片")
+        return inputStream.use { it.readBytes() }
+    }
+
+    /** 探测文件声明长度，拿不到就返回 -1（表示未知，不做预判）。 */
+    private fun getDeclaredSize(uri: Uri): Long {
+        return try {
+            contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+        } catch (e: Exception) {
+            -1L
+        }
+    }
+
+    /** 先按最长边 2048 采样再解码，避免手表直接解码超大原图时 OOM。 */
+    private fun decodeScaled(raw: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options()
+        bounds.inJustDecodeBounds = true
+        BitmapFactory.decodeByteArray(raw, 0, raw.size, bounds)
+        var sampleSize = 1
+        val longest = Math.max(bounds.outWidth, bounds.outHeight)
+        while (longest / sampleSize > MAX_COMPRESS_EDGE) sampleSize *= 2
+        val options = BitmapFactory.Options()
+        options.inSampleSize = sampleSize
+        return BitmapFactory.decodeByteArray(raw, 0, raw.size, options)
     }
 
     private fun buildPictures(): String {
