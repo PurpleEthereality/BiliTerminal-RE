@@ -34,21 +34,42 @@ class JumpToPlayerActivity : BaseActivity() {
         //  · 上报慢时页面要挂着等网络；
         //  · 外部播放器（MTV/Alang）不 setResult、或设置里没选播放器时跳的「播放器选择页」
         //    返回 RESULT_CANCELED —— 这两种情况连 finish() 都不会执行，页面永远出不去。
-        val progress = if (o.resultCode == RESULT_OK) o.data?.getIntExtra("progress", 0) ?: 0 else 0
+        val resultIntent = o.data
+        val isOk = o.resultCode == RESULT_OK && resultIntent != null
+        val fallbackProgress = playerData?.progress ?: 0
+        val fallbackCid = playerData?.cid ?: 0L
+        // 外部播放器（MTV/Alang）不会回传 RESULT_OK，这时用进入播放前已加载的续播进度兜底：
+        // 旧实现一律取 0，导致外部播放器场景下进度整个丢失（普通视频被详情页那次上报掩盖了问题，番剧就彻底没了）
+        val progress = if (isOk) resultIntent!!.getIntExtra("progress", fallbackProgress) else fallbackProgress
+        // 播放器内可能切换过分P：最终观看的 cid 以播放器回传为准，不能沿用进入时的旧 cid，
+        // 否则会拿新P的进度去覆盖旧P的记录，把正确的续播位置冲掉
+        val finalCid = if (isOk && resultIntent!!.hasExtra("cid")) {
+            resultIntent.getLongExtra("cid", fallbackCid)
+        } else fallbackCid
         val data = playerData
         finish()
-        reportProgressAsync(data, progress)
+        reportProgressAsync(data, progress, finalCid)
     }
 
     /**
      * 后台异步上报观看进度，不阻塞页面关闭。
      * 本页此时已经 finish，这里只碰 [PlayerData] 与全局 Context，不再引用任何已销毁的 View。
+     *
+     * @param cid 最终观看的分P cid，由播放器回传而不是进入时的旧值
      */
-    private fun reportProgressAsync(data: PlayerData?, progressMs: Int) {
+    private fun reportProgressAsync(data: PlayerData?, progressMs: Int, cid: Long) {
         if (data == null || progressMs <= 0 || data.mid == 0L || data.aid == 0L) return
         CenterThreadPool.run {
             try {
-                HistoryApi.reportHistory(data.aid, data.cid, (progressMs / 1000).toLong())
+                val progressSec = (progressMs / 1000).toLong()
+                // 番剧必须走专用心跳接口：x/v2/history/report 只有 aid/cid 两个维度，
+                // 拿它上报番剧不会被记成番剧记录（观看历史里不出现，续播位置也拿不到）。
+                // 缺 seasonId 时不冒险走心跳（sid=0 会被服务端判参数错误 -400），退回投稿视频的上报方式。
+                if (data.epid != 0L && data.seasonId != 0L) {
+                    HistoryApi.reportHistoryPgc(data.aid, cid, data.epid, data.seasonId, data.seasonType, progressSec)
+                } else {
+                    HistoryApi.reportHistory(data.aid, cid, progressSec)
+                }
             } catch (e: Exception) {
                 MsgUtil.err("进度上报：", e)
             }

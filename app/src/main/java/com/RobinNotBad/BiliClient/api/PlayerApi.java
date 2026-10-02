@@ -40,6 +40,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class PlayerApi {
+    //续播进度的合理上限（24h）：超过它一定是脏数据/单位错误，宁可从头播也不能跳到离谱位置
+    private static final long MAX_PROGRESS_MS = 24L * 60 * 60 * 1000;
+
     public static void startGettingUrl(PlayerData playerData) {
         Context context = BiliTerminal.context;
 
@@ -143,8 +146,10 @@ public class PlayerApi {
             return;
         }
 
+        //last_play_cid/last_play_time 是 aid 级"上次播放"数据：进度只属于 last_play_cid 那一P。
+        //请求的 cid 与上次播放的 cid 不一致时（多P视频换P续播）不能把别的P的进度套在本P上，应从 0 开始
         playerData.cidHistory = data.optLong("last_play_cid", 0);
-        playerData.progress = data.optInt("last_play_time", 0);
+        playerData.progress = adoptLastPlayTime(playerData.cidHistory, playerData.cid, data.optLong("last_play_time", 0));
 
         if (playerData.cidHistory == 0) {
             playerData.cidHistory = playerData.cid;
@@ -263,8 +268,10 @@ public class PlayerApi {
         JSONArray durl = data.getJSONArray("durl");
         JSONObject video_url = durl.getJSONObject(0);
         playerData.videoUrl = video_url.getString("url");
+        //last_play_cid/last_play_time 是 aid 级"上次播放"数据：进度只属于 last_play_cid 那一P。
+        //请求的 cid 与上次播放的 cid 不一致时（多P视频换P续播）不能把别的P的进度套在本P上，应从 0 开始
         playerData.cidHistory = data.optLong("last_play_cid", 0);
-        playerData.progress = data.optInt("last_play_time", 0);
+        playerData.progress = adoptLastPlayTime(playerData.cidHistory, playerData.cid, data.optLong("last_play_time", 0));
 
         if (playerData.cidHistory == 0) {
             playerData.cidHistory = playerData.cid;
@@ -318,6 +325,17 @@ public class PlayerApi {
 
         playerData.danmakuUrl = "https://comment.bilibili.com/" + playerData.cid + ".xml";
 
+        //番剧取流接口(pgc/player/web/playurl)的 result 不返回 last_play_*，续播进度必须单独查询，
+        //否则 playerData.progress 一直是 0 —— 这正是"番剧每次进去都从头播"的原因
+        playerData.cidHistory = playerData.cid;
+        long lastProgress = getLastPlayProgress(playerData.aid, playerData.cid);
+        if (lastProgress <= 0) {
+            //WBI 接口(密钥/风控/未登录)取不到时兜底走观看记录列表，否则续播会永远从 0 开始
+            lastProgress = HistoryApi.findProgressMsByAid(playerData.aid);
+            if (lastProgress > 0) Logu.w("history-last", "WBI 进度不可用，使用观看记录兜底: " + lastProgress + "ms");
+        }
+        playerData.progress = normalizeProgress(lastProgress, data.optLong("timelength", 0));
+
         JSONArray accept_description = data.getJSONArray("accept_description");
         JSONArray accept_quality = data.getJSONArray("accept_quality");
         String[] qnStrList = new String[accept_description.length()];
@@ -328,6 +346,65 @@ public class PlayerApi {
         }
         playerData.qnStrList = qnStrList;
         playerData.qnValueList = qnValueList;
+    }
+
+    /**
+     * 查询某个稿件/剧集的"上次播放进度"（毫秒）。
+     *
+     * 为什么番剧要单独查：pgc/player/web/playurl 的 result 不返回 last_play_*，
+     * 沿用投稿视频那套读法只会永远得到 0。
+     * 这是"锦上添花"的查询，任何异常都退化为 0，由调用方再用观看记录兜底。
+     */
+    public static long getLastPlayProgress(long aid, long cid) {
+        try {
+            String url = "https://api.bilibili.com/x/player/wbi/v2?aid=" + aid + "&cid=" + cid;
+            url = ConfInfoApi.signWBI(url);
+            JSONObject body = NetWorkUtil.getJson(url, NetWorkUtil.webHeaders);
+            JSONObject data = body.optJSONObject("data");
+            if (data == null) return 0;
+            long lastPlayTime = data.optLong("last_play_time", 0);
+            if (lastPlayTime <= 0) return 0;
+            Logu.d("history-last", "aid=" + aid + " cid=" + cid + " last_play_time=" + lastPlayTime);
+            return lastPlayTime;
+        } catch (Exception e) {
+            Logu.e("history-last", "查询上次播放进度失败: " + e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * last_play_time 是与 last_play_cid 配对的"上次播放"进度，只属于那一 P。
+     * 请求的 cid 与 last_play_cid 不一致时必须丢弃：否则在 P3 上会从 P2 的进度位置继续播。
+     */
+    private static int adoptLastPlayTime(long lastPlayCid, long requestCid, long lastPlayTime) {
+        if (lastPlayCid != requestCid || lastPlayTime <= 0) return 0;
+        return (int) lastPlayTime;
+    }
+
+    /**
+     * 归一化续播进度。
+     * last_play_time 官方文档标注为毫秒，但该字段单位并未被文档确证，
+     * 因此按"明显超过视频时长"来探测秒单位；最后再挡掉越界值，
+     * 避免把 -1(已看完) 或脏数据当进度传给播放器。
+     */
+    private static int normalizeProgress(long raw, long durationMs) {
+        if (raw <= 0) return 0;
+        long ms = raw;
+        if (durationMs > 0 && ms > durationMs) {
+            long asSeconds = raw * 1000L;
+            if (asSeconds <= durationMs) {
+                ms = asSeconds;
+                Logu.d("history-last", "last_play_time 疑似单位为秒：" + raw);
+            } else {
+                Logu.e("history-last", "last_play_time 越界已丢弃：" + raw + " / " + durationMs);
+                return 0;
+            }
+        }
+        if (ms > MAX_PROGRESS_MS) {
+            Logu.e("history-last", "last_play_time 超出合理范围已丢弃：" + ms);
+            return 0;
+        }
+        return (int) ms;
     }
 
     /**
@@ -393,9 +470,14 @@ public class PlayerApi {
                 intent.putExtra("danmaku", playerData.danmakuUrl);
                 intent.putExtra("live_mode", playerData.isLive());
 
-                intent.setData(Uri.parse(playerData.videoUrl));
+                if (playerData.isLocal()) {
+                    //本地文件不能直接 Uri.parse(裸路径)：scoped storage 下外部播放器读不到文件，
+                    //必须走 FileProvider 的 content:// 并显式授予一次性只读权限，否则对方打开就报错
+                    intent.setData(getVideoUri(context, playerData.videoUrl));
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                } else {
+                    intent.setData(Uri.parse(playerData.videoUrl));
 
-                if (!playerData.isLocal()) {
                     Map<String, String> headers = new HashMap<>();
                     headers.put("Cookie", SharedPreferencesUtil.getString("cookies", ""));
                     headers.put("Referer", "https://www.bilibili.com/");
@@ -416,7 +498,9 @@ public class PlayerApi {
 
     public static Uri getVideoUri(Context context, String path) {
         File file = new File(path);
-        return FileProvider.getUriForFile(context, context.getPackageName() + ".fileprovider", file);
+        //authority 必须与 AndroidManifest.xml 里声明的完全一致（大写 F 的 .FileProvider），
+        //老代码写死的 ".fileprovider" 与之不符，调用即抛 IllegalArgumentException 找不到 provider
+        return FileProvider.getUriForFile(context, context.getPackageName() + ".FileProvider", file);
 
         // 因为在文件夹里放了.nomedia标识，现在不能用这个了
         /*

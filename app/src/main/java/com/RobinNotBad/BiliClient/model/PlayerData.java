@@ -24,6 +24,12 @@ public class PlayerData implements Parcelable {
     public long mid;
     public int progress = 0;
     public long cidHistory = 0;
+    // 番剧（PGC）专用字段。投稿视频的观看进度走 x/v2/history/report，只有 aid/cid 两个维度；
+    // 番剧必须走心跳接口并带上 epid/sid/sub_type，否则观看记录与续播进度都不会被服务端更新——
+    // 表现就是"在终端里看的番剧，历史里不出现，下次还得从头播"。
+    public long epid = 0;        // 剧集 epid，就是 Bangumi.Episode#id
+    public long seasonId = 0;    // 所在季的 season_id
+    public int seasonType = 0;   // 所在季类型（Bangumi.Info#type），作为心跳的 sub_type
     public int type = 0;
     public long timeStamp;
     public ArrayList<String> pagenames;
@@ -57,6 +63,9 @@ public class PlayerData implements Parcelable {
         in.readList(cids, Long.class.getClassLoader());
         currentPageIndex = in.readInt();
         audioUrl = in.readString();
+        epid = in.readLong();
+        seasonId = in.readLong();
+        seasonType = in.readInt();
         // dashData不序列化，下载时会重新获取
     }
 
@@ -95,6 +104,9 @@ public class PlayerData implements Parcelable {
         dest.writeList(cids);
         dest.writeInt(currentPageIndex);
         dest.writeString(audioUrl);
+        dest.writeLong(epid);
+        dest.writeLong(seasonId);
+        dest.writeInt(seasonType);
         // dashData不序列化，下载时会重新获取
     }
 

@@ -53,6 +53,13 @@ public class ConfInfoApi {
 
     private static volatile WbiCache lastWbiCache = null;
 
+    /**
+     * WBI 密钥的有效期（30 分钟）。
+     * 服务端会不定时轮换 img_key / sub_key，老代码"一天只取一次密钥"在轮换后当天剩余时间全部签名失败；
+     * 但每个请求都重取又太浪费，所以折中用 TTL：过期才重取。
+     */
+    private static final long WBI_KEY_TTL_MS = 30L * 60 * 1000;
+
     public static String getWBIRawKey() throws IOException, JSONException {
         JSONObject getJson = NetWorkUtil.getJson("https://api.bilibili.com/x/web-interface/nav");
         JSONObject wbi_img = getJson.getJSONObject("data").getJSONObject("wbi_img");  //不要被名称骗了，这玩意是签名用的
@@ -72,32 +79,39 @@ public class ConfInfoApi {
     }
 
     public static String signWBI(String url_query) throws JSONException, IOException {
-        String mixin_key;
-        int curr = getDateCurr();
-        if (SharedPreferencesUtil.getInt("last_wbi", 0) < curr) {    //限制一天一次
-            Logu.d("检查WBI");
-            SharedPreferencesUtil.putInt("last_wbi", curr);
+        // 取密钥要走网络，多线程并发时只放一个进去取，其余线程在这里等结果复用，避免重复请求
+        synchronized (ConfInfoApi.class) {
+            String mixin_key = SharedPreferencesUtil.getString("wbi_mixin_key", "");
+            long now = System.currentTimeMillis();
+            // 只有"没有密钥"或"密钥已过期"才重取。
+            // 关键：时间戳必须在 getWBIRawKey() 成功之后才写。
+            // 老代码先写 last_wbi 再取密钥，一旦取密钥抛异常（网络抖动等），
+            // 失败状态会被当成"今天已经取过了"缓存一整天，之后所有 WBI 接口签名全错且无法自愈。
+            if (mixin_key.isEmpty() || now - SharedPreferencesUtil.getLong("last_wbi_time", 0L) > WBI_KEY_TTL_MS) {
+                Logu.d("检查WBI");
+                String rawKey = ConfInfoApi.getWBIRawKey();
+                mixin_key = ConfInfoApi.getWBIMixinKey(rawKey);
+                SharedPreferencesUtil.putString("wbi_mixin_key", mixin_key);
+                SharedPreferencesUtil.putLong("last_wbi_time", now); // 取到密钥才算成功，此时才落时间戳
+            }
 
-            mixin_key = ConfInfoApi.getWBIMixinKey(ConfInfoApi.getWBIRawKey());
-            SharedPreferencesUtil.putString("wbi_mixin_key", mixin_key);
-        } else mixin_key = SharedPreferencesUtil.getString("wbi_mixin_key", "");
+            long wts = System.currentTimeMillis() / 1000;
+            WbiCache cached = lastWbiCache;
+            if (cached != null && url_query.equals(cached.query) && wts == cached.wts) {
+                return cached.signedUrl;
+            }
 
-        long wts = System.currentTimeMillis() / 1000;
-        WbiCache cached = lastWbiCache;
-        if (cached != null && url_query.equals(cached.query) && wts == cached.wts) {
-            return cached.signedUrl;
+            String wtsStr = String.valueOf(wts);
+            String calc_str = sortUrlParams(Uri.encode(url_query, "@#&=*+-_.,:!?()/~'%") + "&wts=" + wtsStr) + mixin_key;
+            Logu.d(calc_str);
+
+            String w_rid = ToolsUtil.md5(calc_str);
+
+            String signedUrl = Objects.requireNonNull(HttpUrl.parse(url_query)).newBuilder()
+                    .addQueryParameter("w_rid", w_rid).addQueryParameter("wts", wtsStr).build().toString();
+            lastWbiCache = new WbiCache(url_query, wts, signedUrl);
+            return signedUrl;
         }
-
-        String wtsStr = String.valueOf(wts);
-        String calc_str = sortUrlParams(Uri.encode(url_query, "@#&=*+-_.,:!?()/~'%") + "&wts=" + wtsStr) + mixin_key;
-        Logu.d(calc_str);
-
-        String w_rid = ToolsUtil.md5(calc_str);
-
-        String signedUrl = Objects.requireNonNull(HttpUrl.parse(url_query)).newBuilder()
-                .addQueryParameter("w_rid", w_rid).addQueryParameter("wts", wtsStr).build().toString();
-        lastWbiCache = new WbiCache(url_query, wts, signedUrl);
-        return signedUrl;
     }
 
     public static String sortUrlParams(String url) {
@@ -107,11 +121,14 @@ public class ConfInfoApi {
         Map<String, String> paramMap = new HashMap<>();
         String[] params = encodedParam.split("&");
         for (String param : params) {
-            String[] keyValue = param.split("=");
-            if (keyValue.length == 2) {
-                paramMap.put(keyValue[0], keyValue[1]);
-            } else if (keyValue.length == 1) {
-                paramMap.put(keyValue[0], "");
+            if (param.isEmpty()) continue; // 尾随 '&' 会切出空串，跳过，避免塞进一个空 key 干扰排序结果
+            // 只按「第一个 =」切分：参数值本身可能含 '='（base64、url 等）。
+            // 老代码 split("=") 遇这种参数会得到 3 段以上、length != 2 就把整个参数丢掉，导致签名算错。
+            int eq = param.indexOf('=');
+            if (eq < 0) {
+                paramMap.put(param, "");
+            } else {
+                paramMap.put(param.substring(0, eq), param.substring(eq + 1));
             }
         }
 
@@ -136,6 +153,7 @@ public class ConfInfoApi {
 
     public static int getDateCurr() {
         Calendar calendar = Calendar.getInstance();
-        return calendar.get(Calendar.YEAR) * 10000 + calendar.get(Calendar.MONTH) * 100 + calendar.get(Calendar.DATE);
+        // Calendar.MONTH 从 0 开始（0=一月），必须 +1，否则算出的"日期编号"错位、比较逻辑跟着错
+        return calendar.get(Calendar.YEAR) * 10000 + (calendar.get(Calendar.MONTH) + 1) * 100 + calendar.get(Calendar.DATE);
     }
 }

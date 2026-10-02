@@ -216,7 +216,10 @@ class BangumiInfoFragment : Fragment() {
         val indexShow = rootView!!.findViewById<TextView>(R.id.indexShow)
         indexShow.text = bangumi!!.info.indexShow
 
-        if (bangumi!!.sectionList.isEmpty()) {
+        // 首个"有剧集"的季才是可用的起始季：番剧数据里第一项常常是空的 PV/预告季，
+        // 直接用它会让选集区空白，而且后面按下标取剧集时必然越界
+        val firstSection = firstSectionWithEpisodes()
+        if (firstSection < 0) {
             sectionChoose!!.text = "敬请期待"
             playButton.visibility = View.GONE
             rootView!!.findViewById<View>(R.id.episodes).visibility = View.GONE
@@ -227,19 +230,25 @@ class BangumiInfoFragment : Fragment() {
             return
         }
 
-        sectionChoose!!.text = bangumi!!.sectionList[0].title + " 点击切换"
+        selectedSection = firstSection
+        selectedEpisode = 0
+
+        sectionChoose!!.text = bangumi!!.sectionList[firstSection].title + " 点击切换"
         sectionChoose!!.setOnClickListener { getSectionChooseDialog().show() }
         episodeChoose!!.setOnClickListener { getEposideChooseDialog().show() }
 
-        adapter.setData(bangumi!!.sectionList[0].episodeList)
+        adapter.setData(bangumi!!.sectionList[firstSection].episodeList)
         episodeRecyclerView!!.layoutManager = CustomLinearManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         episodeRecyclerView!!.adapter = adapter
 
         playButton.setOnClickListener {
-            val episode = bangumi!!.sectionList[selectedSection].episodeList[selectedEpisode]
+            // 用安全取值代替 direct 下标：选中的季为空/下标越界时返回 null 而不是抛 IndexOutOfBoundsException
+            val episode = currentEpisode() ?: return@setOnClickListener
             Glide.get(requireContext()).clearMemory()
             val intent = Intent(it.context, JumpToPlayerActivity::class.java)
-            intent.putExtra("data", episode.toPlayerData())
+            // 必须带上 season_id 与季类型：番剧的观看进度要走心跳接口上报，
+            // 只有 epid 而没有 sid/sub_type 时服务端不会把它记成番剧记录
+            intent.putExtra("data", episode.toPlayerData(bangumi!!.info.season_id, bangumi!!.info.type))
             startActivity(intent)
         }
         playButton.setOnLongClickListener {
@@ -252,12 +261,39 @@ class BangumiInfoFragment : Fragment() {
         refreshReplies()
     }
 
+    /** sectionList 里第一个真正含有剧集的季的下标；全都为空（或没有季）时返回 -1。 */
+    private fun firstSectionWithEpisodes(): Int {
+        val sections = bangumi?.sectionList ?: return -1
+        for (i in sections.indices) {
+            if (!sections[i].episodeList.isNullOrEmpty()) return i
+        }
+        return -1
+    }
+
+    /**
+     * 当前选中的剧集；选中季为空或下标越界时返回 null。
+     * 所有需要按下标取剧集的地方都必须走这里，否则空季数据会直接抛 IndexOutOfBoundsException。
+     */
+    private fun currentEpisode(): Bangumi.Episode? {
+        val sections = bangumi?.sectionList ?: return null
+        if (selectedSection !in sections.indices) return null
+        val episodes = sections[selectedSection].episodeList ?: return null
+        if (selectedEpisode !in episodes.indices) return null
+        return episodes[selectedEpisode]
+    }
+
     @SuppressLint("SetTextI18n")
     private fun getSectionChooseDialog(): Dialog {
         val choices = Array(bangumi!!.sectionList.size) { i -> bangumi!!.sectionList[i].title }
 
         val builder = AlertDialog.Builder(requireContext())
         builder.setSingleChoiceItems(choices, selectedSection) { dialog, which ->
+            // 允许切到空季会让选集区/playButton 随后在空列表上取下标而崩溃，这里直接拒绝切换并提示
+            if (bangumi!!.sectionList[which].episodeList.isNullOrEmpty()) {
+                MsgUtil.showMsg("该季暂无剧集")
+                dialog.dismiss()
+                return@setSingleChoiceItems
+            }
             selectedSection = which
             selectedEpisode = 0
 
@@ -276,7 +312,14 @@ class BangumiInfoFragment : Fragment() {
     }
 
     private fun getEposideChooseDialog(): Dialog {
-        val episodeList = bangumi!!.sectionList[selectedSection].episodeList
+        val episodeList = bangumi?.sectionList?.getOrNull(selectedSection)?.episodeList
+
+        // 双保险：数据刷新后仍可能落到空季上，空列表既不能建下标也不能建选择项
+        if (episodeList.isNullOrEmpty()) {
+            MsgUtil.showMsg("该季暂无剧集")
+            dialog = AlertDialog.Builder(requireContext()).setMessage("该季暂无剧集").create()
+            return dialog!!
+        }
 
         val choices = Array(episodeList.size) { i ->
             val episode = episodeList[i]
@@ -284,7 +327,8 @@ class BangumiInfoFragment : Fragment() {
         }
 
         val builder = AlertDialog.Builder(requireContext())
-        builder.setSingleChoiceItems(choices, selectedEpisode) { dialog, which ->
+        // 选中下标必须夹到合法范围，否则数据刷新导致列表变短时会指向不存在的项
+        builder.setSingleChoiceItems(choices, selectedEpisode.coerceIn(0, episodeList.size - 1)) { dialog, which ->
             selectedEpisode = which
             refreshReplies()
 
@@ -299,9 +343,10 @@ class BangumiInfoFragment : Fragment() {
     }
 
     private fun refreshReplies() {
+        val episode = currentEpisode() ?: return
         val activity = activity
         if (activity is VideoInfoActivity) {
-            activity.setCurrentAid(bangumi!!.sectionList[selectedSection].episodeList[selectedEpisode].aid)
+            activity.setCurrentAid(episode.aid)
         }
     }
 

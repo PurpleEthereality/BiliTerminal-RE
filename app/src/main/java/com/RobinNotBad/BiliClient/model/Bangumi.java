@@ -90,11 +90,26 @@ public class Bangumi {
         }
 
         public PlayerData toPlayerData() {
+            return toPlayerData(0, 0);
+        }
+
+        /**
+         * 番剧剧集转播放数据。番剧的进度上报必须带 epid/sid/sub_type，
+         * 而本类（Episode）自身只有 epid（就是 id），季信息挂在父级 Bangumi.Info 上，
+         * 所以由调用方把 season_id 与季类型一起传进来。
+         *
+         * @param seasonId   所属季的 season_id，未知传 0（播放侧会因此退回投稿视频的上报方式）
+         * @param seasonType 所属季类型，即 Bangumi.Info#type，未知传 0
+         */
+        public PlayerData toPlayerData(long seasonId, int seasonType) {
             PlayerData data = new PlayerData(PlayerData.TYPE_BANGUMI);
             data.aid = aid;
             data.cid = cid;
             data.title = title;
             data.mid = SharedPreferencesUtil.getLong("mid", 0);
+            data.epid = id;
+            data.seasonId = seasonId;
+            data.seasonType = seasonType;
             return data;
         }
     }
