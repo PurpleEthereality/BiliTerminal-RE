@@ -140,20 +140,32 @@
    - `:2259-2262 switchToOnlinePage` 的 `runOnUiThread` 里新增 `if (playerData.cid > 0) cid = playerData.cid`。**根因**：`switchToOnlinePage` 每次新建一个局部 `PlayerData` 并把真实 cid 放进它（`:2247 playerData.cid = cidValue`），**从不回写 Activity 的 `cid` 字段**（`:254`），而 `doSwitchPage` 后续拉弹幕、字幕、看点（`:2408 playerData.cid = cid`）以及 `finish()` 回传用的都是这个字段 ⇒ 切P后弹幕/字幕/看点/进度上报**全部还挂在切P前的那个 cid 上**。这比审计报告描述的"只影响进度回传"更严重。
 4. **P2 在短视频播放器的同根因残留**（C1 组报告指出，该文件不在它的白名单内）——`activity/video/ShortVideoPlayerActivity.kt:686-691` 的 `DanmakuManager` 位置回调原来直接读 `playerBridge.currentPosition`（`player/IjkPlayerBridge.kt:203 mediaPlayer?.currentPosition`，是 **JNI**），而该回调跑在 DanmakuView 渲染线程上，与主线程重建播放器并发。改为读主线程维护的 `videoNow`（`:343-346` 加 `@Volatile` + 说明，该值由 `:831-846` 的 `state.collect` 在主线程写）。`DanmakuManager` 现在会去重，所以回调返回同一个旧值无害。
 
-## Wave 2 — 待办
+## Wave 2 — 并行子代理（7 项，全部交付）✅
 
 | 修复项 | 说明 | 状态 |
 |---|---|---|
-| P23 周期上报接线 | `reportHistoryPgc` 已有调用者（退出时上报），但还缺**播放中的周期性上报**（上游 `PROGRESS_REPORT_INTERVAL_MS = 15000`，`PlayerActivity.java:187`/`:1311-1319`）与**切P时的即时上报**（上游 `:2889-2890 reportProgressNow(true)`）。都落在 `activity/player/PlayerActivity.kt` | 🚧 子代理 `b1f2df72` |
-| P23 历史列表定位上次观看集 | pgc 卡片的 `epid/progress` 不随 `VideoCard` 传出（D 组规避代价），需在 `HistoryApi.java:208-213` 补两行赋值，并让番剧详情页接住 | 🚧 子代理 `46b9c008` |
-| F3 系列功能补齐 | 带图发动态、表情 type 9、转发引用原作者、发布选项、置顶/可见范围/编辑动态、评论数入口、话题页 | 🚧 子代理 `3914761b` |
-| F3 图文详情接口直取 | `api/OpusApi.java` 那段被注释掉的接口实现能不能用 | 🚧 子代理 `35f9f3ca` |
-| F1 后台播放 | 需 `foregroundServiceType="mediaPlayback"` + `FOREGROUND_SERVICE_MEDIA_PLAYBACK`（本项目 targetSdk 34，成本高于对方） | 🚧 调研子代理 `bbfcdaee` |
-| F2 搜索番剧 | 功能类 | 🚧 子代理 `73fe7d9e` |
-| F4 当版日志 / F5 版本选项卡 | 功能类 | 🚧 子代理 `2908490c` |
-| P34–P38 新发现的闪退点 | 见下方「Wave 4」 | 🚧 部分已修 |
+| P23 周期上报接线 | `reportHistoryPgc` 已有调用者（退出时上报），还缺**播放中的周期性上报**（上游 `PROGRESS_REPORT_INTERVAL_MS = 15000`）与**切P时的即时上报**。复用已有 250ms `progressRunnable`，不新建 Handler/Timer | ✅ 子代理 `b1f2df72` → 提交 `cfdf76c` |
+| P23 历史列表定位上次观看集 | pgc 卡片的 `epid/progress` 随 `VideoCard` 的 Parcel 传出（**只在读写序末尾追加，前 9 个字段顺序未动**），番剧详情页按 `epid` 反查 media_id 并定位 | ✅ 子代理 `46b9c008` → 提交 `cfdf76c` |
+| F3 系列功能补齐 | 带图发动态、表情 type 9、转发引用原作者；**未做**发布选项/置顶/可见范围/编辑动态/评论数入口/话题页 | ✅（部分）子代理 `3914761b` → 提交 `5d07c15` |
+| F3 图文详情接口直取 | `api/OpusApi.java` 改走 `opus/detail`（`id > 1e8`），失败回退抓页面；专栏 cv 仍抓页面 | ✅ 子代理 `35f9f3ca` → 提交 `5d07c15` |
+| F1 后台播放 | 需 `foregroundServiceType="mediaPlayback"` + `FOREGROUND_SERVICE_MEDIA_PLAYBACK`（本项目 targetSdk 34，成本高于对方） | ✅ 主智能体 → 提交 `18f4961` |
+| F2 搜索番剧 | `getBangumiFromSearchResult` + `SearchBangumiFragment` + 设置开关 | ✅ 子代理 `73fe7d9e` → 提交 `637ad00` / `2a1f981` |
+| F4 当版日志 / F5 版本选项卡 | 功能类 | ✅ 子代理 `2908490c` → 提交 `79ac9a1` |
+| P34–P38 新发现的闪退点 | 见下方「Wave 4」 | ✅ 提交 `8cf777a` + `5d07c15` |
 | E1 版本号单一数据源 / E3 CI | | ✅ 见 Wave 3 |
 | E2 release MD5 表 | | ✅ 见 Wave 3 |
+
+### Wave 2 的取舍与坑（值得单独记）
+
+- **`bottom` 标志只加 `@Volatile`，未改子类**：`activity/base/RefreshListActivity.kt` / `RefreshListFragment.kt` / `RefreshMainActivity.kt` / `activity/search/SearchFragment.kt` 四处的 `var bottom` 全部加 `@Volatile`。`bottom` 从不在分页开始时复位是**改动前就有的行为**，本轮未动。
+- **`VideoInfoFragment` 的 `playerData` 不照抄上游的"先发布再填充"**：上游是先发布半成品再回填，主线程可能读到 `videoUrl == null`；本项目改为「局部变量装配 + `getVideo` 之后一次性发布」。
+- **`VideoInfoFragment` 的防连点不用 `sent` 标志**：`WriteReplyActivity` 的 `sent` 只在成功返回后置位，请求途中连点仍会重复发送；本轮改为请求前置位、后台 `finally` 复位，并且不复用 `isTripleInProgress`（长按按下时就已置 true，会把请求本身挡掉）。
+- **`getVideo` 回填的 `progress == 0` 时跳过 `reportHistory`**：否则会把服务端该分P的续播进度覆盖成 0（与上游 `201c68f` 一致）。
+- **消息中心首屏失败置 `bottom = true`**：解开卡死但不自动重试。不用 `bottom = false` 是因为基类 `goOnLoad` 先 `page++` 再回调，重试时游标仍为 null 会产生重复条目。
+- **`CenterThreadPool` 的 `killProcess` 保留**：上游也没有移除，只在协程体补 `catch (Throwable) { MsgUtil.err(e) }`（本项目 `34e5bc9`），另在 `ErrorCatch` 的 `killProcess` 前加 `Thread.sleep(300)` 让崩溃页有机会先画出来。
+- **`getBangumi` 的进度不能无条件赋值**：调用方（番剧详情页从历史列表进来）可能已把已知进度塞进 `playerData.progress`，服务端查不到时若无条件赋 0 会把那份已知进度抹掉。改为「服务端进度 > 0 才覆盖」。
+- **Intent extra 单位歧义**：`PlayerActivity` 读的 `"progress"` 单位是**毫秒**，而历史列表带来的是**秒**。番剧详情页那条链路统一改名 `"progress_sec"`，避免被同一条 Intent 转发时静默差 1000 倍。唯一的秒→毫秒换算在 `activity/video/info/BangumiInfoFragment.kt:301`。
+- **`PendingIntent` 点通知回播放页**：靠 `getLaunchIntentForPackage` + `FLAG_ACTIVITY_REORDER_TO_FRONT`（与上游同款）。`PlayerActivity.onNewIntent` 被重写成直接 `finish()`，但 `activity/*/PlayerActivity` 在 Manifest 里**没有 launchMode**、改动前全项目也 `grep` 不到 `SINGLE_TOP|REORDER_TO_FRONT`，所以那段 `finish()` 是死代码；上游 `PlayerActivity.java:2063-2067` 有一模一样的写法。**保持不动**以免引入新的 task/launchMode 语义风险。
 
 ## Wave 3 — 工程规范（E3 CI 与 E1 版本一致性）✅
 
@@ -276,6 +288,26 @@ echo "EXIT=$?"          # 必须看这个，不要看管道
 - [x] 112 个单测全绿（`build2.log` / `build3.log`：tests=112 failures=0 errors=0 skipped=0）
 - [x] Wave 1 八个修复提交（`3c1e261` … `d676a77`）+ `ci:` 提交 `09623cd` + `docs:` 提交 `31a1d3e`
 - [x] Wave 3：CI 落地（E3）+ 版本号一致性守卫与文档纠偏（E1）
+- [x] Wave 2：7 项并行子代理全部交付（P23 上报链路、P37/P38、F1/F2/F3/F4/F5）
+- [x] 更新 `docs/review/upstream-fork-audit.md`，给已修条目打上"本项目已修"标记
+- [x] E2：release 发布说明里的 MD5 表（`6b2dea1`）
 - [ ] 还原 `local.properties` 的 Windows 路径（备份在 `.dsh/local.properties.windows-backup`）
-- [ ] 更新 `docs/review/upstream-fork-audit.md`，给已修条目打上"本项目已修"标记
-- [ ] E2 剩余：release 发布说明里的 MD5 表（对方只在 v1.0.2-fix1 / v1.1.1 / v1.1.1-fix 有）
+
+## 未做项（有意留下，不属于"已确认缺陷"）
+
+- **F3 剩余功能增量**：发布选项（`option` JSON）、动态置顶 / 可见范围 / 编辑动态、动态卡片评论数入口、`#话题#` 话题页、动态正文里的 BV/网页链接不可点击、番剧详情页的顶部季选项卡与「正在播放」标记。上方列出的是**对齐上游的功能增量**，与稳定性无关。
+- **F1 的 wakelock**：本轮只上前台服务，未加 `WAKE_LOCK` + `IjkMediaPlayer.setWakeMode`（后者确实存在：`ijkplayer-java/src/main/java/tv/danmaku/ijk/media/player/IjkMediaPlayer.java:541`）。先上不带 wakelock 的版本，真机确认熄屏表现后再决定。
+- **E2 的远程（自动）崩溃上报**：双方都没有，且本项目**已有用户手动上传崩溃堆栈**的能力，上游反而把按钮隐藏了，故不算落后。
+
+## 真机复验清单（本轮全部改动只过了编译 + 单测，没有联网/真机联调）
+
+按风险从高到低：
+
+1. **播放失败伪装成"播放完毕"**（P27）：断网或给一个坏 URL，确认不再自动跳下一P。
+2. **F1 后台播放**：退到后台/熄屏能否继续出声、通知栏「暂停/播放」「关闭」是否生效、点通知会不会把播放页关掉、Android 14 上有没有 `SecurityException`。
+3. **番剧进度**（P23/P24）：从历史列表点进番剧详情页是否定位到上次观看的集；看完一集退出后服务端进度是否更新；切P会不会拿上一集的进度误报。
+4. **带图发动态**（`scene=2` / `new_dyn` biz）：图能否上传成功、动态能否发出、图片能否显示。
+5. **表情 type 9**：服务端返回的 `emote.name` 是否**真带方括号**（如 `[doge]`）—— 若不带，`buildContents` 会一个都识别不出且**静默退化成纯文本、不报错**。
+6. **图文动态接口直取**：`id > 1e8` 的动态能否打开、专栏 cv 是否仍能打开（回退路径）。
+7. **搜索番剧**：新 tab 能否出结果、点击能否进详情页、设置里关掉后 tab 是否消失、老用户的 tab 排序是否还在。
+8. **更新日志页**：`TabLayout` 在 `asyncInflate` 的后台线程里膨胀是否安全（旁证：`AboutActivity` 也在 `asyncInflate` 里膨胀 `MaterialCardView`）、覆盖安装后是否只弹一次。
