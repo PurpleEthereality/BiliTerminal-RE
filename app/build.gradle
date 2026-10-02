@@ -124,12 +124,6 @@ android {
         disable 'UnusedResources', 'UnusedIds', 'MissingTranslation', 'ExtraTranslation'
     }
 
-    dexOptions {
-        preDexLibraries true
-        dexInProcess true
-        javaMaxHeapSize "8g"
-    }
-
     bundle {
         language {
             enableSplit true
