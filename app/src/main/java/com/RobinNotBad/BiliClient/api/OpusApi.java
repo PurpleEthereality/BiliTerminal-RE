@@ -5,6 +5,7 @@ import com.RobinNotBad.BiliClient.model.OpusParagraph;
 import com.RobinNotBad.BiliClient.model.Stats;
 import com.RobinNotBad.BiliClient.model.UserInfo;
 import com.RobinNotBad.BiliClient.util.JsonUtil;
+import com.RobinNotBad.BiliClient.util.Logu;
 import com.RobinNotBad.BiliClient.util.MsgUtil;
 import com.RobinNotBad.BiliClient.util.NetWorkUtil;
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil;
@@ -22,12 +23,56 @@ import okhttp3.ResponseBody;
 
 public class OpusApi {
 
+    /**
+     * 获取图文/专栏详情。
+     *
+     * <p>图文动态（id &gt; 1亿）优先走官方 opus/detail 接口直取 detail JSON，接口不可用时才退回
+     * 抓 www.bilibili.com 页面；专栏（cv 号，id &lt;= 1亿）官方接口不认（实测 code=4101105），
+     * 继续走页面抓取。两条路径拿到的 detail 结构一致（都有 basic/modules），共用同一段解析。
+     */
     public static Opus getOpus(long id) throws IOException, JSONException {
         Opus opus = new Opus();
         opus.type = Opus.TYPE_DYNAMIC;
         opus.id = id;
 
-        // 专栏（cv号）与图文动态统一走 HTML 网页抓取，仅页面 URL 不同：
+        // 图文动态优先走接口直取。上游 90058f5 的判定与回退条件在这里完整保留：
+        //   - 只对动态（id > 1e8）启用；
+        //   - 接口报错（网络失败 / WBI 签名失败 / -352 风控 / 结构变更）→ 回退网页抓取，
+        //     绝不把"能用的抓取"换成"不能用的接口"；
+        //   - 接口正常但明确没有图文数据（data.item 为空，如纯文字等旧式动态）→ 转旧版动态详情页；
+        //   - data.fallback 指向别的载体（已知 type=2 为专栏）→ 回退网页抓取，
+        //     网页会 301 到 read/cv{id}，正文照样能渲染。
+        // 收益：原先无论如何都要整页下载 opus/{id}，再在整页文本里搜 "detail" 抠 SSR JSON，
+        // 页面体积远大于数据本身且可能带多级 301（上游实测 2~3 秒 → 1 秒内）。
+        JSONObject detail = null;
+        if (id > 100000000) {
+            try {
+                // 实测该接口不校验 WBI 签名，但为与上游保持一致仍做签名，防官方后续收紧。
+                String apiUrl = ConfInfoApi.signWBI("https://api.bilibili.com/x/polymer/web-dynamic/v1/opus/detail"
+                        + "?timezone_offset=-480&features=htmlNewStyle&id=" + id);
+                JSONObject root = NetWorkUtil.getJson(apiUrl);
+                int code = root.optInt("code", -1);
+                JSONObject data = root.optJSONObject("data");
+                JSONObject item = data == null ? null : data.optJSONObject("item");
+                JSONObject fallback = data == null ? null : data.optJSONObject("fallback");
+                if (code != 0 || data == null) {
+                    Logu.w("OpusApi", "opus/detail code=" + code + "，回退网页抓取 id=" + id);
+                } else if (fallback != null && fallback.optLong("id", 0) > 0) {
+                    Logu.w("OpusApi", "opus/detail 返回 fallback（实为其它载体），回退网页抓取 id=" + id);
+                } else if (item == null || item.isNull("modules")) {
+                    // 接口明确回答"这个 id 没有图文数据"：纯文字等旧式动态，交给旧版动态详情页渲染
+                    opus.type = Opus.TYPE_DYNAMIC_OLD_STYLE;
+                    return opus;
+                } else {
+                    detail = item; // 接口直接给了图文数据，跳过下面的整页抓取
+                }
+            } catch (Exception e) {
+                // 接口不可用不致命：记录后继续走下面的网页抓取
+                Logu.w("OpusApi", "opus/detail 不可用，回退网页抓取：" + e);
+            }
+        }
+
+        // 网页兜底路径（专栏只能走这里）：
         //   专栏 id <= 1亿  -> https://www.bilibili.com/read/cv{id}
         //   动态 id >  1亿  -> https://www.bilibili.com/opus/{id}
         // 该方式不依赖 WBI 签名与登录态，在官方接口受风控/未登录场景下也能稳定加载正文。
@@ -35,42 +80,22 @@ public class OpusApi {
         if (id > 100000000)
             url = "https://www.bilibili.com/opus/" + id; // 动态 id 走 opus 页面抓取
         else url = "https://www.bilibili.com/read/cv" + id; // 专栏走 read/cv 页面抓取
-        try {
-            // 抓取 HTML 页面并从中提取 detail。B 站对无完整 Cookie 的请求可能返回风控/异常页
-            // （不含 __INITIAL_STATE__.detail），此时内容不可用，重试整个抓取以提升成功率。
-            String html = null;
-            for (int retry = 0; retry < 3; retry++) {
-                Response response = NetWorkUtil.getHtml(url);
-                // /read/cv{id} 有多层301重定向（加斜杠、跳转到/opus/），循环跟随直到拿到最终页面
-                for (int i = 0; i < 5; i++) {
-                    String location = response.header("Location");
-                    if (location == null || location.isEmpty()) break;
-                    // Location 可能是 "//www.bilibili.com/..." 这种协议相对地址，直接丢给
-                    // Request.Builder.url 会抛 IllegalArgumentException。基于当前响应的 URL
-                    // 解析成绝对地址，既兼容协议相对/相对路径，也避免白名单比对上拿到 null host。
-                    HttpUrl target = response.request().url().resolve(location);
-                    response.close();
-                    // 安全边界（审计 P9）：跟跳会带上完整登录 Cookie，目标必须落在 B 站域名白名单内；
-                    // 命中不了就放弃这次抓取，绝不把凭据带到任意主机。
-                    if (target == null || !NetWorkUtil.isBilibiliHost(target.host())) return opus;
-                    response = NetWorkUtil.getHtml(target.toString());
-                }
-                ResponseBody responseBody = response.body();
-                if (responseBody != null) {
-                    html = responseBody.string();
-                    android.util.Log.e("debug-专栏", "第" + (retry + 1) + "次 html长度=" + html.length() + " 含detail=" + html.contains("\"detail\":") + " 含INITIAL_STATE=" + html.contains("__INITIAL_STATE__"));
-                    if (html.contains("\"detail\"") && html.contains("__INITIAL_STATE__")) break; // 拿到正常内容页
-                }
-                if (html == null) html = "";
-            }
 
-            String detailStr = JsonUtil.search(html, "detail", "");
-            if (detailStr.isEmpty()) { android.util.Log.e("debug-专栏", "detail为空"); return opus; }
-            JSONObject detail = new JSONObject(detailStr);  //效率不高 能用就行 死去的jsonUtil居然还能发光发热
+        try {
+            if (detail == null) detail = fetchDetailFromHtml(url);
+            if (detail == null || detail.isNull("modules")) {
+                // 整页也抠不到 detail（风控页/结构变更）：动态转旧版动态详情页；
+                // 专栏直接抛错，让 OpusInfoActivity 的 onFailure 显示"加载失败"，
+                // 而不是像以前那样返回一个各字段为空的 opus、留下一张没有任何内容的空白页。
+                if (id > 100000000) {
+                    opus.type = Opus.TYPE_DYNAMIC_OLD_STYLE;
+                    return opus;
+                }
+                throw new JSONException("未能解析出图文内容，可能被风控拦截，请稍后重试");
+            }
 
             analyzeCommentInfo(opus, detail, id);
 
-            if (detail.isNull("modules")) return opus;    //isNull其实涵盖了!has的情况，之前都是咋想的判断两次，我简直是sb
             JSONArray modules = detail.getJSONArray("modules");
 
             for (int i = 0; i < modules.length(); i++) {
@@ -146,35 +171,69 @@ public class OpusApi {
                 else MsgUtil.err(e);
                 return opus;
             }
-            // 专栏（cv号，id 较小）：HTML 抓取异常不致命，保留空 opus 由页面提示错误，避免误跳动态详情页
+            // 专栏（cv号）：正文没抓到就直接抛出，由 OpusInfoActivity 的 onFailure 提示"加载失败"；
+            // 原先返回空 opus 只会留一张空白页，用户分不清是加载失败还是内容本身为空
+            throw e;
         } catch (IOException e) {
-            // HTML页面请求失败（如被风控拦截）：仅动态降级到旧版动态详情；
-            // 专栏保留空 opus，避免误跳动态详情页
+            // HTML 页面请求失败（如被风控拦截）：动态降级到旧版动态详情；
+            // 专栏同样抛出，让页面显示"加载失败"而不是空白页
             if (id > 100000000) {
                 opus.type = Opus.TYPE_DYNAMIC_OLD_STYLE;
                 return opus;
             }
-
-            /*
-            url = "https://api.bilibili.com/x/polymer/web-dynamic/v1/detail?";
-            url += "timezone_offset=-480&platform=web&gaia_source=main_web&id=" + id + "&features=itemOpusStyle,opusBigCover,onlyfansVote,endFooterHidden,decorationCard,onlyfansAssetsV2,ugcDelete,onlyfansQaCard,editable,opusPrivateVisible,avatarAutoTheme&web_location=333.1368&x-bili-device-req-json=%7B%22platform%22:%22web%22,%22device%22:%22pc%22%7D&x-bili-web-req-json=%7B%22spm_id%22:%22333.1368%22%7D";
-            Response response = NetWorkUtil.get(ConfInfoApi.signWBI(url));
-            ResponseBody responseBody = response.body();
-            if(responseBody == null) return opus;
-
-            JSONObject json = new JSONObject(responseBody.string());
-            JSONObject item = json.getJSONObject("data").getJSONObject("item");
-
-            analyzeOldStyleDynamic(opus, item);
-             */
+            throw e;
         }
-        // B站是会做图文的
 
+        // 能走到这里说明内容已解析完成
+        // B站是会做图文的
         opus.cover = "";
         // 兜底保证关键字段非空，避免详情页/适配器空指针
         if (opus.upInfo == null) opus.upInfo = new UserInfo();
         if (opus.stats == null) opus.stats = new Stats();
         return opus;
+    }
+
+    /**
+     * 网页兜底路径：抓取 opus/read 页面，从 SSR 内嵌的 __INITIAL_STATE__.detail 里抠出 detail JSON。
+     * 官方接口不可用（风控/未登录/结构变更）时靠它保证内容照样能加载。
+     *
+     * @return detail；页面被风控拦截或抠不出内容时返回 null
+     */
+    private static JSONObject fetchDetailFromHtml(String url) throws IOException, JSONException {
+        // 抓取 HTML 页面并从中提取 detail。B 站对无完整 Cookie 的请求可能返回风控/异常页
+        // （不含 __INITIAL_STATE__.detail），此时内容不可用，重试整个抓取以提升成功率。
+        String html = null;
+        for (int retry = 0; retry < 3; retry++) {
+            Response response = NetWorkUtil.getHtml(url);
+            // /read/cv{id} 有多层301重定向（加斜杠、跳转到/opus/），循环跟随直到拿到最终页面
+            for (int i = 0; i < 5; i++) {
+                String location = response.header("Location");
+                if (location == null || location.isEmpty()) break;
+                // Location 可能是 "//www.bilibili.com/..." 这种协议相对地址，直接丢给
+                // Request.Builder.url 会抛 IllegalArgumentException。基于当前响应的 URL
+                // 解析成绝对地址，既兼容协议相对/相对路径，也避免白名单比对上拿到 null host。
+                HttpUrl target = response.request().url().resolve(location);
+                response.close();
+                // 安全边界（审计 P9）：跟跳会带上完整登录 Cookie，目标必须落在 B 站域名白名单内；
+                // 命中不了就放弃这次抓取，绝不把凭据带到任意主机。
+                if (target == null || !NetWorkUtil.isBilibiliHost(target.host())) return null;
+                response = NetWorkUtil.getHtml(target.toString());
+            }
+            ResponseBody responseBody = response.body();
+            if (responseBody != null) {
+                html = responseBody.string();
+                android.util.Log.e("debug-专栏", "第" + (retry + 1) + "次 html长度=" + html.length() + " 含detail=" + html.contains("\"detail\":") + " 含INITIAL_STATE=" + html.contains("__INITIAL_STATE__"));
+                if (html.contains("\"detail\"") && html.contains("__INITIAL_STATE__")) break; // 拿到正常内容页
+            }
+            if (html == null) html = "";
+        }
+
+        String detailStr = JsonUtil.search(html, "detail", "");
+        if (detailStr.isEmpty()) {
+            android.util.Log.e("debug-专栏", "detail为空");
+            return null;
+        }
+        return new JSONObject(detailStr);  //效率不高 能用就行 死去的jsonUtil居然还能发光发热
     }
 
     public static void analyzeCommentInfo(Opus opus, JSONObject detail, long id) {

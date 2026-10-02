@@ -106,7 +106,14 @@ public class VideoInfo implements Parcelable, Serializable { // 自定义类需�
     };
 
     public VideoCard toCard() {
-        return new VideoCard(title, staff.get(0).name, StringUtil.toWan(stats.view), cover, aid, bvid);
+        // 不能直接取 staff.get(0)：联合投稿接口没返回 staff、UP主已注销、稿件被删等情况下 staff 会是空列表；
+        // stats 同理可能为 null。转发预览卡（SendDynamicActivity）会走这里，越界/空指针会直接崩在发送页。
+        String upName = "";
+        if (staff != null && !staff.isEmpty() && staff.get(0) != null) {
+            upName = staff.get(0).name == null ? "" : staff.get(0).name;
+        }
+        String viewStr = stats == null ? "" : StringUtil.toWan(stats.view);
+        return new VideoCard(title, upName, viewStr, cover, aid, bvid);
     }
 
     public PlayerData toPlayerData(int index) {

@@ -11,7 +11,9 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class EmoteApi {
     public static final String BUSINESS_REPLY = "reply";
@@ -154,6 +156,34 @@ public class EmoteApi {
                 .put("type", isAdd ? 0 : 1);
         JSONObject emotePackages = NetWorkUtil.getJson(url, NetWorkUtil.webHeaders);
         return emotePackages.getInt("code");
+    }
+
+    /**
+     * 获取该 business 下全部表情的文本形式（如 "[doge]"）集合。
+     *
+     * <p>发布动态时用它把正文里的 [xxx] 识别成 type 9 表情节点；拉取失败时返回空集合，
+     * 发布退化成纯文本而不是直接报错——表情只是锦上添花，不该挡住发送。
+     *
+     * @param business business，见 {@link #BUSINESS_DYNAMIC} / {@link #BUSINESS_REPLY}
+     * @return 表情名与别名的集合，可能为空
+     */
+    public static Set<String> getEmoteTexts(String business) {
+        Set<String> texts = new HashSet<>();
+        try {
+            List<EmotePackage> packages = getEmotes(business);
+            if (packages != null) {
+                for (EmotePackage emotePackage : packages) {
+                    if (emotePackage == null || emotePackage.emotes == null) continue;
+                    for (Emote emote : emotePackage.emotes) {
+                        if (emote == null) continue;
+                        if (emote.name != null && !emote.name.isEmpty()) texts.add(emote.name);
+                        if (emote.alias != null && !emote.alias.isEmpty()) texts.add(emote.alias);
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return texts;
     }
 
     public static List<EmotePackage> analyzeEmotePackages(JSONArray packages) throws JSONException {

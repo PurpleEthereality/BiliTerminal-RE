@@ -13,6 +13,7 @@ import com.RobinNotBad.BiliClient.activity.base.RefreshMainActivity
 import com.RobinNotBad.BiliClient.adapter.dynamic.DynamicAdapter
 import com.RobinNotBad.BiliClient.adapter.dynamic.DynamicHolder
 import com.RobinNotBad.BiliClient.api.DynamicApi
+import com.RobinNotBad.BiliClient.api.EmoteApi
 import com.RobinNotBad.BiliClient.api.VoteApi
 import com.RobinNotBad.BiliClient.model.Dynamic
 import com.RobinNotBad.BiliClient.model.VoteDraft
@@ -46,6 +47,10 @@ class DynamicActivity : RefreshMainActivity() {
                     var text = data.getStringExtra("text")
                     if (TextUtils.isEmpty(text)) text = "转发动态"
                     val dynamicId = data.getLongExtra("dynamicId", -1)
+                    // 转发自动引用所需的信息：DynamicHolder 放进启动 intent，SendDynamicActivity 原样回传
+                    val authorName = data.getStringExtra("forwardAuthorName")
+                    val authorMid = data.getLongExtra("forwardAuthorMid", 0)
+                    val authorContent = data.getStringExtra("forwardContentText")
                     val finalText = text!!
                     CenterThreadPool.run {
                         try {
@@ -59,7 +64,9 @@ class DynamicActivity : RefreshMainActivity() {
                                     atUids[matchedString] = uid
                                 }
                             }
-                            val dynId = DynamicApi.relayDynamic(finalText, atUids.ifEmpty { null }, dynamicId)
+                            val emoteTexts = EmoteApi.getEmoteTexts(EmoteApi.BUSINESS_DYNAMIC)
+                            val dynId = DynamicApi.relayDynamic(finalText, atUids.ifEmpty { null }, dynamicId,
+                                authorName, authorMid, authorContent, emoteTexts)
                             if (dynId != -1L) {
                                 activity.runOnUiThread { MsgUtil.showMsg("转发成功~") }
                             } else {
@@ -95,64 +102,75 @@ class DynamicActivity : RefreshMainActivity() {
         val code = result.resultCode
         val data = result.data
         if (code == RESULT_OK && data != null) {
-            val text = data.getStringExtra("text")
+            val text = data.getStringExtra("text") ?: ""
             val voteDraft = data.getSerializableExtra("voteDraft") as? VoteDraft
+            val picsJson = data.getStringExtra("pics")
             CenterThreadPool.run {
                 try {
-                    // 如果有投票草稿，先创建投票
-                    var voteId: Long = -1
-                    if (voteDraft != null && voteDraft.isValid()) {
-                        voteId = VoteApi.createVote(voteDraft)
-                    }
-
-                    val atUids = HashMap<String, Long>()
-                    val pattern = Pattern.compile("@(\\S+)\\s")
-                    val matcher = pattern.matcher(text)
-                    while (matcher.find()) {
-                        val matchedString = matcher.group(1)
-                        val uid: Long
-                        if (DynamicApi.mentionAtFindUser(matchedString).also { uid = it } != -1L) {
-                            atUids[matchedString] = uid
-                        }
-                    }
-
-                    val dynId: Long
-                    if (voteId > 0) {
-                        // 有投票，使用复杂动态发布并挂载投票
-                        val attachCard = org.json.JSONObject().put("vote", org.json.JSONObject().put("vote_id", voteId))
-                        val contents = if (atUids.isEmpty()) {
-                            DynamicApi.parseAtContent(text, HashMap())
-                        } else {
-                            DynamicApi.parseAtContent(text, atUids)
-                        }
-                        dynId = DynamicApi.publishComplex(
-                            contents, null, null, null, 1, attachCard, null
-                        )
+                    val pics = if (!picsJson.isNullOrEmpty()) org.json.JSONArray(picsJson) else null
+                    if (text.isEmpty() && pics == null) {
+                        runOnUiThread { MsgUtil.showMsg("还没输入内容呢~") }
                     } else {
-                        dynId = if (atUids.isEmpty()) {
-                            DynamicApi.publishTextContent(text)
-                        } else {
-                            DynamicApi.publishTextContent(text, atUids)
+                        // 如果有投票草稿，先创建投票
+                        var voteId: Long = -1
+                        if (voteDraft != null && voteDraft.isValid()) {
+                            voteId = VoteApi.createVote(voteDraft)
                         }
-                    }
-                    if (dynId != -1L) {
-                        runOnUiThread { MsgUtil.showMsg("发送成功~") }
-                        CenterThreadPool.run {
-                            try {
-                                val dynamic = DynamicApi.getDynamic(dynId)
-                                dynamicList!!.add(0, dynamic)
-                                runOnUiThread {
-                                    if (type == "all") {
-                                        dynamicAdapter!!.notifyItemInserted(0)
-                                        dynamicAdapter!!.notifyItemRangeChanged(0, dynamicList!!.size)
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                MsgUtil.err(e)
+
+                        val atUids = HashMap<String, Long>()
+                        val pattern = Pattern.compile("@(\\S+)\\s")
+                        val matcher = pattern.matcher(text)
+                        while (matcher.find()) {
+                            val matchedString = matcher.group(1)
+                            val uid: Long
+                            if (DynamicApi.mentionAtFindUser(matchedString).also { uid = it } != -1L) {
+                                atUids[matchedString] = uid
                             }
                         }
-                    } else {
-                        runOnUiThread { MsgUtil.showMsg("发送失败") }
+
+                        // 表情文本用于把正文里的 [xxx] 拆成 type 9 表情节点
+                        val emoteTexts = EmoteApi.getEmoteTexts(EmoteApi.BUSINESS_DYNAMIC)
+
+                        val dynId: Long
+                        if (voteId > 0) {
+                            // 有投票，使用复杂动态发布并挂载投票
+                            val attachCard = org.json.JSONObject().put("vote", org.json.JSONObject().put("vote_id", voteId))
+                            val contents = DynamicApi.buildContents(text, atUids.ifEmpty { null }, emoteTexts)
+                            dynId = DynamicApi.publishComplex(
+                                contents, pics, null, null, if (pics != null) 2 else 1,
+                                attachCard, null
+                            )
+                        } else if (pics != null) {
+                            // 带图动态走 scene=2，图片已在 SendDynamicActivity 上传成 pics 节点
+                            dynId = DynamicApi.publishImageContent(text, atUids.ifEmpty { null }, pics, null, emoteTexts)
+                        } else if (atUids.isEmpty() && !DynamicApi.containsEmoteText(text, emoteTexts)) {
+                            // 既没有 @ 也没有可用表情，继续走原来的纯文本接口，不无谓地换链路
+                            dynId = DynamicApi.publishTextContent(text)
+                        } else {
+                            dynId = DynamicApi.publishTextContent(text, atUids.ifEmpty { null }, null, emoteTexts)
+                        }
+                        if (dynId != -1L) {
+                            runOnUiThread { MsgUtil.showMsg("发送成功~") }
+                            CenterThreadPool.run {
+                                try {
+                                    val dynamic = DynamicApi.getDynamic(dynId)
+                                    runOnUiThread {
+                                        // list 突变与 Adapter 通知必须在同一线程：
+                                        // 后台改 list、主线程通知的话，RecyclerView 下一次 layout 读到的
+                                        // 可能是改了一半的 list，会偶发 IndexOutOfBoundsException
+                                        dynamicList!!.add(0, dynamic)
+                                        if (type == "all") {
+                                            dynamicAdapter!!.notifyItemInserted(0)
+                                            dynamicAdapter!!.notifyItemRangeChanged(0, dynamicList!!.size)
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    MsgUtil.err(e)
+                                }
+                            }
+                        } else {
+                            runOnUiThread { MsgUtil.showMsg("发送失败") }
+                        }
                     }
                 } catch (e: Exception) {
                     runOnUiThread { MsgUtil.err(e) }

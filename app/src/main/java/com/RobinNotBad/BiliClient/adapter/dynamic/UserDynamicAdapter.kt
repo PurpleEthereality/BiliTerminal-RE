@@ -103,6 +103,10 @@ class UserDynamicAdapter(
 
     override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
         super.onViewRecycled(holder)
+        // 复用前清掉「同 URL 跳过加载」的缓存，否则 recycled 的 holder 会残留上一个动态的头图/配图
+        if (holder is DynamicHolder) {
+            holder.clearImageCache()
+        }
     }
 
     override fun getItemCount(): Int {

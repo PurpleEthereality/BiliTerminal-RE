@@ -45,6 +45,9 @@ import okhttp3.ResponseBody;
 
 public class DynamicApi {
 
+    /** 表情文本形如 [doge]，长度上限按 B 站惯例取 32。 */
+    private static final Pattern EMOTE_PATTERN = Pattern.compile("\\[[^\\[\\]]{1,32}\\]");
+
     /**
      * 发送纯文本动态
      *
@@ -91,8 +94,8 @@ public class DynamicApi {
                 .put("meta", new JSONObject().put("app_meta", new JSONObject()
                         .put("from", "create.dynamic.web")
                         .put("mobi_app", "web")));
-        if (pics != null) reqBody.put("pics", pics);
-        if (option != null) reqBody.put("option", option);
+        if (pics != null && pics.length() > 0) reqBody.put("pics", pics);
+        if (option != null && option.length() > 0) reqBody.put("option", option);
         if (topic != null) reqBody.put("topic", topic);
         if (attachCard != null) reqBody.put("attach_card", attachCard);
         reqBody = new JSONObject().put("dyn_req", reqBody);
@@ -104,7 +107,7 @@ public class DynamicApi {
             }
         }
 
-    Logu.v("publishComplex reqBody=" + reqBody);
+        Logu.v("publishComplex reqBody=" + reqBody);
         Response resp = Objects.requireNonNull(NetWorkUtil.postJson(url, reqBody.toString()));
         try {
             ResponseBody body = resp.body();
@@ -134,6 +137,68 @@ public class DynamicApi {
     }
 
     /**
+     * 构造发布用的 contents：先按 @ 拆节点，再把文本节点里的表情拆成 type 9 节点。
+     *
+     * <p>与上游一致：只有 emoteTexts 里确实存在的 [xxx] 才会转成表情节点，否则保持纯文本，
+     * 免得把用户随手打的方括号当成表情发出去。emoteTexts 为空时行为与旧版完全一致。
+     *
+     * @param content    正文
+     * @param atUserUid  正文内 @ 到的人（可为 null，转发引用等场景不解析 @）
+     * @param emoteTexts 可用表情名集合（可为 null / 空）
+     * @return Content JSON 数组
+     */
+    public static JSONArray buildContents(String content, Map<String, Long> atUserUid, Set<String> emoteTexts) throws JSONException {
+        JSONArray contents = parseAtContent(content, atUserUid != null ? atUserUid : new HashMap<>());
+        if (emoteTexts == null || emoteTexts.isEmpty()) return contents;
+
+        JSONArray result = new JSONArray();
+        for (int i = 0; i < contents.length(); i++) {
+            JSONObject node = contents.optJSONObject(i);
+            if (node == null) continue;
+            if (node.optInt("type", 1) != 1) {
+                result.put(node);
+                continue;
+            }
+            String raw = node.optString("raw_text", "");
+            if (raw.isEmpty()) {
+                result.put(node);
+                continue;
+            }
+            Matcher matcher = EMOTE_PATTERN.matcher(raw);
+            int pos = 0;
+            boolean matched = false;
+            while (matcher.find()) {
+                if (!emoteTexts.contains(matcher.group())) continue;
+                matched = true;
+                if (matcher.start() > pos) result.put(Content.create(raw.substring(pos, matcher.start()), 1, null));
+                result.put(Content.create(matcher.group(), 9, null));
+                pos = matcher.end();
+            }
+            if (!matched) {
+                result.put(node);
+            } else if (pos < raw.length()) {
+                result.put(Content.create(raw.substring(pos), 1, null));
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 正文里是否真的含有可用表情文本（形如 [doge] 且确实在 emoteTexts 里）。
+     *
+     * <p>用来决定纯文本动态要不要改走复杂动态接口：只有真的含表情时才值得改接口，
+     * 不含表情就继续走老的 dynamic_svr/create，避免无谓地改变发布链路。
+     */
+    public static boolean containsEmoteText(String content, Set<String> emoteTexts) {
+        if (content == null || content.isEmpty() || emoteTexts == null || emoteTexts.isEmpty()) return false;
+        Matcher matcher = EMOTE_PATTERN.matcher(content);
+        while (matcher.find()) {
+            if (emoteTexts.contains(matcher.group())) return true;
+        }
+        return false;
+    }
+
+    /**
      * 发布可包含艾特信息的文本动态
      *
      * @param content   文本内容
@@ -146,6 +211,88 @@ public class DynamicApi {
     }
 
     /**
+     * 发布文本动态（可带发布选项与表情）
+     *
+     * @param content    文本内容
+     * @param atUserUid  文本内at到的人的用户名uid map
+     * @param option     发布选项，见 {@link #buildPublishOption}，可为 null
+     * @param emoteTexts 可用表情名集合，可为 null
+     * @return 发送成功返回的动态id，失败返回-1
+     */
+    public static long publishTextContent(String content, Map<String, Long> atUserUid, JSONObject option, Set<String> emoteTexts) throws JSONException, IOException {
+        return publishComplex(buildContents(content, atUserUid, emoteTexts), null, option, null, 1, null);
+    }
+
+    /**
+     * 发布带图动态。
+     *
+     * <p>图片需先用 {@code ImageApi} 上传图床，再按其返回的 {@code toDynamicPicJson()} 组装成 pics 数组。
+     * 带图时 scene=2，无图时退回 scene=1（与 B 站 web 端一致）。
+     *
+     * @param content   文本内容
+     * @param atUserUid 文本内at到的人的用户名uid map
+     * @param pics      图片 JSON 数组，见 B 站 pics 结构
+     * @return 发送成功返回的动态id，失败返回-1
+     */
+    public static long publishImageContent(String content, Map<String, Long> atUserUid, JSONArray pics) throws JSONException, IOException {
+        return publishImageContent(content, atUserUid, pics, null, null);
+    }
+
+    /**
+     * 发布带图动态（带发布选项与表情）
+     *
+     * @param content    文本内容
+     * @param atUserUid  文本内at到的人的用户名uid map
+     * @param pics       图片 JSON 数组
+     * @param option     发布选项，可为 null
+     * @param emoteTexts 可用表情名集合，可为 null
+     * @return 发送成功返回的动态id，失败返回-1
+     */
+    public static long publishImageContent(String content, Map<String, Long> atUserUid, JSONArray pics, JSONObject option, Set<String> emoteTexts) throws JSONException, IOException {
+        boolean hasPics = pics != null && pics.length() > 0;
+        return publishComplex(buildContents(content, atUserUid, emoteTexts), hasPics ? pics : null, option, null,
+                hasPics ? 2 : 1, null);
+    }
+
+    /**
+     * 构造发布选项。参数为 null / 假时对应项不下发，交给服务端走默认值。
+     *
+     * @param privatePub      是否仅自己可见
+     * @param closeComment    是否关闭评论，null 表示不改
+     * @param upChooseComment 是否开启评论精选，null 表示不改
+     * @param timerPubTime    定时发布时间，格式 yyyy-MM-dd HH:mm，null / 空表示不定时
+     */
+    public static JSONObject buildPublishOption(boolean privatePub, Integer closeComment, Integer upChooseComment, String timerPubTime) throws JSONException {
+        JSONObject option = new JSONObject();
+        if (privatePub) option.put("private_pub", true);
+        if (closeComment != null) option.put("close_comment", closeComment);
+        if (upChooseComment != null) option.put("up_choose_comment", upChooseComment);
+        if (timerPubTime != null && !timerPubTime.isEmpty()) option.put("timer_pub_time", timerPubTime);
+        return option;
+    }
+
+    /**
+     * 构造转发时的自动引用内容：{@code //@原作者:原内容}
+     *
+     * <p>原作者用 type 2 节点（这样点得进主页），":" 与 "//" 是普通文本，
+     * 原内容再走一遍 {@link #buildContents} 以便里面的表情/at 也是结构化节点。
+     * authorName 为空时什么都不做——拿不到作者就宁可不加引用，也不要拼出半个 "@"。
+     */
+    private static void appendRepostQuote(JSONArray userNodes, String authorName, long authorMid, String authorContent, Set<String> emoteTexts) throws JSONException {
+        if (authorName == null || authorName.isEmpty()) return;
+        userNodes.put(Content.create("//", 1, null));
+        userNodes.put(Content.create("@" + authorName, 2, String.valueOf(authorMid)));
+        userNodes.put(Content.create(":", 1, null));
+        if (authorContent != null && !authorContent.isEmpty()) {
+            JSONArray origNodes = buildContents(authorContent, null, emoteTexts);
+            for (int i = 0; i < origNodes.length(); i++) {
+                JSONObject node = origNodes.optJSONObject(i);
+                if (node != null) userNodes.put(node);
+            }
+        }
+    }
+
+    /**
      * 转发视频到动态，瞎扒的api
      *
      * @param text 附加文字
@@ -153,12 +300,29 @@ public class DynamicApi {
      * @return 发送成功返回的动态id，失败返回-1
      */
     public static long relayVideo(String text, Map<String, Long> atUserUid, long aid) throws JSONException, IOException {
-        return publishComplex(text == null ? new JSONArray().put(Content.create("", 1, null)) : atUserUid != null ? parseAtContent(text, atUserUid) : new JSONArray().put(Content.create(text, 1, null)),
-                null, null, null,
-                5, Map.of("web_repost_src",
-                        new JSONObject().put("revs_id", new JSONObject()
-                                .put("dyn_type", 8)
-                                .put("rid", aid))));
+        return relayVideo(text, atUserUid, aid, null, 0, null, null);
+    }
+
+    /**
+     * 转发视频到动态（自动带上 //@UP主:原标题 的引用）
+     *
+     * @param text          附加文字
+     * @param atUserUid     附加文字内at到的人的用户名uid map
+     * @param aid           aid
+     * @param authorName    原作者昵称，为空则不加引用
+     * @param authorMid     原作者uid
+     * @param authorContent 被转发内容的纯文本（视频标题）
+     * @param emoteTexts    可用表情名集合，可为 null
+     * @return 发送成功返回的动态id，失败返回-1
+     */
+    public static long relayVideo(String text, Map<String, Long> atUserUid, long aid, String authorName, long authorMid, String authorContent, Set<String> emoteTexts) throws JSONException, IOException {
+        JSONArray contents = text == null ? new JSONArray().put(Content.create("", 1, null)) : buildContents(text, atUserUid, emoteTexts);
+        appendRepostQuote(contents, authorName, authorMid, authorContent, emoteTexts);
+        Map<String, Object> repostSrc = new HashMap<>();
+        repostSrc.put("web_repost_src", new JSONObject().put("revs_id", new JSONObject()
+                .put("dyn_type", 8)
+                .put("rid", aid)));
+        return publishComplex(contents, null, null, null, 5, repostSrc);
     }
 
     /**
@@ -196,9 +360,27 @@ public class DynamicApi {
      * @return 发送成功返回的动态id，失败返回-1
      */
     public static long relayDynamic(String text, Map<String, Long> atUserUid, long dyid) throws JSONException, IOException {
-        return publishComplex(text == null ? new JSONArray().put(Content.create("", 1, null)) : atUserUid != null ? parseAtContent(text, atUserUid) : new JSONArray().put(Content.create(text, 1, null)),
-                null, null, null,
-                4, Map.of("web_repost_src", new JSONObject().put("dyn_id_str", String.valueOf(dyid))));
+        return relayDynamic(text, atUserUid, dyid, null, 0, null, null);
+    }
+
+    /**
+     * 转发动态（自动带上 //@原作者:原内容 的引用）
+     *
+     * @param text          附加文字
+     * @param atUserUid     附加文字内at到的人的用户名uid map
+     * @param dyid          动态id
+     * @param authorName    原作者昵称，为空则不加引用
+     * @param authorMid     原作者uid
+     * @param authorContent 被转发动态的纯文本
+     * @param emoteTexts    可用表情名集合，可为 null
+     * @return 发送成功返回的动态id，失败返回-1
+     */
+    public static long relayDynamic(String text, Map<String, Long> atUserUid, long dyid, String authorName, long authorMid, String authorContent, Set<String> emoteTexts) throws JSONException, IOException {
+        JSONArray contents = text == null ? new JSONArray().put(Content.create("", 1, null)) : buildContents(text, atUserUid, emoteTexts);
+        appendRepostQuote(contents, authorName, authorMid, authorContent, emoteTexts);
+        Map<String, Object> repostSrc = new HashMap<>();
+        repostSrc.put("web_repost_src", new JSONObject().put("dyn_id_str", String.valueOf(dyid)));
+        return publishComplex(contents, null, null, null, 4, repostSrc);
     }
 
     /**
@@ -217,7 +399,7 @@ public class DynamicApi {
             String key = entry.getKey();
             long val = entry.getValue();
 
-            Pattern pattern = Pattern.compile("@" + key + " ");
+            Pattern pattern = Pattern.compile("@" + Pattern.quote(key) + " ");  //昵称里可能带 .*[\ 等正则元字符，不转义会抛 PatternSyntaxException
             Matcher matcher = pattern.matcher(content);
             List<Pair<Integer, Integer>> mIndex = new ArrayList<>();
             while (matcher.find()) {

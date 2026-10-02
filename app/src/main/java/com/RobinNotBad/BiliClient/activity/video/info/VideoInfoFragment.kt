@@ -41,6 +41,7 @@ import com.RobinNotBad.BiliClient.activity.video.collection.CollectionInfoActivi
 import com.RobinNotBad.BiliClient.adapter.user.UpListAdapter
 import com.RobinNotBad.BiliClient.api.BangumiApi
 import com.RobinNotBad.BiliClient.api.DynamicApi
+import com.RobinNotBad.BiliClient.api.EmoteApi
 import com.RobinNotBad.BiliClient.api.HistoryApi
 import com.RobinNotBad.BiliClient.api.LikeCoinFavApi
 import com.RobinNotBad.BiliClient.api.PlayerApi
@@ -66,6 +67,7 @@ import com.bumptech.glide.load.resource.bitmap.RoundedCorners
 import com.bumptech.glide.request.RequestOptions
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import org.json.JSONArray
 import java.io.File
 
 class VideoInfoFragment : BaseFragment() {
@@ -86,7 +88,8 @@ class VideoInfoFragment : BaseFragment() {
         val code = result.resultCode
         val data = result.data
         if (code == Activity.RESULT_OK && data != null) {
-            val text = data.getStringExtra("text")
+            val text = data.getStringExtra("text") ?: ""
+            val picsJson = data.getStringExtra("pics")
             CenterThreadPool.run {
                 try {
                     val atUids = HashMap<String, Long>()
@@ -99,7 +102,26 @@ class VideoInfoFragment : BaseFragment() {
                             atUids[matchedString!!] = uid
                         }
                     }
-                    val dynId = DynamicApi.relayVideo(text, if (atUids.isEmpty()) null else atUids, videoInfo!!.aid)
+                    val emoteTexts = EmoteApi.getEmoteTexts(EmoteApi.BUSINESS_DYNAMIC)
+
+                    // 转发界面本该隐藏"添加图片"（normalPublish=false），pics 正常不会回来。
+                    // 万一回来了也不能静默丢掉——relayVideo 没有 pics 位，直接提示用户。
+                    if (!picsJson.isNullOrEmpty()) {
+                        CenterThreadPool.runOnUiThread { MsgUtil.showMsg("视频转发不支持带图，请去掉图片后重试") }
+                        return@run
+                    }
+
+                    // 带上原作者，服务端才能在动态里渲染出 "//@UP主:标题"
+                    val author = videoInfo?.staff?.firstOrNull()
+                    val dynId = DynamicApi.relayVideo(
+                        text,
+                        if (atUids.isEmpty()) null else atUids,
+                        videoInfo!!.aid,
+                        author?.name,
+                        author?.mid ?: 0L,
+                        videoInfo!!.title,
+                        emoteTexts
+                    )
 
                     if (dynId != -1L) MsgUtil.showMsg("转发成功~")
                     else MsgUtil.showMsg("转发失败")
@@ -505,6 +527,10 @@ class VideoInfoFragment : BaseFragment() {
         }
 
         relay.setOnClickListener {
+            // 让发送页知道这是一次"转发视频"：显示视频预览卡、隐藏"添加图片"入口，
+            // 否则 normalPublish 会判定为普通动态，用户选的图会被静默丢弃。
+            // SendDynamicActivity.onDestroy 会把该上下文清回 null。
+            TerminalContext.getInstance().setForwardContent(videoInfo)
             val intent = Intent()
             intent.setClass(requireContext(), SendDynamicActivity::class.java)
             writeDynamicLauncher.launch(intent)

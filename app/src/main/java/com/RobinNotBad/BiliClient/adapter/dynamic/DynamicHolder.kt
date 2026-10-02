@@ -215,6 +215,17 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
     var voteStatus: TextView? = null
     private var currentVoteInfo: VoteInfo? = null
 
+    /**
+     * 复用前清掉「同 URL 跳过加载」的缓存，供 Adapter.onViewRecycled 调用。
+     *
+     * 不清的话，被子 ViewHolder 回收复用时 lastAvatarUrl / lastImageUrl 还留着上一条动态的值，
+     * 新动态如果恰好用了同一个头像或配图 URL 会被跳过加载，于是显示上一条的残留图。
+     */
+    fun clearImageCache() {
+        lastAvatarUrl = null
+        lastImageUrl = null
+    }
+
     init {
         if (isChild) {
             username = itemView.findViewById(R.id.child_username)
@@ -646,6 +657,13 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
             val intent = Intent()
             intent.setClass(mActivity, SendDynamicActivity::class.java)
             intent.putExtra("dynamicId", dynamic.dynamicId)
+            // 转发自动引用所需的信息：SendDynamicActivity 完成时会把启动时的 extras 原样回传，
+            // 由 DynamicActivity.getRelayDynamicLauncher 取出并拼成 //@原作者:原内容
+            if (dynamic.userInfo != null) {
+                intent.putExtra("forwardAuthorName", dynamic.userInfo.name)
+                intent.putExtra("forwardAuthorMid", dynamic.userInfo.mid)
+            }
+            if (dynamic.content != null) intent.putExtra("forwardContentText", dynamic.content.toString())
             TerminalContext.getInstance().setForwardContent(dynamic)
             relayDynamicLauncher!!.launch(intent)
         }
