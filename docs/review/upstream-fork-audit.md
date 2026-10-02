@@ -22,7 +22,7 @@
 
 ## 〇·附、修复状态总览
 
-> 本报告列出的缺陷项已参考上游分叉 `cyq114514/Re-BiliTerminal` 逐条修复完毕，代码分布在 **21 个提交**中。
+> 本报告列出的缺陷项已参考上游分叉 `cyq114514/Re-BiliTerminal` 逐条修复完毕，代码分布在 **26 个提交**中。
 > 逐条实现细节、每个子代理的取舍理由与验证记录见 **`docs/review/fork-fix-worklog.md`**。
 
 | 组 | 覆盖条目 | 提交 |
@@ -37,15 +37,17 @@
 | CI 覆盖面（E3） | 新增 PR 与主干 CI，发版前先跑单测 | `09623cd` |
 | 版本号一致性（E1）与文档纠偏 | `verifyVersionConsistency` 任务 + UpdateManager 加固 + readme/FEATURES 纠偏 | `4d88b98` `8996a1a` `f26407e` |
 | 补齐审计漏核的闪退点（P6 第 1 / 6 / 7 项的复核） | P34 / P35 / P36 | `8cf777a` |
-| P37 / P38（动态列表后台突变、Adapter 不清图缓存） | 并入 Wave 2 动态组 | `f3-dynamic` 系列 |
+| P37 / P38（动态列表后台突变、Adapter 不清图缓存） | 并入 Wave 2 动态组 | `5d07c15` |
 | Release 产物可追溯性（E2） | Release 说明与附件同时提供 `md5sums.txt` | `6b2dea1` `265a820` |
 | E2 判定更正 | 崩溃堆栈上传能力本项目已有、上游反而隐藏了按钮 | `a9c15e7` |
 | P6 表改判 + P34–P38 详节 + F2/F4/F5 处置 | 报告自身更新 | `dfc0a3a` |
 | 番剧进度上报全链路（P23/P24） | `reportHistoryPgc` 接线、历史列表带 epid 定位上次观看集、播放侧周期/即时上报、8 处主线程 JNI 读取清理 | `cfdf76c` |
 | F4 / F5 更新日志按版本分页 | 升级后首次启动自动展示当版日志；删除与它重复的旧「更新公告」弹页 | `79ac9a1` |
 | F2 搜索番剧 tab | `getBangumiFromSearchResult` + `SearchBangumiFragment` + 设置开关 + 容错解析 | `637ad00` |
-| F1 后台播放（S1/S2/S3） | 新增 `service/PlaybackService.kt` + Manifest 权限/声明 + 生命周期挂钩 + 设置文案 | `f1-playback` 系列 |
-| F3 三类功能补齐 | 带图发动态（`api/ImageApi.java`）/ 表情 type9 / 转发引用原作者（含视频转发） / 图文动态接口直取 | `f3` 系列 |
+| F1 后台播放（S1/S2/S3） | 新增 `service/PlaybackService.kt` + Manifest 权限/声明 + 生命周期挂钩 + 设置文案 | `18f4961` |
+| F3 三类功能补齐 | 带图发动态（`api/ImageApi.java`）/ 表情 type9 / 转发引用原作者（含视频转发） / 图文动态接口直取 | `5d07c15` |
+| F2 补设置开关与快速缓存拦截 | 「显示“番剧”搜索」开关 + `VideoQuickCache` 拦住 `media_bangumi` | `2a1f981` |
+| 文档补记 | 本节 F1–F5 处置 + `architecture-map` 计数与新增两节 + 工作日志 | `a9ee393` `2362239` |
 | 报告与工作日志 | 本报告 + `docs/review/fork-fix-worklog.md` | `31a1d3e` `786d7ce` |
 
 **验证**：`./gradlew :app:assembleDebug :app:testDebugUnitTest` 通过，**112 个单测 0 失败 0 错误**（16 个测试类）；
@@ -1617,7 +1619,7 @@ if (holder instanceof DynamicHolder) ((DynamicHolder) holder).clearImageCache();
 
 **后果**：熄屏或切后台播放会被系统杀。**这对本项目（手表 + 低内存设备）是最实际的功能缺口。**
 
-> **本轮处置：✅ 已实现**（提交 `f1-playback-service` 系列）。新增 `service/PlaybackService.kt`（前台服务 `mediaPlayback` + 通知栏遥控 + 进度条 + 点通知回播放页）、`AndroidManifest.xml` 补 `FOREGROUND_SERVICE_MEDIA_PLAYBACK` 权限与 `<service>` 声明、`PlayerActivity` 加状态桥与生命周期挂钩、设置项文案改「后台/熄屏继续播放」。
+> **本轮处置：✅ 已实现**（提交 `18f4961`）。新增 `service/PlaybackService.kt`（前台服务 `mediaPlayback` + 通知栏遥控 + 进度条 + 点通知回播放页）、`AndroidManifest.xml` 补 `FOREGROUND_SERVICE_MEDIA_PLAYBACK` 权限与 `<service>` 声明、`PlayerActivity` 加状态桥与生命周期挂钩、设置项文案改「后台/熄屏继续播放」。
 > 与上游的**有意差异**：上游 `targetSdk 26` 不受 Android 12 后台启动限制与 Android 14 `foregroundServiceType` 约束，本项目 `targetSdk 34` 两者都要处理；用 `WeakReference` 取代上游的裸静态引用；`PendingIntent` 补 `FLAG_IMMUTABLE`。
 > **尚未做**：`WAKE_LOCK` / `IjkMediaPlayer.setWakeMode`（先上线不带 wakelock 的版本，真机确认熄屏是否真持续播放后再决定）；无 `MediaSessionCompat`（上游也不是 MediaStyle 方案）。详见 `docs/architecture-map.md` §7.5。
 
@@ -1771,7 +1773,12 @@ if (holder instanceof DynamicHolder) ((DynamicHolder) holder).clearImageCache();
 
 > 排序依据：**用户可感知的损失 × 触发概率 × 修复成本**。S 系列是安全问题，P 系列是功能与稳定性，F 系列是功能差距。
 
-> **📌 执行状态**：以下第一至第五优先的 S / P 系列条目**已全部修复并提交**（逐条对应关系见卷首「〇·附、修复状态总览」与各条目标题下的 ✅ 标记）。**第六优先**中只有 F3 的两项（评论点赞类型、评论图片上传）顺带修掉，其余功能补齐仍未做。
+> **📌 执行状态**：以下第一至第五优先的 S / P 系列条目**已全部修复并提交**（逐条对应关系见卷首「〇·附、修复状态总览」与各条目标题下的 ✅ 标记）。
+>
+> **第六优先**（功能差距）本轮做掉了 **F1 后台播放、F2 搜索番剧、F3 的六项、F4 当版日志、F5 版本选项卡**：
+> F3 已完成**带图发动态、带图发评论、图文动态接口直取、评论点赞类型、表情渲染、转发引用原作者**（含视频转发）；
+> F3 **未做**发布选项、动态置顶 / 可见范围 / 编辑、评论数入口、`#话题#` 话题页、动态正文链接可点击、番剧季选项卡与「正在播放」标记 —— 均为纯功能增量，见 §四末尾的处置表。
+> 另：**全部修复只过了编译与单测，未经真机/联网联调**，需复验的项见 `docs/review/fork-fix-worklog.md`「真机复验清单」。
 
 ### 第一优先（安全问题，建议立即修）
 
