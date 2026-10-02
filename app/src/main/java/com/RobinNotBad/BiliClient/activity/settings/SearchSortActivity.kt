@@ -25,9 +25,10 @@ class SearchSortActivity : BaseActivity() {
     private val displayKeyMap: MutableMap<String, String> = HashMap()
 
     companion object {
-        val defaultOrder = arrayOf("video", "article", "user", "live")
+        val defaultOrder = arrayOf("video", "bangumi", "article", "user", "live")
         val categoryNames = mapOf(
             "video" to "视频",
+            "bangumi" to "番剧",
             "article" to "专栏",
             "user" to "用户",
             "live" to "直播"
@@ -42,18 +43,31 @@ class SearchSortActivity : BaseActivity() {
         setPageName("搜索类别排序")
 
         val sortConf = SharedPreferencesUtil.getString(SharedPreferencesUtil.SEARCH_CATEGORY_SORT, "")
-        var splitName: List<String>? = null
+        // 容忍式解析：只要求保存的每一项都是已知类别，不再要求项数等于类别总数。
+        // 否则以后每新增一个类别，老用户排好的顺序都会整份作废（与 SearchActivity.buildCategoryList 同一处理）。
+        val savedKeys = if (TextUtils.isEmpty(sortConf)) emptyList() else sortConf.split(";")
+        val savedKeysUsable = savedKeys.isNotEmpty() && savedKeys.all { categoryNames.containsKey(it) }
 
-        if (!TextUtils.isEmpty(sortConf) &&
-            sortConf.split(";").also { splitName = it }.size == defaultOrder.size) {
-            for (name in splitName!!) {
-                if (!categoryNames.containsKey(name)) {
-                    loadDefaultOrder()
-                    break
-                } else {
-                    val displayText = categoryNames[name]!!
+        if (savedKeysUsable) {
+            // 视频永远钉在第一位（下方拖拽回调也只认 position 0 不可移动），
+            // 所以先单独放进"视频"，其余类别才按保存顺序排。
+            data.add(categoryNames["video"]!!)
+            displayKeyMap[categoryNames["video"]!!] = "video"
+            for (name in savedKeys) {
+                if (name == "video") continue
+                val displayText = categoryNames[name]!!
+                if (!displayKeyMap.containsKey(displayText)) {
                     data.add(displayText)
                     displayKeyMap[displayText] = name
+                }
+            }
+            // 补上本次新增、老配置里还没有的类别
+            for (key in defaultOrder) {
+                if (key == "video") continue
+                val displayText = categoryNames[key]!!
+                if (!displayKeyMap.containsKey(displayText)) {
+                    data.add(displayText)
+                    displayKeyMap[displayText] = key
                 }
             }
         } else {

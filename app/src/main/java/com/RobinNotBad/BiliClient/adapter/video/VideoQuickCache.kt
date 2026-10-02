@@ -27,6 +27,12 @@ object VideoQuickCache {
      * 其余值按整数清晰度直接缓存。
      */
     fun handle(context: Context, videoCard: VideoCard) {
+        // 番剧/影视卡片走的是"快速缓存视频"这条投稿链路，但它的 aid 字段装的是 media_id（季ID），
+        // 拿去做 VideoInfoApi.getVideoInfo 必然失败。这里统一拦住，避免三个适配器各自漏判。
+        if (videoCard.type == "media_bangumi") {
+            CenterThreadPool.runOnUiThread { MsgUtil.showMsg("番剧暂不支持快速缓存") }
+            return
+        }
         val qualitySetting = SharedPreferencesUtil.getString("cache_default_quality", "dialog")
         when (qualitySetting) {
             "dialog" -> {

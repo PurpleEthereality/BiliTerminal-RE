@@ -104,6 +104,19 @@
                     android:text="显示“直播”搜索" />
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- 番剧搜索 -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/search_bangumi"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@android:color/transparent"
+                    android:text="显示“番剧”搜索" />
+            </com.google.android.material.card.MaterialCardView>
+
             <!-- 调整排序按钮 -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/sort"

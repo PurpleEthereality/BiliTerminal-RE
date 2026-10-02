@@ -330,7 +330,7 @@ class SearchActivity : InstanceActivity() {
 
     /**
      * 根据用户偏好设置构建启用的搜索类别列表
-     * 视频始终启用且在第一位；番剧固定启用；其他类别根据设置决定是否显示及排序
+     * 视频始终启用且在第一位；其他类别根据设置决定是否显示及排序
      */
     private fun buildCategoryList() {
         categoryList = ArrayList()
@@ -379,8 +379,7 @@ class SearchActivity : InstanceActivity() {
     private fun isCategoryEnabled(categoryKey: String): Boolean {
         return when (categoryKey) {
             "video" -> true  // 视频始终启用
-            // 番剧目前没有对应的设置开关（设置页只有专栏/用户/直播三项），固定启用
-            "bangumi" -> true
+            "bangumi" -> SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.SEARCH_CATEGORY_BANGUMI_SHOW, true)
             "article" -> SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.SEARCH_CATEGORY_ARTICLE_SHOW, true)
             "user" -> SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.SEARCH_CATEGORY_USER_SHOW, true)
             "live" -> SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.SEARCH_CATEGORY_LIVE_SHOW, true)

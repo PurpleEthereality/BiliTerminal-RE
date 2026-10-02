@@ -19,6 +19,7 @@ class SettingSearchActivity : BaseActivity() {
     private lateinit var searchArticle: SwitchMaterial
     private lateinit var searchUser: SwitchMaterial
     private lateinit var searchLive: SwitchMaterial
+    private lateinit var searchBangumi: SwitchMaterial
 
     @SuppressLint("InflateParams")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,6 +38,10 @@ class SettingSearchActivity : BaseActivity() {
             searchLive = findViewById(R.id.search_live)
             searchLive.isChecked = SharedPreferencesUtil.getBoolean(
                 SharedPreferencesUtil.SEARCH_CATEGORY_LIVE_SHOW, true)
+
+            searchBangumi = findViewById(R.id.search_bangumi)
+            searchBangumi.isChecked = SharedPreferencesUtil.getBoolean(
+                SharedPreferencesUtil.SEARCH_CATEGORY_BANGUMI_SHOW, true)
 
             // 调整排序按钮
             val sortBtn = findViewById<MaterialButton>(R.id.sort)
@@ -61,6 +66,7 @@ class SettingSearchActivity : BaseActivity() {
         searchArticle.isChecked = true
         searchUser.isChecked = true
         searchLive.isChecked = true
+        searchBangumi.isChecked = true
 
         // 重置排序为默认顺序
         SharedPreferencesUtil.putString(SharedPreferencesUtil.SEARCH_CATEGORY_SORT, "")
@@ -72,12 +78,20 @@ class SettingSearchActivity : BaseActivity() {
      * 持久化保存当前设置
      */
     private fun save() {
+        // asyncInflate 是异步的：布局还没膨胀完就退出本页时这些字段尚未初始化，
+        // 直接读会抛 UninitializedPropertyAccessException 崩在 onDestroy。
+        if (!::searchArticle.isInitialized || !::searchUser.isInitialized
+            || !::searchLive.isInitialized || !::searchBangumi.isInitialized) {
+            return
+        }
         SharedPreferencesUtil.putBoolean(
             SharedPreferencesUtil.SEARCH_CATEGORY_ARTICLE_SHOW, searchArticle.isChecked)
         SharedPreferencesUtil.putBoolean(
             SharedPreferencesUtil.SEARCH_CATEGORY_USER_SHOW, searchUser.isChecked)
         SharedPreferencesUtil.putBoolean(
             SharedPreferencesUtil.SEARCH_CATEGORY_LIVE_SHOW, searchLive.isChecked)
+        SharedPreferencesUtil.putBoolean(
+            SharedPreferencesUtil.SEARCH_CATEGORY_BANGUMI_SHOW, searchBangumi.isChecked)
     }
 
     override fun onDestroy() {

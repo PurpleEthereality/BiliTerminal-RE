@@ -15,6 +15,7 @@ public class SharedPreferencesUtil {
     public static final String SEARCH_CATEGORY_ARTICLE_SHOW = "search_category_article_show";
     public static final String SEARCH_CATEGORY_USER_SHOW = "search_category_user_show";
     public static final String SEARCH_CATEGORY_LIVE_SHOW = "search_category_live_show";
+    public static final String SEARCH_CATEGORY_BANGUMI_SHOW = "search_category_bangumi_show";
     public static final String ASYNC_INFLATE_ENABLE = "async_inflate_enable";
     public static final String LOAD_TRANSITION = "load_transition";
     public static final String SNACKBAR_ENABLE = "snackbar_enable";
