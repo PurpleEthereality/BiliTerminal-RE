@@ -149,7 +149,28 @@
 | F3 系列功能补齐 | 带图发动态、表情 type 9、转发引用原作者、发布选项、置顶/可见范围/编辑动态、评论数入口、话题页、图文详情接口直取 | ⬜ |
 | F1 后台播放 | 需 `foregroundServiceType="mediaPlayback"` + `FOREGROUND_SERVICE_MEDIA_PLAYBACK`（本项目 targetSdk 34，成本高于对方） | ⬜ |
 | F2 搜索番剧、F4 当版日志、F5 版本选项卡 | 功能类 | ⬜ |
-| E1/E2/E3 工程规范 | 版本号单一数据源、release MD5 表、CI 加 `pull_request` 触发与测试步骤 | ⬜ |
+| E1/E2/E3 工程规范 | 版本号单一数据源、release MD5 表、CI 加 `pull_request` 触发与测试步骤 | ✅ 见 Wave 3（E2 的 release MD5 表仍未做） |
+
+## Wave 3 — 工程规范（E3 CI 与 E1 版本一致性）✅
+
+### E3：CI 只构建不测试，PR 完全不编译
+
+原状：仓库只有 `.github/workflows/build-release.yml`，触发仅 `workflow_dispatch` + `push: tags:['*']`（本项目 tag 形如 `26.09.07`，**无 `v` 前缀**），`grep -nE 'test|lint|check'` 零命中 —— 112 个单测在任何自动化路径里都不执行，测试全红也能发版；而且**没有任何 PR 触发**，任何拉取请求都不编译。
+
+- 新增 `.github/workflows/ci.yml`（`name: CI 编译与单测自检`）：`push: branches:[main]` + `pull_request: branches:[main]` + `workflow_dispatch`，`permissions: contents: read`，`concurrency` 按 ref 取消旧运行。步骤链：检出 → JDK 17（temurin）→ `android-actions/setup-android@v3` → `chmod +x gradlew` → **适配 Linux 构建环境**（与 `build-release.yml` 同一套 sed：删掉 `org.gradle.java.home` 与代理行，`-Xmx4096m`→`-Xmx2048m`，`kotlin.daemon.jvmargs -Xmx8192m`→`-Xmx2048m`，并用 `grep -nE 'java.home|proxyHost|proxyPort'` 确认无残留，有残留就 `exit 1`）→ 版本号一致性校验 → `assembleDebug` → `testDebugUnitTest` → 上传单测报告 → 上传 Debug APK（`if-no-files-found: error`）。`timeout-minutes: 45`。
+- 改 `build-release.yml`：①在 `:app:assembleRelease` **之前**插入 `:app:testDebugUnitTest` —— 测试红不再能发版；②把"计算发行 tag"步骤的 inputs 全部改由 `env:`（`EVENT_NAME`/`REF_NAME`/`INPUT_TAG`/`INPUT_BODY`）传入 shell，不再直接内插 `${{ }}`，并输出 `has_body=true|false`（多行发布说明用 `body<<RELEASE_BODY_EOF` heredoc 写进 `$GITHUB_OUTPUT`）；③Release 的 `body` 与 `generate_release_notes` 改读这两个输出。原来用 `inputs.release_body == ''` 表达分支，在 tag push 事件下 inputs 恒为空、只是**碰巧**算对。
+- 已校验：两份 YAML 都能被 `yaml.safe_load` 解析；手工模拟 `workflow_dispatch`（带多行 Markdown body）与 tag push（不带 body）两条路径，`$GITHUB_OUTPUT` 生成结果都正确。
+- 说明：对方仓库的 `ci.yml` 触发面更宽（多了 `pull_request` 与 `tags:['v*']`，还带 Issue 模板），但**同样没有测试步骤、单测 0 个**；本项目的 CI 现在比对方多跑了 112 个单测。
+
+### E1：版本号没有单一数据源
+
+三处版本源：`app/build.gradle:23 versionCode 2609240` / `:24 versionName "26.09.24"`（唯一真正决定安装包的）、`app/src/main/res/values/strings.xml:342` 的更新日志锚点 `【26.09.24 本次更新】`（用户可见）、根目录 `config.json`（**被 `.gitignore` 排除**，随 APK 单独部署给更新检查接口；`versionCode`/`versionName`/`forceUpdate` 都写成了 JSON **字符串**）。实际已经漂移过：`readme.md:7` 的 badge 停在 `26.09.07`，`docs/FEATURES.md:5` 声称"适用版本 26.08.14 及后续版本"。
+
+- `readme.md:7` badge → `version-26.09.24`。
+- `docs/FEATURES.md:5` 改成诚实的基线声明（内容基线 26.08.14；之后新增的独立「外观设置」页、卡片圆角与自定义字体、滑动控制播放进度、经典终端主题、「我的」页入口自定义排序与分区、关于页改版尚未补入；版本说明以「我的 → 关于 → 更新日志」为准）。
+- `app/build.gradle` 新增 `verifyVersionConsistency` 任务（`group = 'verification'`）：配置期捕获 `android.defaultConfig.versionName/versionCode` 并用 `inputs.property` / `inputs.file` 显式声明，`doLast` 校验 strings.xml 锚点与 config.json 两处；config.json 不存在就跳过（CI 上没有它）；`forceUpdate` 写成字符串时只 `logger.warn` 不失败（`UpdateManager` 已兼容，不该让 CI 因此整体变红）。**刻意不挂 `assemble`**，只挂 `check`（`tasks.matching { it.name == 'check' }.configureEach`）并由 CI 显式调用，避免本地改完版本还没同步文档时连编译都被挡住。
+- 三路径实测：`--no-configuration-cache` 通过；**开启配置缓存也通过**（`Configuration cache entry stored.`）；把锚点临时改成 `26.09.25` 后 `EXIT=1` 并报 `版本号不一致：` + `src/main/res/values/strings.xml 里找不到更新日志锚点「【26.09.24 本次更新】」`；还原后 md5 与改动前一致（`0fee020acf60e673365812b1780e61bf`）、`git diff` 干净、再跑通过。
+- `util/UpdateManager.kt` 加固：`parseConfig` 原来用 `json.optInt("versionCode", 0)` / `json.optBoolean("forceUpdate", false)` —— 因为 JSON 里写的是字符串，靠 `optXxx` 的字符串容错才**碰巧**读对；一旦真写成别的类型，就会被静默容错成默认值，表现为"发布了新版本客户端却查不到更新"。改为私有助手 `readIntField(json, "versionCode")` / `readBooleanField(json, "forceUpdate", false)`，兼容字符串与原生类型，无法解析时 `Logu.e(TAG, …)` 记日志再返回默认值；格式正确时行为不变。
 
 ## 环境说明（重要）
 
@@ -193,8 +214,10 @@ echo "EXIT=$?"          # 必须看这个，不要看管道
 ## 待办
 
 - [x] Wave 1 七组全部完成
-- [x] 全量编译通过（`BUILD SUCCESSFUL in 3m 1s`，0 error）
-- [ ] 跑通 112 个单测（`build2.log`）
+- [x] 全量编译通过（`BUILD SUCCESSFUL`，0 error）
+- [x] 112 个单测全绿（`build2.log` / `build3.log`：tests=112 failures=0 errors=0 skipped=0）
+- [x] Wave 1 八个修复提交（`3c1e261` … `d676a77`）+ `ci:` 提交 `09623cd` + `docs:` 提交 `31a1d3e`
+- [x] Wave 3：CI 落地（E3）+ 版本号一致性守卫与文档纠偏（E1）
 - [ ] 还原 `local.properties` 的 Windows 路径（备份在 `.dsh/local.properties.windows-backup`）
 - [ ] 更新 `docs/review/upstream-fork-audit.md`，给已修条目打上"本项目已修"标记
-- [ ] `git add` + 分步提交（当前所有改动都在工作区未提交）
+- [ ] E2 剩余：release 发布说明里的 MD5 表（对方只在 v1.0.2-fix1 / v1.1.1 / v1.1.1-fix 有）
