@@ -58,12 +58,17 @@ jobs:
       # 同时把 Gradle/Kotlin daemon 堆内存调低，避免在 GitHub 较小内存的 runner 上 OOM。
       - name: 适配 Linux 构建环境
         run: |
-          sed -i '/^org.gradle.java.home=/d' gradle.properties
-          sed -i -E '/^systemProp\.(http|https)\.(proxyHost|proxyPort)=/d' gradle.properties
+          # 注释形式的本机配置同样要删：本仓库 gradle.properties 里的代理就是
+          # `#systemProp.http.proxyHost=127.0.0.1` 这种注释行，原正则只匹配行首的
+          # `systemProp.`，删不掉它们；而下面的守卫 grep 又会命中注释行，
+          # 于是这步在改任何代码之前就自我判失败（2026-10-02 run 36973234644）。
+          sed -i -E '/^[[:space:]]*#?[[:space:]]*org\.gradle\.java\.home=/d' gradle.properties
+          sed -i -E '/^[[:space:]]*#?[[:space:]]*systemProp\.(http|https)\.(proxyHost|proxyPort)=/d' gradle.properties
           sed -i 's/org.gradle.jvmargs=-Xmx4096m/org.gradle.jvmargs=-Xmx2048m/' gradle.properties || true
           sed -i 's/kotlin.daemon.jvmargs=-Xmx8192m/kotlin.daemon.jvmargs=-Xmx2048m/' gradle.properties || true
-          if grep -nE 'java.home|proxyHost|proxyPort' gradle.properties; then
-            echo "::error::gradle.properties 仍残留本机配置，请检查"
+          # 守卫只针对“生效行”：注释行不影响 Gradle 行为，不该让 CI 红。
+          if grep -nE '^[[:space:]]*(org\.gradle\.java\.home|systemProp\.(http|https)\.(proxyHost|proxyPort))=' gradle.properties; then
+            echo "::error::gradle.properties 仍残留生效中的本机配置，请检查"
             exit 1
           fi
           echo "gradle.properties 已清理"
