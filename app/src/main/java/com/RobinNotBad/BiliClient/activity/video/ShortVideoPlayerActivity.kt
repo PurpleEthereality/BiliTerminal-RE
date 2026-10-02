@@ -340,6 +340,10 @@ class ShortVideoPagerAdapter(
         private var videoWidth = 0
         private var videoHeight = 0
         private var videoAll = 0
+        // 主线程在 state.collect 里写、弹幕渲染线程在位置回调里读，必须 volatile，
+        // 否则弹幕线程可能读到撕裂或过期的毫秒值。这里是"内存值"，
+        // 存在的意义就是让弹幕回调不再直接调 JNI（见下方 danmakuManager 的说明）。
+        @Volatile
         private var videoNow = 0
         private var videoNowLast = 0
         // 已渲染到文本的整秒值，用于避免每 250ms 重复拼字符串与 setText
@@ -687,7 +691,9 @@ class ShortVideoPagerAdapter(
                     // 播放器未就绪时返回 -1，让 DanmakuManager 跳过本次 timer 更新。
                     // 本回调在 DanmakuView 的渲染线程上，与主线程重建播放器并发，
                     // 窗口期读到脏位置会让弹幕整批不显示（间歇性"弹幕没了"）。
-                    if (isPrepared) playerBridge.currentPosition else -1L
+                    // 这里只读主线程维护的 videoNow，绝不直接调 playerBridge.currentPosition——
+                    // 那会在这条非主线程上打 JNI，与主线程的 release/重建并发（P2 同根因）。
+                    if (isPrepared) videoNow.toLong() else -1L
                 }
                 danmakuManager?.init()
 

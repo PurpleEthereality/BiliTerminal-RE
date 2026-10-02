@@ -329,7 +329,11 @@ public class DrawHandler extends Handler {
             }
             thread.quit();
             try {
-                thread.join();
+                //必须带超时：quitUpdateThread 由 handleMessage(QUIT/SEEK_POS) 调用，
+                //若更新线程卡在原生调用上，无超时 join 会让主线程的销毁/跳转流程永久挂死。
+                thread.join(2000);
+                if (thread.isAlive())
+                    android.util.Log.w("DrawHandler", "更新线程未在 2s 内退出，放弃等待");
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }

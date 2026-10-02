@@ -253,7 +253,11 @@ public class CacheManagingDrawTask extends DrawTask {
             }
             if (mThread != null) {
                 try {
-                    mThread.join();
+                    //必须带超时：end() 在 DFM 的 QUIT 流程里被调用，而 QUIT 会被主线程的
+                    //release() 等待；缓存线程一旦卡住，无超时 join 会让整条销毁链永久挂死。
+                    mThread.join(2000);
+                    if (mThread.isAlive())
+                        android.util.Log.w(TAG, "缓存线程未在 2s 内退出，放弃等待");
                 } catch (InterruptedException e) {
                     e.printStackTrace();
                 }

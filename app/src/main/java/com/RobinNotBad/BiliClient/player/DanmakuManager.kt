@@ -42,11 +42,26 @@ class DanmakuManager(
     /**
      * 返回当前播放位置（毫秒）。**播放器未就绪或正在重建时必须返回负数**，
      * 表示"没有可信位置"，[configureAndPrepare] 里会据此跳过 timer 更新，见其注释。
+     *
+     * 注意：本回调运行在 DanmakuView 的渲染线程上，实现方**不要在这里直接读播放器**
+     * （例如 `IjkMediaPlayer.currentPosition`）——那是会取 native 锁的 JNI 调用，
+     * 与主线程的 seek/release 并发时有卡死渲染线程的风险。请返回由主线程定时器维护的
+     * 内存值（参见 PlayerActivity 的 video_now）。
      */
     private val onCurrentPositionMs: () -> Long
 ) {
     private var danmakuContext: DanmakuContext? = null
     private var danmakuParser: BaseDanmakuParser? = null
+
+    /**
+     * 上一次喂给 DanmakuTimer 的播放位置，用于去重。
+     * 必须 volatile：updateTimer 正常由 DFM 的 "DFM Update" 线程回调
+     * （DrawHandler.java:140 `mUpdateInNewThread = availableProcessors() > 3`，否则走 DrawHandler 的
+     * HandlerThread），但 `DanmakuView.pause()`（主线程）与 QUIT 流程里的
+     * `syncTimerIfNeeded()` 也可能在别的线程上触发同一次回调，Long 在 32 位设备上会撕裂读。
+     */
+    @Volatile
+    private var lastTimerPos = -1L
 
     private val _state = MutableStateFlow(DanmakuState())
     val state: StateFlow<DanmakuState> = _state.asStateFlow()
@@ -176,8 +191,18 @@ class DanmakuManager(
                 // 重建播放器的动作并发。一旦把窗口期的脏位置灌进 timer，整批弹幕会被判定为
                 // "已过期"而一条都不显示 —— 表现为间歇性的"弹幕没了"。
                 // （原 PlayerActivity 内联实现用的是 `if (ijkPlayer != null && isPrepared)`，同一个道理。）
+                // 实现上 onCurrentPositionMs 已改为只读主线程定时器维护的内存值，
+                // 不再在这个渲染线程上直接调 ijkPlayer.currentPosition（那会取 native 锁）。
                 val pos = onCurrentPositionMs()
-                if (pos >= 0) timer.update(pos)
+                if (pos < 0) return
+                // 位置没变就不要喂给 timer。timer.update(pos) 是"把时钟强行设成 pos"，
+                // 而 DFM 在 syncTimer 里每帧用 timer.add(d)（DrawHandler.java:462）自己推进时钟；
+                // 若每帧都用同一个（最多 250ms 前的）位置回灌，DFM 的自走时钟会被钉死，
+                // 弹幕变成 4Hz 一跳的卡顿。所以只在位置真的变化时校正一次：
+                // DFM 自走 + 定时器周期性纠偏，既避开 JNI 又保留原有跟随精度。
+                if (pos == lastTimerPos) return
+                lastTimerPos = pos
+                timer.update(pos)
             }
 
             override fun danmakuShown(danmaku: BaseDanmaku?) {}

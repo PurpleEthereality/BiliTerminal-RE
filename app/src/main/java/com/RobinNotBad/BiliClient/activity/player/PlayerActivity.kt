@@ -188,6 +188,10 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     private var audioPlayer: android.media.MediaPlayer? = null // 外部音频播放器
 
     private var video_all: Int = 0
+    // 主线程的 progressChange 定时器写、弹幕渲染线程读（见 bindDanmakuView 的位置回调），
+    // 必须 volatile：弹幕线程不再直接调 ijkPlayer.currentPosition（那是取原生锁的 JNI 调用），
+    // 只读这个内存值，没有 volatile 可能长期读到 0 / 过期位置，导致弹幕时间轴错乱。
+    @Volatile
     private var video_now: Int = 0
     private var video_now_last: Int = 0
     private var lastMediaSessionSecond: Int = -1 // 上次上报 MediaSession 的整秒数，用于抑制重复 Binder IPC
@@ -228,6 +232,11 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     private val speed_strs = arrayOf("x 0.5", "x 0.75", "x 1.0", "x 1.25", "x 1.5", "x 1.75", "x 2.0", "x 3.0")
 
     private var finishWatching = false
+    // 播放器错误态：onError 里置位。
+    // 必须记录这个状态：IJK 的 setOnErrorListener 若返回 false，IjkMediaPlayer 会改发 onCompletion
+    // （ijkplayer-java/.../IjkMediaPlayer.java:1013-1017），于是"解码/加载失败"被伪装成"这集播完"，
+    // 还会自动跳下一 P。置位后 controlVideo() 会把"点播放"当成重试，走 retryAfterPlayerError() 重新载入。
+    private var playerError = false
     private var loop_enabled: Boolean = false
     private var auto_next_enabled = false
 
@@ -827,6 +836,9 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
 
     private fun MPPrepare(nowurl: String) {
         ijkPlayer!!.setOnPreparedListener(this)
+        // 任何一次新的载入（切P / 切清晰度 / 出错重试）都要清掉上一次的错误态，
+        // 否则重试后 controlVideo() 仍会认为处于错误态而再次走重新载入分支。
+        playerError = false
 
         if (isLiveMode) {
             runOnUiThread { loading_text0.text = "载入直播中" }
@@ -878,7 +890,24 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         ijkPlayer!!.setOnErrorListener { _, what, extra ->
             val EReport = "播放器可能遇到错误！\n错误码：" + what + "\n附加：" + extra
             Logu.e("ijk-err", EReport)
-            false
+            // 返回 false 会被 IjkMediaPlayer 改判成 onCompletion（IjkMediaPlayer.java:1013-1017），
+            // 用户看到的是"这集看完了"并自动跳下一 P，而实际是解码/加载失败。
+            // 必须返回 true 阻断该改判，并记录错误态：点播放键时 controlVideo() 会走重新载入重试。
+            val firstError = !playerError
+            playerError = true
+            if (!destroyed) {
+                // 只在第一次出错时提示，避免 IJK 连续回调 onError 时 toast 刷屏
+                if (firstError) MsgUtil.showMsgLong(EReport)
+                runOnUiThread {
+                    isPlaying = false
+                    if (hasDanmaku && mDanmakuView != null) mDanmakuView!!.pause()
+                    btn_control.setImageResource(R.drawable.btn_player_play)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && mediaSession != null) {
+                        updateMediaSessionPlaybackState()
+                    }
+                }
+            }
+            true
         }
 
         ijkPlayer!!.setOnBufferingUpdateListener { _, percent ->
@@ -1243,10 +1272,12 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     private fun bindDanmakuView() {
         mDanmakuView = findViewById(R.id.sv_danmaku)
         danmakuManager = DanmakuManager(mDanmakuView!!) {
+            // 位置只读主线程 progressChange 定时器维护的 video_now（@Volatile 内存值），
+            // 绝不在这里调 ijkPlayer.currentPosition：本回调跑在 DanmakuView 的渲染线程上，
+            // 而这个 JNI 调用会取原生锁，与主线程的 seek/release 并发时弹幕时间轴会被旧位置拽住，
+            // 极端情况下渲染线程永久卡在原生调用里，主线程 release() 里的 join 就会一直等（应用卡死）。
             // 播放器未就绪时返回 -1，让 DanmakuManager 跳过本次 timer 更新。
-            // 这里不能简单写成 `ijkPlayer?.currentPosition ?: 0L`：切清晰度/切分页时主线程正在
-            // 销毁重建播放器，而本回调在弹幕渲染线程上，读到脏位置会让弹幕整批不显示。
-            if (isPrepared) ijkPlayer?.currentPosition ?: -1L else -1L
+            if (isPrepared) video_now.toLong() else -1L
         }
     }
 
@@ -1273,6 +1304,13 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     }
 
     fun controlVideo() {
+        // 上一次播放器报错后，用户按播放键的真实意图是"再试一次"，而不是"从暂停处继续"。
+        // 不加这个分支的话，playerError 状态下只会对一个已经停住的播放器调 resume，界面毫无反应。
+        if (playerError) {
+            retryAfterPlayerError()
+            autohideReset()
+            return
+        }
         if (isPlaying) {
             playerPause()
         } else {
@@ -1293,6 +1331,52 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
             playerResume()
         }
         autohideReset()
+    }
+
+    /**
+     * 播放器报错后重新载入当前视频。
+     * 之所以重建整个 IjkMediaPlayer 实例，而不是简单地 seekTo(0) + start()：IJK 出错后
+     * （解码失败 / 加载失败）自身状态机已不可信，对同一实例重试往往立刻再次进入 onError。
+     */
+    private fun retryAfterPlayerError() {
+        playerError = false
+        CenterThreadPool.run {
+            // 与 toggleAudioOnlyMode 一致：重建用的续播位置由主线程维护的 video_now 提供，
+            // 不在这里调 ijkPlayer.currentPosition（后台线程碰 jni 且此刻播放器正要被释放）。
+            val resumePosition = video_now.toLong()
+            runOnUiThread {
+                if (destroyed || isFinishing()) return@runOnUiThread
+                // 顺序：先摘状态标志，再 release，最后置空引用（理由同 toggleAudioOnlyMode）
+                isPrepared = false
+                isPlaying = false
+                if (ijkPlayer != null) {
+                    ijkPlayer!!.stop()
+                    ijkPlayer!!.release()
+                    ijkPlayer = null
+                }
+                loading_info.visibility = View.VISIBLE
+                anim_loading!!.start()
+                loading_text0.text = "重新载入"
+            }
+            try {
+                Thread.sleep(100)
+                runOnUiThread {
+                    // 这 100ms 里用户可能已经退出页面：onDestroy 会 release 并置空 ijkPlayer，
+                    // 此处若无守卫就会重建出一个永不释放的 native 播放器。
+                    if (destroyed || isFinishing()) return@runOnUiThread
+                    ijkPlayer = IjkMediaPlayer()
+                    progress_history = resumePosition
+                    setDisplay()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    if (destroyed) return@runOnUiThread
+                    MsgUtil.showMsg("重新载入失败，请重试")
+                    loading_info.visibility = View.GONE
+                    anim_loading!!.stop()
+                }
+            }
+        }
     }
 
     @SuppressLint("SetTextI18n")
@@ -1958,16 +2042,21 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                 try {
                     runOnUiThread {
                         if (hasDanmaku && mDanmakuView != null) mDanmakuView!!.pause()
+                        // 顺序要求：先把状态标志摘掉，再 release，最后置空引用。
+                        // 若反过来（先 release 再摘 isPrepared），release 与下面 Thread.sleep 之间的窗口里，
+                        // 弹幕渲染线程仍会认为播放器可用而 deref 已释放的 native 实例；
+                        // 置空引用则是为了任何后续误用立刻暴露成 NPE / null 判断，而不是 use-after-release。
+                        isPrepared = false
+                        isPlaying = false
                         if (ijkPlayer != null) {
                             ijkPlayer!!.stop()
                             ijkPlayer!!.release()
+                            ijkPlayer = null
                         }
 
                         loading_info.visibility = View.VISIBLE
                         anim_loading!!.start()
                         loading_text0.text = if (isAudioOnlyMode) "切换到听视频模式" else "切换到普通模式"
-                        isPrepared = false
-                        isPlaying = false
 
                         updateAudioOnlyButton()
                         updateAudioOnlyUI()
@@ -1976,6 +2065,10 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                     Thread.sleep(100)
 
                     runOnUiThread {
+                        // 本方法前半段在 CenterThreadPool 线程上 sleep(100ms)，期间用户可能已经退出页面：
+                        // onDestroy 已置 destroyed=true 并 release/置空 ijkPlayer，此处若无守卫就会重建出一个
+                        // 永不释放的 native 播放器（泄漏，且 surface 已销毁时可能直接崩）。
+                        if (destroyed || isFinishing()) return@runOnUiThread
                         ijkPlayer = IjkMediaPlayer()
                         progress_history = currentPosition
                         setDisplay()
@@ -2165,6 +2258,10 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
 
                 runOnUiThread {
                     if (destroyed) return@runOnUiThread
+                    // 必须把 Activity 的 cid 字段同步到新分P：doSwitchPage 之后拉弹幕/字幕/看点
+                    // 都用这个字段，finish() 回传给上一页的也是它。不同步的话切P后弹幕、
+                    // 字幕、看点以及观看进度上报全都还挂在切P前的那个 cid 上。
+                    if (playerData.cid > 0) cid = playerData.cid
                     doSwitchPage(newTitle, playerData.videoUrl, playerData.danmakuUrl, pageIndex)
                 }
             } catch (e: Exception) {
@@ -2999,6 +3096,9 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         if (ijkPlayer != null) {
             val result = Intent()
             result.putExtra("progress", ijkPlayer!!.currentPosition.toInt())
+            // 回传最终观看的 cid：播放器内可以切分P，上一页若沿用"进入时"的旧 cid，
+            // 就会拿新P的进度去覆盖旧P的历史记录，把正确的续播位置冲掉
+            result.putExtra("cid", cid)
             result.putExtra("isPlaying", isPlaying)
             result.putExtra("isDanmakuEnabled", !isDanmakuVisible)
             result.putExtra("quality", currentQuality)
