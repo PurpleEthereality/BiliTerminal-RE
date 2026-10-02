@@ -15,6 +15,17 @@ public class VideoCard implements Parcelable, Serializable {
     public String bvid;
     public long cid = 0;
     public long viewAt = 0;
+    /**
+     * 番剧剧集 id（epid）。只有来源是历史记录的番剧卡片（type=media_bangumi）才有值：
+     * 观看记录里的 aid（history.oid）是剧集 avid 而不是 media_id，必须靠 epid 反查真正的
+     * media_id，并用它定位"上次看到哪一集"。追番列表/动态等来源的番剧卡片为 0。
+     */
+    public long epid = 0;
+    /**
+     * 已观看进度，<b>单位是秒</b>（与 x/web-interface/history/cursor 返回的 progress 字段一致）。
+     * 注意别和 PlayerData.progress 混淆，后者单位是毫秒；换算只在传给播放器时做一次。
+     */
+    public int progress = 0;
 
     public VideoCard(String title, String upName, String view, String cover, long aid, String bvid, String type) {
         this.title = title;
@@ -58,6 +69,9 @@ public class VideoCard implements Parcelable, Serializable {
         bvid = in.readString();
         cid = in.readLong();
         viewAt = in.readLong();
+        // 新增字段只能追加在末尾，且读/写顺序必须严格一致（顺序错位不会崩，只会静默串数据）
+        epid = in.readLong();
+        progress = in.readInt();
     }
 
     public static final Creator<VideoCard> CREATOR = new Creator<>() {
@@ -88,5 +102,8 @@ public class VideoCard implements Parcelable, Serializable {
         parcel.writeString(bvid);
         parcel.writeLong(cid);
         parcel.writeLong(viewAt);
+        // 与构造器里的读取顺序一一对应
+        parcel.writeLong(epid);
+        parcel.writeInt(progress);
     }
 }

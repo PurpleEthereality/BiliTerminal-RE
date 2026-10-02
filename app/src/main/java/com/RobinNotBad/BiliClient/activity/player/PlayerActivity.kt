@@ -46,6 +46,7 @@ import com.RobinNotBad.BiliClient.adapter.QualitySelectorAdapter
 import com.RobinNotBad.BiliClient.adapter.ViewPointAdapter
 import com.RobinNotBad.BiliClient.api.ConfInfoApi
 import com.RobinNotBad.BiliClient.api.DanmakuApi
+import com.RobinNotBad.BiliClient.api.HistoryApi
 import com.RobinNotBad.BiliClient.api.InteractionVideoApi
 import com.RobinNotBad.BiliClient.api.PlayerApi
 import com.RobinNotBad.BiliClient.api.VideoInfoApi
@@ -254,6 +255,24 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     private var cid: Long = 0
     private var mid: Long = 0
 
+    // 番剧(PGC)专用维度：投稿视频的进度上报只有 aid/cid 两个维度，
+    // 番剧必须走心跳接口并带上 epid/sid/sub_type，否则观看记录与续播进度都不会被服务端更新
+    // （表现就是"在终端里看的番剧，历史里不出现，下次还得从头播"）
+    private var epid: Long = 0
+    private var seasonId: Long = 0
+    private var seasonType: Int = 0
+
+    // ---- 播放中周期上报 / 切P·退出即时上报的状态（详见 maybeReportProgress / reportProgressNow）----
+    // 与上次上报位置的差值上限：达到 15 秒才再报一次，避免每 250ms 一个请求
+    private val progressReportIntervalMs = 15000L
+    // 上次上报时的播放位置（毫秒），初值 -1 让"刚开播"也能自然等到播满 15 秒才首报
+    private var lastReportedProgressMs: Long = -1L
+    // 上次上报出去的秒数，用于跨路径去重：onPause/onStop/onDestroy/finish 会连着走，
+    // 不拦就会把同一个位置重复写三次
+    private var lastReportedProgressSec: Long = -1L
+    // 未登录只提示一次，否则每次周期上报都会刷一条日志
+    private var notLoggedInWarned: Boolean = false
+
     private var pagenames: ArrayList<String>? = null
     private var cids: ArrayList<Long>? = null
     private var currentPageIndex = 0
@@ -310,6 +329,11 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         aid = intent.getLongExtra("aid", 0)
         cid = intent.getLongExtra("cid", 0)
         mid = intent.getLongExtra("mid", 0)
+        // 番剧心跳的三个维度。PlayerApi.jumpToPlayer 没有传，由 JumpToPlayerActivity.jump() 补进 Intent；
+        // 缺了它们就退化成投稿上报，番剧观看记录不会被更新
+        epid = intent.getLongExtra("epid", 0)
+        seasonId = intent.getLongExtra("seasonId", 0)
+        seasonType = intent.getIntExtra("seasonType", 0)
 
         progress_history = intent.getIntExtra("progress", 0).toLong()
         Logu.d("history", progress_history.toString())
@@ -536,7 +560,9 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                     if (ijkPlayer != null && isPrepared && !isLiveMode) {
                         val x = e.x
                         val viewWidth = layout_control.width.toFloat()
-                        val currentPosition = ijkPlayer!!.currentPosition
+                        // 双击快进的起点取主线程进度定时器维护的 video_now，不读 ijkPlayer.currentPosition：
+                        // 后者是取 native 锁的 JNI 调用，缓冲/seek 期间可能阻塞主线程
+                        val currentPosition = video_now.toLong()
                         val seekOffset = doubleTapSeekSeconds * 1000L
 
                         gesture_click_disabled = true
@@ -1042,12 +1068,109 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                                 updateMediaSessionPlaybackState()
                             }
                         }
+
+                        // 复用这个已有的 250ms 主线程定时器做周期上报，不再另起 Timer/Handler：
+                        // 位置没变化时进不来（暂停/缓冲/播完都停在上一个位置），天然不会空转上报
+                        maybeReportProgress()
                     }
                 }
                 if (!destroyed) mainHandler?.postDelayed(this, 250)
             }
         }
         mainHandler?.post(progressRunnable!!)
+    }
+
+    /**
+     * 周期上报当前进度（每 15 秒一次）。
+     *
+     * 只由 [progressChange] 的 250ms 定时器在主线程调用；节流用"与上次上报位置的毫秒差值"而不是墙钟时间，
+     * 所以暂停、缓冲、seek 中都不会补报，也就不会有积压的请求在恢复播放后一起炸出来。
+     */
+    private fun maybeReportProgress() {
+        if (destroyed || !isPrepared || !isPlaying || isSeeking) return
+        if (!isOnlineVideo || isLiveMode) return
+        if (!canReportProgress()) return
+        // 位置没走够就不报。初值 -1 意味着开播/切P后播满 15 秒才首报
+        if (Math.abs(video_now.toLong() - lastReportedProgressMs) < progressReportIntervalMs) return
+        val progressSec = video_now / 1000L
+        // 0 秒上报没有信息量还会覆盖服务端记录（见 HistoryApi.reportHistoryPgc 的说明），直接跳过；
+        // 这里不更新 lastReportedProgressMs，等真正播满 15 秒再报
+        if (progressSec <= 0) return
+        lastReportedProgressMs = video_now.toLong()
+        lastReportedProgressSec = progressSec
+        sendProgressReport(progressSec, "周期上报")
+    }
+
+    /**
+     * 立即上报一次当前进度。
+     *
+     * @param force  true 表示"退出/切P前的最后一次"，即使进度比上次上报的小（用户往回 seek 过）也要报真实位置；
+     *               false 用于切后台等场景，只报前进的进度，避免把服务端的较大记录覆盖成小值。
+     * @param reason 只用于日志，便于区分是哪条退出路径上报的
+     * @return 是否真的把请求发出去了（用于和 JumpToPlayerActivity 的退出上报去重）
+     */
+    private fun reportProgressNow(force: Boolean, reason: String): Boolean {
+        if (destroyed || !isOnlineVideo || isLiveMode) return false
+        if (!canReportProgress()) return false
+        // 取内存里的 video_now，而不是 ijkPlayer.currentPosition：后者是取原生锁的 JNI 调用，
+        // seek/缓冲期间可能长时间不返回，放在退出路径上就是 ANR。
+        // video_now 由 progressChange 每 250ms 刷新，差半秒对进度上报无影响。
+        val progressSec = video_now / 1000L
+        if (progressSec <= 0) return false
+        // 同一秒在任何路径上已经报过就跳过：onPause → onStop → onDestroy、finish → onPause 都是连着走的，
+        // 不做这一步就会把同一个位置重复写三遍
+        if (progressSec == lastReportedProgressSec) return false
+        // 非强制的路径只报前进的进度（seek 回退后没继续播时，别把服务端的大进度改成小进度）
+        if (!force && progressSec < lastReportedProgressSec) return false
+
+        lastReportedProgressMs = video_now.toLong()
+        lastReportedProgressSec = progressSec
+        sendProgressReport(progressSec, reason)
+        return true
+    }
+
+    /** 上报的前置检查：aid/cid 有没有、以及当前到底登没登录。 */
+    private fun canReportProgress(): Boolean {
+        if (aid == 0L || cid == 0L) return false
+        // mid 是随 Intent 进来的快照，换设备/清数据/刷新 Cookie 后可能滞后；
+        // 实时 Cookie 里的 DedeUserID 才代表当前登录态（与 HistoryApi.currentMid 同一口径）
+        if (mid != 0L) return true
+        val cookie = SharedPreferencesUtil.getString(SharedPreferencesUtil.cookies, "")
+        val midStr = NetWorkUtil.getInfoFromCookie("DedeUserID", cookie)
+        if (midStr != null && midStr.isNotEmpty()) {
+            try {
+                if (midStr.toLong() != 0L) return true
+            } catch (_: NumberFormatException) {
+                // Cookie 形态异常就当作未登录处理，不因为解析失败把请求发出去
+            }
+        }
+        if (!notLoggedInWarned) {
+            notLoggedInWarned = true
+            Logu.e("进度上报", "跳过：未登录（mid=0），观看记录与续播进度无法写入")
+        }
+        return false
+    }
+
+    /** 真正把上报丢到线程池里。所有网络请求都必须在 [CenterThreadPool] 上跑（AGENTS.md 硬约定）。 */
+    private fun sendProgressReport(progressSec: Long, reason: String) {
+        val fAid = aid
+        val fCid = cid
+        val fEpid = epid
+        val fSeasonId = seasonId
+        val fSeasonType = seasonType
+        Logu.d("进度上报", "$reason aid=$fAid cid=$fCid epid=$fEpid sid=$fSeasonId progress=${progressSec}s")
+        CenterThreadPool.run {
+            try {
+                // 番剧必须两个维度都齐才走心跳接口：缺 seasonId 会发出 sid=0，服务端直接判参数错误
+                if (fEpid != 0L && fSeasonId != 0L) {
+                    HistoryApi.reportHistoryPgc(fAid, fCid, fEpid, fSeasonId, fSeasonType, progressSec)
+                } else {
+                    HistoryApi.reportHistory(fAid, fCid, progressSec)
+                }
+            } catch (e: Exception) {
+                MsgUtil.err("进度上报：", e)
+            }
+        }
     }
 
     private fun onlineChange() {
@@ -1505,6 +1628,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     override fun onPause() {
         super.onPause()
         Logu.v("onPause")
+        // 退到后台/被别的页面盖住时补报一次：正常退出走 finish() 已经报过同一秒，这里会被去重拦掉
+        reportProgressNow(false, "切后台")
         if (!SharedPreferencesUtil.getBoolean("player_background", false)) {
             playerPause()
         }
@@ -1518,6 +1643,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     override fun onStop() {
         super.onStop()
         Logu.v("onStop")
+        // onPause 之后位置不会再走，这里基本都会被去重拦掉；留一路是防 onPause 那条路径没走成
+        reportProgressNow(false, "onStop")
     }
 
     override fun onDestroy() {
@@ -1534,6 +1661,9 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
             EventBus.getDefault().unregister(this)
             eventBusInit = false
         }
+        // 销毁前的兜底上报：必须在 destroyed = true 与 release 播放器之前做，
+        // 且只依赖内存里的 video_now（不碰 ijkPlayer 的 JNI 调用）。正常退出时会被去重拦掉。
+        reportProgressNow(true, "销毁兜底")
         destroyed = true
 
         cancelAllTimers()
@@ -1694,7 +1824,9 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     private fun updateMediaSessionPlaybackState() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP || mediaSession == null) return
         val state = if (isPlaying) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED
-        val position = if (isPrepared && ijkPlayer != null) ijkPlayer!!.currentPosition else 0
+        // 位置取 video_now（progressChange 每 250ms 刷新）。本方法在播放中每秒都会被调用一次，
+        // 用 ijkPlayer.currentPosition 等于每秒在主线程上摸一次 native 锁
+        val position = if (isPrepared) video_now.toLong() else 0L
         var actions = (PlaybackState.ACTION_PLAY.toLong()
                 or PlaybackState.ACTION_PAUSE.toLong()
                 or PlaybackState.ACTION_SEEK_TO.toLong()
@@ -1917,8 +2049,9 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         if (isPrepared)
             when (keyCode) {
                 KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_CENTER -> controlVideo()
-                KeyEvent.KEYCODE_DPAD_LEFT -> seekToPosition(ijkPlayer!!.currentPosition - 10000L)
-                KeyEvent.KEYCODE_DPAD_RIGHT -> seekToPosition(ijkPlayer!!.currentPosition + 10000L)
+                // 相对位移的起点用 video_now，避免在主线程上取 native 锁（顺带去掉 ijkPlayer 的非空断言）
+                KeyEvent.KEYCODE_DPAD_LEFT -> seekToPosition(video_now - 10000L)
+                KeyEvent.KEYCODE_DPAD_RIGHT -> seekToPosition(video_now + 10000L)
                 KeyEvent.KEYCODE_DPAD_UP -> changeVolume(true)
                 KeyEvent.KEYCODE_DPAD_DOWN -> changeVolume(false)
             }
@@ -1949,14 +2082,15 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
             MotionEvent.ACTION_DOWN -> {
                 swipeSeekStartX = event.x
                 swipeSeekActive = false
-                swipeSeekStartPos = ijkPlayer!!.currentPosition
+                // 拖动是"相对起点 + 位移"，起点用 video_now 即可，不必为了几十毫秒的精度在主线程上摸 native 锁
+                swipeSeekStartPos = video_now.toLong()
                 return false
             }
             MotionEvent.ACTION_MOVE -> {
                 val deltaX = event.x - swipeSeekStartX
                 if (!swipeSeekActive && abs(deltaX) > swipeSeekThreshold) {
                     swipeSeekActive = true
-                    swipeSeekStartPos = ijkPlayer!!.currentPosition
+                    swipeSeekStartPos = video_now.toLong()
                     gesture_click_disabled = true
                     hidecon.run()
                     swipe_seek_overlay.visibility = View.VISIBLE
@@ -2013,9 +2147,10 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
             audioPlayer = android.media.MediaPlayer().apply {
                 setDataSource(url)
                 prepare()
-                // 与视频播放器保持同步的初始位置
-                if (ijkPlayer != null && isPrepared) {
-                    seekTo(ijkPlayer!!.currentPosition.toInt())
+                // 与视频播放器保持同步的初始位置。本方法由 MPPrepare 的 onPrepared 回调调用（主线程），
+                // 位置同样从 video_now 取，不在这里摸 native 锁
+                if (isPrepared) {
+                    seekTo(video_now)
                 }
                 isLooping = false
                 start()
@@ -2033,7 +2168,9 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         isAudioOnlyMode = !isAudioOnlyMode
 
         if (isPrepared && ijkPlayer != null) {
-            val currentPosition = ijkPlayer!!.currentPosition
+            // 重建前的续播位置由 video_now 提供（与 retryAfterPlayerError 同一口径），
+            // 不读 ijkPlayer.currentPosition：那是取 native 锁的 JNI 调用，主线程调它有卡死风险
+            val currentPosition = video_now.toLong()
             val wasPlaying = isPlaying
 
             MsgUtil.showMsg(if (isAudioOnlyMode) "正在切换到听视频模式..." else "正在切换到普通模式...")
@@ -2207,6 +2344,10 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         if (!hasMultiplePages() || pageIndex < 0 || pageIndex >= pagenames!!.size) return
         if (pageIndex == currentPageIndex) return
 
+        // 切P之前先把"当前这一P"的进度报出去，否则这一P的尾部进度只有 15 秒周期上报兜底，
+        // 切走时的最后十几秒会丢；必须在 currentPageIndex 被改写之前调用（aid/cid 还指向旧P）
+        reportProgressNow(true, "切P前")
+
         currentPageIndex = pageIndex
         val newTitle = pagenames!![pageIndex]
 
@@ -2313,6 +2454,10 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         isPlaying = false
         finishWatching = false
         progress_history = 0
+        // 新的一P要从头开始计时：不重置的话旧P的位置（比如 300000ms）会一直满足 15 秒差值条件，
+        // 新P播到 1 秒就被上报一次，把该P原本的续播进度冲掉
+        lastReportedProgressMs = -1L
+        lastReportedProgressSec = -1L
         subtitles = null
         subtitleLinks = null
         subtitle_selected = -1
@@ -2422,7 +2567,9 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                 runOnUiThread {
                     if (destroyed) return@runOnUiThread
 
-                    val currentPosition = ijkPlayer?.currentPosition ?: 0
+                    // 重建前的续播位置同样用 video_now（见 toggleAudioOnlyMode / retryAfterPlayerError），
+                    // 这里虽然已经在 runOnUiThread 里，仍然不该在主线程上摸 native 锁
+                    val currentPosition = video_now.toLong()
                     val wasPlaying = isPlaying
 
                     ijkPlayer?.stop()
@@ -2500,8 +2647,9 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                 viewPointRecycler.layoutManager = CustomLinearManager(this, LinearLayoutManager.HORIZONTAL, false)
                 viewPointRecycler.adapter = viewPointAdapter
             }
-            if (ijkPlayer != null && isPrepared) {
-                val currentPos = (ijkPlayer!!.currentPosition / 1000).toInt()
+            if (isPrepared) {
+                // 看点列表只需要"当前第几秒"这种整秒粒度，直接用 video_now，不必摸 native 锁
+                val currentPos = video_now / 1000
                 viewPointAdapter!!.updateCurrentPosition(currentPos)
             }
             layout_card_bg.visibility = View.VISIBLE
@@ -3093,12 +3241,16 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
 
     override fun finish() {
         if (isPlaying) playerPause()
+        // 退出前把最后进度报一次。返回 true 说明请求确实发出去了，就用 progressReported 标记告诉
+        // 调用页（JumpToPlayerActivity）别再报一遍——否则同一进度会被写两次
+        val progressReported = reportProgressNow(true, "退出前")
         if (ijkPlayer != null) {
             val result = Intent()
             result.putExtra("progress", ijkPlayer!!.currentPosition.toInt())
             // 回传最终观看的 cid：播放器内可以切分P，上一页若沿用"进入时"的旧 cid，
             // 就会拿新P的进度去覆盖旧P的历史记录，把正确的续播位置冲掉
             result.putExtra("cid", cid)
+            if (progressReported) result.putExtra("progressReported", true)
             result.putExtra("isPlaying", isPlaying)
             result.putExtra("isDanmakuEnabled", !isDanmakuVisible)
             result.putExtra("quality", currentQuality)

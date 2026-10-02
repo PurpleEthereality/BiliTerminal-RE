@@ -334,7 +334,17 @@ public class PlayerApi {
             lastProgress = HistoryApi.findProgressMsByAid(playerData.aid);
             if (lastProgress > 0) Logu.w("history-last", "WBI 进度不可用，使用观看记录兜底: " + lastProgress + "ms");
         }
-        playerData.progress = normalizeProgress(lastProgress, data.optLong("timelength", 0));
+        //注意不能无条件赋值：调用方（番剧详情页从历史列表进来时）可能已经把已知进度塞进
+        //playerData.progress，若这里查不到就赋 0，会把那份已知进度抹掉，用户又从头看起。
+        //查到就用服务端的（按 aid+cid 查，粒度就是这个剧集），查不到才沿用调用方传入的值。
+        int resolvedProgress = normalizeProgress(lastProgress, data.optLong("timelength", 0));
+        if (resolvedProgress > 0) {
+            playerData.progress = resolvedProgress;
+        } else if (playerData.progress > 0) {
+            Logu.w("history-last", "服务端番剧进度不可用，沿用调用方传入的 " + playerData.progress + "ms");
+        } else {
+            playerData.progress = 0;
+        }
 
         JSONArray accept_description = data.getJSONArray("accept_description");
         JSONArray accept_quality = data.getJSONArray("accept_quality");
@@ -433,6 +443,14 @@ public class PlayerApi {
                 intent.putExtra("mid", playerData.mid);
                 intent.putExtra("progress", playerData.progress);
                 intent.putExtra("live_mode", playerData.isLive());
+                //番剧维度必须随 Intent 一起进播放器：缺了这三个值，播放器只能按投稿视频上报，
+                //服务端的观看记录与续播进度都不会更新。放在这里而不是各调用点，是为了让
+                //所有入口（详情页、历史列表、缓存列表等）都自动带上。
+                if (playerData.epid != 0) {
+                    intent.putExtra("epid", playerData.epid);
+                    intent.putExtra("seasonId", playerData.seasonId);
+                    intent.putExtra("seasonType", playerData.seasonType);
+                }
                 if (playerData.qnStrList != null && playerData.qnValueList != null) {
                     intent.putExtra("qnStrList", playerData.qnStrList);
                     intent.putExtra("qnValueList", playerData.qnValueList);

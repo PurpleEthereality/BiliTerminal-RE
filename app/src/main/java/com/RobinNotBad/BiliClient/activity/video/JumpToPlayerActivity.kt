@@ -47,8 +47,11 @@ class JumpToPlayerActivity : BaseActivity() {
             resultIntent.getLongExtra("cid", fallbackCid)
         } else fallbackCid
         val data = playerData
+        // 内置播放器退出时已经自己上报过一次（并在结果里回传 progressReported=true），
+        // 这里再报一遍就是同一个进度写两次，所以直接跳过；外部播放器不会回传该标记，照旧由本页兜底上报
+        val reportedByPlayer = isOk && resultIntent!!.getBooleanExtra("progressReported", false)
         finish()
-        reportProgressAsync(data, progress, finalCid)
+        if (!reportedByPlayer) reportProgressAsync(data, progress, finalCid)
     }
 
     /**
@@ -58,10 +61,14 @@ class JumpToPlayerActivity : BaseActivity() {
      * @param cid 最终观看的分P cid，由播放器回传而不是进入时的旧值
      */
     private fun reportProgressAsync(data: PlayerData?, progressMs: Int, cid: Long) {
-        if (data == null || progressMs <= 0 || data.mid == 0L || data.aid == 0L) return
+        if (data == null || data.mid == 0L || data.aid == 0L) return
+        // progress<=0 的上报零信息量且有害：服务端会把观看记录覆盖成"0 进度"，
+        // 续播位置因此失效。旧实现只在 progressMs<=0 时早退，播了不到 1 秒（如 500ms）
+        // 会被截成 0 秒发出去，这里改成按秒判断。
+        val progressSec = (progressMs / 1000).toLong()
+        if (progressSec <= 0) return
         CenterThreadPool.run {
             try {
-                val progressSec = (progressMs / 1000).toLong()
                 // 番剧必须走专用心跳接口：x/v2/history/report 只有 aid/cid 两个维度，
                 // 拿它上报番剧不会被记成番剧记录（观看历史里不出现，续播位置也拿不到）。
                 // 缺 seasonId 时不冒险走心跳（sid=0 会被服务端判参数错误 -400），退回投稿视频的上报方式。
@@ -128,7 +135,15 @@ class JumpToPlayerActivity : BaseActivity() {
     private fun jump() {
         if (isDestroyed) return
         if (download == 0) {
-            val intent = PlayerApi.jumpToPlayer(playerData!!)
+            val data = playerData!!
+            val intent = PlayerApi.jumpToPlayer(data)
+            // PlayerApi.jumpToPlayer 只把 url/aid/cid/mid/progress 这些放进了 Intent，没有番剧维度
+            // （见 api/PlayerApi.java:426-451）。内置播放器的进度上报要靠 epid/seasonId/seasonType
+            // 才能走对番剧心跳接口，缺了这三个 extra 会退化成投稿上报，观看记录与续播进度都不会更新。
+            // 外部播放器与「播放器选择页」会忽略多余的 extra，所以在这里统一补上，不改 PlayerApi。
+            intent.putExtra("epid", data.epid)
+            intent.putExtra("seasonId", data.seasonId)
+            intent.putExtra("seasonType", data.seasonType)
             launcher.launch(intent)
             setClickExit("等待退出播放后上报进度\n（点击跳过）")
         } else {

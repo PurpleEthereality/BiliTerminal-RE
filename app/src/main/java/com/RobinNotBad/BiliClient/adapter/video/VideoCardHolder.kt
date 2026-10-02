@@ -2,6 +2,7 @@ package com.RobinNotBad.BiliClient.adapter.video
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.text.SpannableString
 import android.text.Spanned
@@ -13,8 +14,12 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.RobinNotBad.BiliClient.BiliTerminal
 import com.RobinNotBad.BiliClient.R
+import com.RobinNotBad.BiliClient.activity.video.info.VideoInfoActivity
+import com.RobinNotBad.BiliClient.api.BangumiApi
 import com.RobinNotBad.BiliClient.model.VideoCard
+import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.GlideUtil
+import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.StringUtil
 import com.RobinNotBad.BiliClient.util.TerminalContext
 import com.RobinNotBad.BiliClient.util.ToolsUtil
@@ -60,7 +65,33 @@ class VideoCardHolder(@androidx.annotation.NonNull itemView: View) : RecyclerVie
             } else if (boundVideoCard != null && boundContext != null) {
                 when (boundVideoCard!!.type) {
                     "video" -> TerminalContext.getInstance().enterVideoDetailPage(boundContext!!, boundVideoCard!!.aid, boundVideoCard!!.bvid, "video")
-                    "media_bangumi" -> TerminalContext.getInstance().enterVideoDetailPage(boundContext!!, boundVideoCard!!.aid, null, "media")
+                    "media_bangumi" -> {
+                        val card = boundVideoCard!!
+                        val ctx = boundContext!!
+                        if (card.epid > 0L) {
+                            // 历史记录来源的番剧卡片：aid(history.oid) 是剧集 avid，不能当 media_id。
+                            // 直接拿它去请求，接口一样返回 code=0，但 season_id=0、标题为空，详情页是空壳，
+                            // 所以先用 epid 反查 media_id；反查是网络请求，放线程池，别卡主线程
+                            CenterThreadPool.run {
+                                val mediaId = BangumiApi.getMdidFromEpid(card.epid)
+                                if (mediaId != null && mediaId > 0L) {
+                                    // 顺便把 epid 和已看进度（秒）带进详情页，用于定位上次观看的那一集
+                                    val intent = Intent(ctx, VideoInfoActivity::class.java)
+                                    intent.putExtra("aid", mediaId)
+                                    intent.putExtra("type", "media")
+                                    intent.putExtra("epid", card.epid)
+                                    // 键名带 _sec 后缀：PlayerActivity 读的 extra 也叫 "progress" 但单位是毫秒，
+                                    // 两者若被同一条 Intent 转发会静默差 1000 倍，所以这里用独立键名
+                                    intent.putExtra("progress_sec", card.progress)
+                                    intent.putExtra("seekReply", -1L)
+                                    ctx.startActivity(intent)
+                                } else MsgUtil.showMsg("番剧信息获取失败")
+                            }
+                        } else {
+                            // 追番列表/动态等来源的卡片，aid 已经是 media_id，走原来的跳转
+                            TerminalContext.getInstance().enterVideoDetailPage(ctx, card.aid, null, "media")
+                        }
+                    }
                 }
             }
         }

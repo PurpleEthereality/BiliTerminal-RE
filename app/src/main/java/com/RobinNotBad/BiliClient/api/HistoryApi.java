@@ -207,10 +207,15 @@ public class HistoryApi {
 
                 VideoCard card = new VideoCard(title, upName, viewStr, cover, aid, bvid);
                 card.viewAt = viewAt;
-                //VideoCard 目前没有 progress/epid 字段（本组无权修改该文件）：
-                //进度信息已由 viewStr 承载；这里置 type 是为了让番剧卡片点击时走番剧详情页(只需 aid)。
-                //遗留：epid/progress 无法随卡片传出，详情页"定位上次观看分集"仍需另一组给 VideoCard 补字段。
-                if (BUSINESS_PGC.equals(business)) card.type = "media_bangumi";
+                if (BUSINESS_PGC.equals(business)) {
+                    card.type = "media_bangumi";
+                    //番剧卡片必须带上 epid：aid(history.oid) 是剧集 avid 而不是 media_id，
+                    //详情页要先用 epid 反查 media_id，再靠它在剧集列表里定位上次观看的那一集
+                    card.epid = history != null ? history.optLong("epid", 0) : 0;
+                    //progress 的单位是秒（接口如此，viewStr 里也是按秒格式化的），
+                    //VideoCard 里一律存秒；换算成毫秒只在传给播放器时做一次
+                    card.progress = progress;
+                }
                 videoList.add(card);
             }
             if (list.length() == 0) apiResult.isBottom = true;
