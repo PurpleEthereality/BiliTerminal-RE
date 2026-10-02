@@ -45,13 +45,17 @@ class VideoCardAdapter(
         holder.showVideoCard(videoCard, context)
         holder.bindClick(videoCard, context, position, object : View.OnLongClickListener {
             override fun onLongClick(v: View): Boolean {
+                // 页面显式注册的长按行为优先于「快速缓存」这个全局便利功能。
+                // 稍后再看 / 收藏夹等页面的「长按两次删除」是原版终端就有的功能，之前被快速缓存顶掉，
+                // 表现为长按只会弹出缓存清晰度选择页、删除功能消失（issue #2）。
+                if (longClickListener != null) {
+                    longClickListener!!.onItemLongClick(position)
+                    return true
+                }
+                // 没有自定义长按的浏览类列表（推荐 / 排行 / 搜索等）才回落到快速缓存
                 val quickMode = SharedPreferencesUtil.getBoolean("cache_quick_mode", true)
                 if (quickMode && videoCard.type != "live") {
                     VideoQuickCache.handle(context, videoCard)
-                    return true
-                }
-                if (longClickListener != null) {
-                    longClickListener!!.onItemLongClick(position)
                     return true
                 }
                 return false

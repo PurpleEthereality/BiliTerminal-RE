@@ -61,11 +61,12 @@ class HistoryVideoCardAdapter(
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
                     longPressRunnable = Runnable {
-                        val quickMode = SharedPreferencesUtil.getBoolean("cache_quick_mode", true)
-                        if (quickMode && videoCard.type != "live") {
+                        // 与 VideoCardAdapter 一致：页面显式注册的长按（历史记录的「长按两次删除」）
+                        // 优先于「快速缓存」，没有自定义长按的列表才回落到快速缓存
+                        if (onLongClickListener != null) {
+                            onLongClickListener!!.invoke(position)
+                        } else if (SharedPreferencesUtil.getBoolean("cache_quick_mode", true) && videoCard.type != "live") {
                             VideoQuickCache.handle(context, videoCard)
-                        } else {
-                            onLongClickListener?.invoke(position)
                         }
                     }
                     v.postDelayed(longPressRunnable, LONG_PRESS_DELAY)
