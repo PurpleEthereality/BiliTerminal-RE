@@ -7,7 +7,6 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
@@ -110,8 +109,13 @@ public class DmImgParamUtil {
                 .put("p", new JSONArray().put(xyz1[0]).put(xyz1[2]).put(xyz1[1]))
                 .put("s", new JSONArray().put(xyz2[2]).put(xyz2[0]).put(xyz2[1])));
         result.put("ds", ds)
-                .put("wh", new JSONArray(List.of(f114(width, height))))
-                .put("of", new JSONArray(List.of(f514(y, x))));
+                // minSdk 24：java.util.List.of 是 API 30 才引入的静态方法，而本项目没有开启
+                // core library desugaring（app/build.gradle 的 compileOptions 里没有
+                // coreLibraryDesugaringEnabled），所以它在 Android 6~10 上会抛
+                // NoSuchMethodError；这里直接传 Object[] 给 JSONArray 构造器，行为完全一致。
+                // 上游 26f1742 修的就是这一处（对方同样改成了 new Object[]{...}）。
+                .put("wh", new JSONArray(new Object[]{f114(width, height)}))
+                .put("of", new JSONArray(new Object[]{f514(y, x)}));
         return result.toString();
     }
 

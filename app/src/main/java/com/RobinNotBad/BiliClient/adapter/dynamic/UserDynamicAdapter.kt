@@ -225,7 +225,11 @@ class UserDynamicAdapter(
                     "哔哩哔哩不知名UP主", "哔哩哔哩知名UP主", "哔哩哔哩大V达人", "哔哩哔哩企业认证",
                     "哔哩哔哩组织认证", "哔哩哔哩媒体认证", "哔哩哔哩政府认证", "哔哩哔哩高能主播", "社会不知名人士", "社会知名人士"
                 )
-                this.userOfficial.text = official_signs[userInfo.official] +
+                // 服务端的 official 取值并不保证落在文案表范围内（实测见过 10），
+                // 直接下标会 ArrayIndexOutOfBoundsException；夹到合法区间再取。
+                // 上游 26f1742 用的是 Math.max(0, Math.min(official, len - 1))。
+                val officialIdx = userInfo.official.coerceIn(0, official_signs.size - 1)
+                this.userOfficial.text = official_signs[officialIdx] +
                         (if (userInfo.officialDesc.isEmpty()) "" else ("\n" + userInfo.officialDesc))
             } else {
                 this.officialIcon.visibility = View.GONE

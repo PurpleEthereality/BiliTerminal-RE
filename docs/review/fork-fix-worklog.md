@@ -144,12 +144,16 @@
 
 | 修复项 | 说明 | 状态 |
 |---|---|---|
-| P23 周期上报接线 | `reportHistoryPgc` 已有调用者（退出时上报），但还缺**播放中的周期性上报**（上游 `PROGRESS_REPORT_INTERVAL_MS = 15000`，`PlayerActivity.java:187`/`:1311-1319`）与**切P时的即时上报**（上游 `:2889-2890 reportProgressNow(true)`）。都落在 `activity/player/PlayerActivity.kt` | ⬜ |
-| P23 历史列表定位上次观看集 | pgc 卡片的 `epid/progress` 不随 `VideoCard` 传出（D 组规避代价），需在 `HistoryApi.java:208-213` 补两行赋值，并让番剧详情页接住 | ⬜ |
-| F3 系列功能补齐 | 带图发动态、表情 type 9、转发引用原作者、发布选项、置顶/可见范围/编辑动态、评论数入口、话题页、图文详情接口直取 | ⬜ |
-| F1 后台播放 | 需 `foregroundServiceType="mediaPlayback"` + `FOREGROUND_SERVICE_MEDIA_PLAYBACK`（本项目 targetSdk 34，成本高于对方） | ⬜ |
-| F2 搜索番剧、F4 当版日志、F5 版本选项卡 | 功能类 | ⬜ |
-| E1/E2/E3 工程规范 | 版本号单一数据源、release MD5 表、CI 加 `pull_request` 触发与测试步骤 | ✅ 见 Wave 3（E2 的 release MD5 表仍未做） |
+| P23 周期上报接线 | `reportHistoryPgc` 已有调用者（退出时上报），但还缺**播放中的周期性上报**（上游 `PROGRESS_REPORT_INTERVAL_MS = 15000`，`PlayerActivity.java:187`/`:1311-1319`）与**切P时的即时上报**（上游 `:2889-2890 reportProgressNow(true)`）。都落在 `activity/player/PlayerActivity.kt` | 🚧 子代理 `b1f2df72` |
+| P23 历史列表定位上次观看集 | pgc 卡片的 `epid/progress` 不随 `VideoCard` 传出（D 组规避代价），需在 `HistoryApi.java:208-213` 补两行赋值，并让番剧详情页接住 | 🚧 子代理 `46b9c008` |
+| F3 系列功能补齐 | 带图发动态、表情 type 9、转发引用原作者、发布选项、置顶/可见范围/编辑动态、评论数入口、话题页 | 🚧 子代理 `3914761b` |
+| F3 图文详情接口直取 | `api/OpusApi.java` 那段被注释掉的接口实现能不能用 | 🚧 子代理 `35f9f3ca` |
+| F1 后台播放 | 需 `foregroundServiceType="mediaPlayback"` + `FOREGROUND_SERVICE_MEDIA_PLAYBACK`（本项目 targetSdk 34，成本高于对方） | 🚧 调研子代理 `bbfcdaee` |
+| F2 搜索番剧 | 功能类 | 🚧 子代理 `73fe7d9e` |
+| F4 当版日志 / F5 版本选项卡 | 功能类 | 🚧 子代理 `2908490c` |
+| P34–P38 新发现的闪退点 | 见下方「Wave 4」 | 🚧 部分已修 |
+| E1 版本号单一数据源 / E3 CI | | ✅ 见 Wave 3 |
+| E2 release MD5 表 | | ✅ 见 Wave 3 |
 
 ## Wave 3 — 工程规范（E3 CI 与 E1 版本一致性）✅
 
@@ -182,6 +186,49 @@
   1. `$GITHUB_OUTPUT` 的多行值**末尾不带换行**（GitHub 会把 delimiter 前那个换行吃掉），所以拼 Markdown 代码围栏时必须显式补 `\n`，否则收尾的 ``` 会粘到最后一行校验值后面。本机用"忠实复刻 GitHub 解析语义"的脚本才复现出来 —— 直接 `println` 出来的字符串是带换行的，会漏掉这个 bug。
   2. `md5sums.txt` 一开始写成 `MD5  文件名  (4096 字节)`，第三列会让 `md5sum -c` 把 `(4096 字节)` 当成文件名的一部分而全部 FAIL。改成标准两列，尺寸只在发布说明里展示。
 - 本机模拟了 tag push（无 body）与 `workflow_dispatch`（有 body）两条路径，`$GITHUB_OUTPUT` 解析正确、围栏闭合正确、`md5sum -c` 退出码 0。
+
+## Wave 4 — 补齐审计报告里"未单独核实"的闪退点（P34–P38）
+
+审计报告 §三 P6 表第 1 行（对方 1.1.1-fix 的"动态列表、搜索页、转发类型判断、无UP主视频详情页的闪退"）此前只有"搜索建议乱序"那半边被核实过，另半边一直标着**"本轮未单独核实"**。对方对应的提交是 `26f1742`，我把它的 diff 逐文件读完后，把这类"闪退点"在本项目逐条对了一遍：
+
+| 编号 | 缺陷 | 本项目现状 | 处置 |
+|---|---|---|---|
+| **P34** | `util/DmImgParamUtil.java:113-114` 用 `List.of(...)` | ❌ **真实存在，且触发面很大** | ✅ 已修 |
+| **P35** | `activity/video/info/VideoInfoActivity.kt:94` 取 `videoInfo.staff[0].mid` | ❌ 真实存在 | ✅ 已修 |
+| **P36** | `adapter/dynamic/UserDynamicAdapter.kt:228` 取 `official_signs[userInfo.official]` | ❌ 真实存在 | ✅ 已修 |
+| **P37** | `activity/dynamic/DynamicActivity.kt:143` 在后台线程改 `dynamicList` | ❌ 真实存在 | 🚧 派给 `3914761b` |
+| **P38** | 两个动态 Adapter 的 `onViewRecycled` 不清 holder 的图片缓存 | ❌ 真实存在 | 🚧 派给 `3914761b` |
+| —— | `VideoInfoFragment` 三连在后台线程改 View | ✅ **本项目已有防护**（`runOnUiThread`），上游 26f1742 才补的 | 无需处理 |
+| —— | `DynamicApi.parseAtContent` 的 `Pattern.compile("@" + name)` 未转义 | ✅ **本项目已有 `Pattern.quote(key)`**（`api/DynamicApi.java:385`），连注释都和上游一样 | 无需处理 |
+| —— | `DynamicApi` 里 `modules == null` 未兜底 `userInfo` → 下游 NPE | ✅ **本项目结构不同，无此问题**：`api/DynamicApi.java:594` 先 `UserInfo userInfo = new UserInfo()`，`:611` 无条件 `dynamic.userInfo = userInfo` | 无需处理 |
+| —— | 对方用 Java `Map.of(...)` 在 minSdk<30 上不可用 | 本项目 `DynamicApi` 是 Java 但**全库已无 `Map.of`/`Set.of`/`List.of`**（见 P34 修完后复查） | 无需处理 |
+
+### P34：`List.of` 是 API 30 才有的静态方法 → Android 6~10 上 `NoSuchMethodError` ✅
+
+- `util/DmImgParamUtil.java` 里 `getDmImgParams()`（`:19-30`）无条件调用 `generateDmImgList()` 与 `generateDmImgInter()`；`generateDmImgInter()`（`:97-116`）末尾两行用了 `List.of(...)`。
+- `List.of` 是 **Android 11（API 30）** 才加入 `java.util.List` 的静态方法，而本项目 `minSdk 24`，且 `app/build.gradle:85-88` 的 `compileOptions` **没有 `coreLibraryDesugaringEnabled`**（AGP 的 core library desugaring 也不覆盖 `List.of`/`Map.of`/`Set.of` 这几个）⇒ 在 Android 7~10 上执行到这两行必然 `NoSuchMethodError`。
+- **可达路径**：`getDmImgParamsUrl()`（`:32-39`）← `api/UserInfoApi.java:100` 与 `:152`（取用户信息！）、`api/DynamicApi.java:503` 与 `:540`（带图发动态/发评论）。也就是说**在 Android 7~10 上打开用户信息页就会崩**。
+- 修法（与上游 `26f1742` 一致）：`new JSONArray(new Object[]{f114(width, height)})` / `new JSONArray(new Object[]{f514(y, x)})`；顺带删掉因此变成未使用的 `import java.util.List;`。
+- 修完后全库复查 `Map.of(` / `List.of(` / `Set.of(` / `Collectors.` / `.stream()`：**零命中**。
+
+**教训**：这类"高版本 API 在低版本 `NoSuchMethodError`"的问题，编译器、Lint、单测**全都查不出来**（它们只校验编译期类型），只有实机或 `lint` 的 `NewApi` 检查能发现。上一轮修的 `hasOnLongClickListeners` 是同一族问题。
+
+### P35：`videoInfo.staff[0]` 越界 → 无 UP 主的视频详情页闪退 ✅
+
+- `api/VideoInfoApi.java:198-229`：`staff_list` 只在两种情况下被填充 —— ① `videoInfo.isCooperation == true` 且 `data` 里有非空 `staff` 数组；② `data.optJSONObject("owner") != null`。两种情况都不成立时（联合投稿的 `staff` 为空、稿件 UP 已注销/被隐藏导致 `owner` 缺失），`videoInfo.staff` 就是**空列表**。
+- `activity/video/info/VideoInfoActivity.kt:94` 直接 `videoInfo.staff[0].mid` ⇒ `IndexOutOfBoundsException`，整个详情页起不来。这正是对方 release 说明里的"无UP主视频详情页闪退"。
+- 修法（与上游一致）：`val upMid = if (videoInfo.staff.isNullOrEmpty()) 0L else videoInfo.staff[0].mid`，把 `upMid` 传给 `ReplyFragment.newInstance`。
+- 顺带记录：`model/VideoInfo.java:108-110 toCard()` 里同样有 `staff.get(0).name`，但 **`toCard()` 全库零调用者**（死代码），本轮未动 —— 将来若启用需一并加兜底。
+
+### P36：`official_signs[userInfo.official]` 越界 ✅
+
+- `adapter/dynamic/UserDynamicAdapter.kt:221-229`：`official_signs` 是固定的 10 项文案数组，而 `userInfo.official` 直接来自服务端 `official.role`，**不保证落在 0~9**（上游注释明确写了"实测见过 10"）。
+- 修法（与上游 `Math.max(0, Math.min(...))` 等价）：`userInfo.official.coerceIn(0, official_signs.size - 1)`。
+
+### P37 / P38：派给子代理 `3914761b`（它独占这些文件）
+
+- **P37** `activity/dynamic/DynamicActivity.kt:138-153`：`CenterThreadPool.run { ... dynamicList!!.add(0, dynamic) }` 在**后台线程**改数据源，`runOnUiThread { dynamicAdapter!!.notifyItemInserted(0) }` 在**主线程**通知 —— 两边无同步。上游把 `add` 移进了 `runOnUiThread`。
+- **P38** `adapter/dynamic/DynamicAdapter.kt:126-127` 与 `adapter/dynamic/UserDynamicAdapter.kt:104-105` 的 `onViewRecycled` 只有 `super` 调用；上游加了 `clearImageCache()`（对方注释："复用前清掉『同 URL 跳过加载』的缓存，否则 recycled 的 holder 可能残留上一个动态的头图/配图"）。需要在 `DynamicHolder` 里补这个方法。
 
 ## 环境说明（重要）
 

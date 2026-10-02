@@ -91,7 +91,12 @@ class VideoInfoActivity : BaseActivity() {
                 fragmentList = ArrayList(3)
                 contentFragment = VideoInfoFragment.newInstance(videoInfo.aid, bvid!!)
                 fragmentList!!.add(contentFragment!!)
-                replyFragment = ReplyFragment.newInstance(videoInfo.aid, 1, videoInfo.stats.reply, seek_reply, videoInfo.staff[0].mid)
+                // staff 可能是空列表：联合投稿的 staff 数组为空、或稿件 UP 已注销导致
+                // VideoInfoApi 拿不到 owner 时，都会留下空 staff。这里直接取 [0] 会
+                // IndexOutOfBoundsException（上游 26f1742 修的"无UP主视频详情页闪退"）。
+                // 拿不到 UP 时传 0，ReplyFragment 侧按"没有 UP"处理即可。
+                val upMid = if (videoInfo.staff.isNullOrEmpty()) 0L else videoInfo.staff[0].mid
+                replyFragment = ReplyFragment.newInstance(videoInfo.aid, 1, videoInfo.stats.reply, seek_reply, upMid)
                 replyFragment!!.setManager(videoInfo.staff)
                 fragmentList!!.add(replyFragment!!)
                 if (SharedPreferencesUtil.getBoolean("related_enable", true)) {
