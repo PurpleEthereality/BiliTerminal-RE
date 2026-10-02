@@ -20,6 +20,36 @@
 
 ---
 
+## 〇·附、修复状态总览
+
+> 本报告列出的缺陷项已参考上游分叉 `cyq114514/Re-BiliTerminal` 逐条修复完毕，代码分布在 12 个提交中。
+> 逐条实现细节、每个子代理的取舍理由与验证记录见 **`docs/review/fork-fix-worklog.md`**。
+
+| 组 | 覆盖条目 | 提交 |
+|---|---|---|
+| 网络基础层 | S1 / S2 / S3、P9 / P10 / P11 / P15 | `3c1e261` |
+| 下载与后台线程 | P4 / P5 / P16 / P17 / P18 / P20 / P21 | `34e5bc9` |
+| 播放器与弹幕 | P2 / P3 / P27 / P28 / P30 | `d292950` |
+| 列表基类与视频详情页 | P7（含审计漏掉的两个平级基类）/ P8 / P29 + P22 的一半 | `fd947f0` |
+| 评论区与互动 | P22（另一半）/ P26 / F3 的「点赞类型」与「图片上传」两项 | `3058512` |
+| 番剧与播放进度 | P1 / P13 / P19 / P23 / P24 / P25 | `07e9705` |
+| 搜索 / UI 生命周期 / 登录退出 | P12 / P31 / P32 / P33 | `d676a77` |
+| CI 覆盖面（E3） | 新增 PR 与主干 CI，发版前先跑单测 | `09623cd` |
+| 版本号一致性（E1）与文档纠偏 | `verifyVersionConsistency` 任务 + UpdateManager 加固 + readme/FEATURES 纠偏 | `4d88b98` `8996a1a` `f26407e` |
+| 报告与工作日志 | 本报告 + `docs/review/fork-fix-worklog.md` | `31a1d3e` |
+
+**验证**：`./gradlew :app:assembleDebug :app:testDebugUnitTest` 通过，**112 个单测 0 失败 0 错误**；`verifyVersionConsistency` 在
+配置缓存开/关两种路径下均通过，且把更新日志锚点改错时会如实失败。
+
+**仍未修复**（属功能差距或需产品决策，不是"已确认缺陷"）：
+
+- **F1** 后台/熄屏继续播放、**F2** 搜索番剧、**F4** 更新后首次启动自动展示当版日志、**F5** 更新日志按版本选项卡（见 §四）。
+- **F3** 中未做的几项：带图发动态、表情 `type 9` 渲染、转发引用原作者、发布选项（`option` JSON）、动态置顶 / 可见范围 / 编辑、动态卡片评论数入口、话题页、图文详情接口直取。
+- **P6** 判定为"部分"的 3 项，以及 **P14**（经核实其修复理由在本项目不成立，未动）。
+- **P23 的周期上报**（上游 `PROGRESS_REPORT_INTERVAL_MS = 15000`）与**切P即时上报**尚未接线；目前只有"退出播放器时上报"。
+- **E2** 的远程崩溃上报（上游也没有）。
+- **E2 的 release MD5 表**（上游只在 v1.0.2-fix1 / v1.1.1 / v1.1.1-fix 提供过）。
+
 ## 一、对方 8 个 Release 的内容概览
 
 > 对方的 tag 只有 7 个（`v1.0.2`、`v1.0.2-fix1`、`v1.1.0`、`v1.1.0-fix1`、`v1.1.1`、`v1.1.1-fix`、`v1.1.2`），**没有 `v1.0.0` tag** —— 1.0.0 与 1.0.2 被压进了同一个初始提交 `077d985 Initial commit: Re:BiliTerminal 1.0.2`。因此 1.0.0 与 1.0.2 的差异**无法逐行 diff**，下表两行取自各自的 release 正文。下表共 8 行（正文口径），tag 口径为 7 个。
@@ -69,9 +99,11 @@
 
 ---
 
-## 二、🔴 安全问题（对方已修，本项目未修）
+## 二、🔴 安全问题（对方已修，本项目已修 ✅）
 
 ### S1. 手动重定向可把带 Cookie 的请求转发到任意域名
+
+> ✅ **本项目已修**（`3c1e261`）：手动跟跳改为域名白名单，非白名单域名不再转发带 Cookie 的请求
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/util/NetWorkUtil.java:88-122`
 
@@ -135,6 +167,8 @@ return chain.proceed(newRequest);
 
 ### S2. 登录凭证明文进入日志
 
+> ✅ **本项目已修**（`3c1e261`）：移除凭证明文日志，`Logu` 增加调用方定位
+
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/api/CookieRefreshApi.java:87-88`
 
 ```java
@@ -155,6 +189,8 @@ Logu.v("新的cookies", cookies_new);          // 完整 Cookie 串（含 SESSDA
 ---
 
 ### S3. trust-all SSL 是死代码，但不应保留
+
+> ✅ **本项目已修**（`3c1e261`）：trust-all 死代码删除
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/util/NetWorkUtil.java:131-152`
 
@@ -180,7 +216,11 @@ public synchronized static OkHttpClient.Builder setOkHttpSsl(OkHttpClient.Builde
 
 ## 三、🔴 功能与稳定性问题（逐条核实：对方已修 / 本项目现状）
 
+> 本节 P 系列已参考上游分叉逐条修复完毕（每条标题下附 ✅ 标记与提交号），验证方式见 `docs/review/fork-fix-worklog.md`。
+
 ### P1. 观看进度上报静默失效（csrf 与实时 Cookie 错位）
+
+> ✅ **本项目已修**（`07e9705`）：上报用的 CSRF 改为从实时 Cookie 派生（`api/HistoryApi.java:115-120 currentCsrf()`），Cookie 轮换后不再必然 -111
 
 **这是对方 `1.0.2-fix1` 的核心修复**，原始症状描述：
 
@@ -243,6 +283,8 @@ private static long currentMid() {
 
 ### P2. 弹幕绘制线程轮询 `getCurrentPosition()` → 退出播放后整个应用卡死
 
+> ✅ **本项目已修**（`d292950`）：弹幕位置回调改读 `@Volatile video_now`，不再在 DanmakuView 渲染线程调 JNI；`player/DanmakuManager.kt` 的 `updateTimer` 加去重
+
 **对方的机制描述（原文）**：
 
 > DFM 的 `updateTimer` 回调不再轮询 `ijkPlayer.getCurrentPosition()`。该回调跑在弹幕同步/绘制线程，而 `getCurrentPosition()` 是取原生锁的 JNI 调用，既是弹幕时间轴被旧位置拽住的直接原因，也是绘制线程卡住后主线程 `release()` 内 `join()` 无限等待、整个应用卡死的共因。
@@ -275,6 +317,8 @@ override fun updateTimer(timer: DanmakuTimer) {
 ---
 
 ### P3. `Thread.join()` 无超时 → 主线程可被无限阻塞
+
+> ✅ **本项目已修**（`d292950`）：`DanmakuFlameMaster` 三处 `join()` → `join(2000)`（含上游漏掉的 `controller/DrawHandler.java`）
 
 **现状代码（三个调用点全部无超时）**：
 
@@ -312,6 +356,8 @@ if (mThread != null) {
 ---
 
 ### P4. 数据库升级导致下载记录全部丢失
+
+> ✅ **本项目已修**（`34e5bc9`）：数据库升级只在 ALTER 真失败时才 drop 重建
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/helper/sql/DownloadSqlHelper.kt:23-36`
 
@@ -360,6 +406,8 @@ try {
 ---
 
 ### P5. `ErrorCatch` 抢在崩溃页显示前杀进程
+
+> ✅ **本项目已修**（`34e5bc9`）：`ErrorCatch` 杀进程前先 `Thread.sleep(300)`，让崩溃页有机会显示
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/ErrorCatch.java:36-51`
 
@@ -447,6 +495,8 @@ android.os.Process.killProcess(android.os.Process.myPid());
 
 ### P7. `bottom` 字段缺 `@Volatile`：后台线程写、主线程读
 
+> ✅ **本项目已修**（`fd947f0`）：四个基类的 `bottom` 加 `@Volatile`。**审计当初漏了两个平级基类**：`activity/base/RefreshMainActivity.kt:23`、`activity/search/SearchFragment.kt:30`，本轮一并补上
+
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/activity/base/RefreshListActivity.kt:30` 与 `app/src/main/java/com/RobinNotBad/BiliClient/activity/base/RefreshListFragment.kt:24`
 
 ```kotlin
@@ -480,6 +530,8 @@ public volatile boolean bottom = false;
 ---
 
 ### P8. `VideoInfoFragment.playerData` 竞态：后台赋值未完成时点播放 → NPE
+
+> ✅ **本项目已修**（`fd947f0`）：`playerData` 加 `@Volatile`，并改为「局部变量装配 + 拿到 getVideo 结果后一次性发布」，避免主线程读到半成品
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/activity/video/info/VideoInfoFragment.kt`
 
@@ -529,6 +581,8 @@ public volatile boolean bottom = false;
 
 ### P9. `OpusApi` 手动跟跳：无域名白名单，且协议相对地址会直接抛异常
 
+> ✅ **本项目已修**（`3c1e261`）：手动跟跳纳入域名白名单，并处理协议相对地址
+
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/api/OpusApi.java:43-48`
 
 ```java
@@ -569,6 +623,8 @@ for (int i = 0; i < 5; i++) {
 ---
 
 ### P10. `SharedPreferencesUtil` 读取方法无空保护 → 静态初始化器内 NPE（启动即崩，且不可恢复）
+
+> ✅ **本项目已修**（`3c1e261`）：`SharedPreferencesUtil` 读取方法补空保护
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/util/SharedPreferencesUtil.java`
 
@@ -624,6 +680,8 @@ public static String getString(String key, String def) {
 
 ### P11. `NetWorkUtil.webHeaders`：可变 ArrayList 跨线程共享，无同步、非 volatile
 
+> ✅ **本项目已修**（`3c1e261`）：`webHeaders` 共享可变列表改为不可变快照
+
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/util/NetWorkUtil.java`
 
 ```java
@@ -643,6 +701,8 @@ public static String getString(String key, String def) {
 ---
 
 ### P12. `ViewPagerFragmentAdapter` 基类选错 → 页面重建时 `Fragment already added` 崩溃
+
+> ✅ **本项目已修**（`d676a77`）：`ViewPagerFragmentAdapter` 基类改 `FragmentPagerAdapter` 并复用已实例化的 Fragment，消除 `Fragment already added`
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/adapter/viewpager/ViewPagerFragmentAdapter.kt:7-15`
 
@@ -677,6 +737,8 @@ class ViewPagerFragmentAdapter(fm: FragmentManager, private val fragmentList: Li
 ---
 
 ### P13. 外部播放器播放本地视频：未走 FileProvider 授权，且 `getVideoUri()` 是死代码 + authority 拼错
+
+> ✅ **本项目已修**（`07e9705`）：authority 改为 `context.getPackageName() + ".FileProvider"`，本地视频改走 FileProvider URI + 读权限授权
 
 这一条对应 P6 表第 14 项，已核实：**本项目仍存在**。
 
@@ -758,6 +820,8 @@ public static Uri getVideoUri(Context context, String path) {
 
 ### P15. 🔴 下载弹幕解压遇损坏数据 → 100% CPU 死循环（对方已修，本项目未修）
 
+> ✅ **本项目已修**（`3c1e261`）：解压循环补 `needsInput() || needsDictionary()` 与 `i == 0` 两个退出条件
+
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/util/NetWorkUtil.java:564-575`（`public static byte[] decompress(byte[] data)`）
 
 ```java
@@ -797,6 +861,8 @@ while (!decompresser.finished()) {
 
 ### P16. 🔴 下载失败时递归删除整个视频文件夹 → 用户已下好的视频被删（**对方也未修**）
 
+> ✅ **本项目已修**（`34e5bc9`）：**上游也没修这条**。改为只清 `<下载目录>` 一层的临时文件（`util/FileUtil.java` 新增 `cleanDownloadTempFiles`），不再递归删掉整个成品目录
+
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/service/DownloadService.kt:1487-1500`（`onDestroy()`）
 
 ```kotlin
@@ -831,6 +897,8 @@ if (section != null) {
 
 ### P17. 🟠 下载进度通知可被异常永久静默（对方已修，本项目未修）
 
+> ✅ **本项目已修**（`34e5bc9`）：`TimerTask.run()` 整体 `try/catch(Throwable)` + 日志
+
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/service/DownloadService.kt:1011-1031`（`startNotifyProgress()`）
 
 ```kotlin
@@ -859,6 +927,8 @@ notifyTimer!!.schedule(object : TimerTask() {
 ---
 
 ### P18. 🔴 消息中心：三类独立缺陷（对方已修，本项目未修）
+
+> ✅ **本项目已修**（`34e5bc9`）：三类缺陷一并修，`activity/message/NoticeActivity.kt` 整文件重写：成功/失败两条路径都复位 `setRefreshing(false)`、`type` 为空的 `system` 分支直接收口不再 `cursor!!`、数据改动全部移入 `runOnUiThread` 并加 `isDestroyed` 守卫。**语义取舍**：首屏失败置 `bottom = true` 解开卡死但不自动重试（基类 `goOnLoad` 会先 `page++`，重试会产生重复条目）
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/activity/message/NoticeActivity.kt`（全文仅 99 行）
 
@@ -915,6 +985,8 @@ NPE 被 `:92-96` 的 catch 吞掉后只做 `page--; setRefreshing(false)`，**�
 
 ### P19. 番剧选集空季 → `IndexOutOfBoundsException`
 
+> ✅ **本项目已修**（`07e9705`）：抽出 `firstSectionWithEpisodes()` / `currentEpisode(): Bangumi.Episode?`，切季拒绝空季，下标 `coerceIn`
+
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/activity/video/info/BangumiInfoFragment.kt`
 
 ```kotlin
@@ -935,6 +1007,8 @@ NPE 被 `:92-96` 的 catch 吞掉后只做 `page--; setRefreshing(false)`，**�
 ---
 
 ### P20. `started` / `exitCode` 无 `@Volatile`，`start()` 无同步（对方已修，本项目未修）
+
+> ✅ **本项目已修**（`34e5bc9`）：五个字段加 `@Volatile`，`start()` 改 `@JvmStatic @Synchronized`
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/service/DownloadService.kt`
 
@@ -958,6 +1032,8 @@ NPE 被 `:92-96` 的 catch 吞掉后只做 `page--; setRefreshing(false)`，**�
 ---
 
 ### P21. 后台任务未捕获异常仍会直接杀死进程（对方已修，本项目未修）
+
+> ✅ **本项目已修**（`34e5bc9`）：协程体补 `try/catch(Throwable)` + `MsgUtil.err`。**保留了 `ErrorCatch` 的 `killProcess`**（与上游一致）
 
 **防护缺口（决定性）**：`app/src/main/java/com/RobinNotBad/BiliClient/util/CenterThreadPool.java:79-82`
 
@@ -996,6 +1072,8 @@ android.os.Process.killProcess(android.os.Process.myPid());
 
 ### P22. 弱网重复点赞 / 投币 / 发弹幕：网络层已等价，**客户端缺去重**
 
+> ✅ **本项目已修**（`3058512`）：客户端点击路径全部加互斥（`ReplyAdapter.kt:75 likingRpids` 实例级、`DynamicHolder.kt:59` **companion 级**，因为 ViewHolder 会被回收复用），另一半在 `fd947f0`（`VideoInfoFragment` 的点赞/投币/三连标志）。**有意偏离上游**：不照抄 `WriteReplyActivity` 那个「成功后才置位」的 `sent`（请求途中连点仍会重复发送）
+
 #### 已经有防护的部分（不要误报为缺陷）
 
 **本项目 POST 本就不自动重试** —— `app/src/main/java/com/RobinNotBad/BiliClient/util/NetWorkUtil.java:331-345` 的 `post(...)` 末尾直接执行，没有任何重试包装：
@@ -1033,6 +1111,8 @@ return client.newCall(request).execute();
 
 ### P23. 🔴 番剧播放进度：整条链路缺失（读不到、也写不了）
 
+> ✅ **本项目已修**（`07e9705`）：整条链路补齐：新增心跳上报 `api/HistoryApi.java:52-104 reportHistoryPgc(...)`、播放器读侧改走 `getLastPlayProgress`（pgc playurl 的 result 本来就不返回 `last_play_*`，原来那套读法永远得 0）、历史列表 `type=archive` → `type=all`；并接线到 `activity/video/JumpToPlayerActivity.kt` 与 `model/PlayerData.java` 的 `epid/seasonId/seasonType`
+
 这是**对方 v1.0.0 就修好的能力**，本项目**完全不具备**。它比 P1（csrf 快照错位）更根本：P1 只是"上报失败"，这里是"根本没有番剧上报/续播这条链路"。
 
 #### 写侧：完全没有番剧上报
@@ -1061,6 +1141,8 @@ return client.newCall(request).execute();
 ---
 
 ### P24. 多P续播跳到错误位置 + 切分P后记录记到旧分P
+
+> ✅ **本项目已修**（`07e9705`）：`adoptLastPlayTime(lastPlayCid, requestCid, lastPlayTime)` 校验 cid 后才采用续播位置；`normalizeProgress` 做秒/毫秒探测 + 24h 上限；`PlayerActivity.finish()` 回传 cid，切P时同步自己的 `cid` 字段
 
 #### (a) 不校验 `last_play_cid`：选 P3 会从 P2 的位置开始
 
@@ -1091,6 +1173,8 @@ progress   = last_play_time;      // ← 不校验 last_play_cid 是否等于本
 
 ### P25. WBI 密钥：按天缓存 + 先写标记后取密钥 + `sortUrlParams` 丢弃含 `=` 的参数
 
+> ✅ **本项目已修**（`07e9705`）：WBI 密钥 TTL 改 30 分钟、`signWBI` 加类锁、**成功后才写 `last_wbi_time`**（原来是先写标记再取密钥，一次失败污染整整一天）、`sortUrlParams` 改按首个 `=` 切分、`getDateCurr` 的 MONTH 补 `+1`
+
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/api/ConfInfoApi.java`
 
 ```kotlin
@@ -1117,6 +1201,8 @@ progress   = last_play_time;      // ← 不校验 last_play_cid 是否等于本
 
 ### P26. 评论区：无世代号、无超时、无空页重试，且数据改动在主线程之外
 
+> ✅ **本项目已修**（`3058512`）：世代号 `loadGeneration` + 30s 超时 + 空页带原游标重试（`MAX_EMPTY_PAGES = 5`）+ 数据改动全部移入主线程；`api/ReplyApi.java:140-166 getRepliesLazy` 重写为可区分 空页/结束/错误
+
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/activity/reply/ReplyFragment.kt`（250 行）
 
 - **无世代号**：`grep loadGeneration` → 0 命中。`refresh`（`:209-241`）也没有世代号 → **在途的旧翻页请求会把结果写进刷新后的新列表**。
@@ -1136,6 +1222,8 @@ progress   = last_play_time;      // ← 不校验 last_play_cid 是否等于本
 ---
 
 ### P27. 🔴 播放失败被伪装成"播放完毕"，且没有任何重试入口
+
+> ✅ **本项目已修**（`d292950`）：`setOnErrorListener` 末尾改 `return true`，阻断 `IjkMediaPlayer` 把错误改判成 `onCompletion()`（原来失败会被当成"播放完毕"并自动跳下一P）；配套 `playerError` 标志与 `retryAfterPlayerError()` 重试入口
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/activity/player/PlayerActivity.kt:878-882` —— 这就是 `onError` 的**全文**：
 
@@ -1174,6 +1262,8 @@ ijkPlayer!!.setOnErrorListener { _, what, extra ->
 
 ### P28. 音频模式切换无销毁守卫 → 重建的播放器无人释放（native 泄漏）
 
+> ✅ **本项目已修**（`d292950`）：音频模式切换加 `if (destroyed || isFinishing()) return@runOnUiThread` 守卫
+
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/activity/player/PlayerActivity.kt:1978-1982`（`toggleAudioOnlyMode()` 定义于 `:1947-1999`）
 
 ```kotlin
@@ -1198,6 +1288,8 @@ runOnUiThread {
 ---
 
 ### P29. ◐ SplashActivity：网络波动会清空登录态（对方已修，本项目部分残留）
+
+> ✅ **本项目已修**（`fd947f0`）：Cookie 刷新失败/异常一律只记日志，仅当本地连 `SESSDATA` 都取不到才 `resetLogin()`
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/activity/SplashActivity.kt:83-106`
 
@@ -1251,6 +1343,8 @@ String dedeUserId = NetWorkUtil.getInfoFromCookie("DedeUserID", cookies_new);
 
 ### P30. 播放器退出路径的资源释放与主线程阻塞（与 P2 / P3 合并处理）
 
+> ✅ **本项目已修**（`d292950`）：先摘标志、再 release、再置空引用
+
 **说明（避免夸大）**：P6 表第 6、7 项（"非正常退出路径的资源释放"、"快进/快退与切清晰度不再有主线程卡住的风险"）在本轮审计中**没有取得独立于 P2 / P3 的新证据**。它们与本项目已确认的两条根因同源：
 
 - **P2**：弹幕绘制线程轮询 `ijkPlayer.getCurrentPosition()`（取原生锁的 JNI 调用）→ 绘制线程卡住后主线程 `release()` 内 `join()` 无限等待。
@@ -1263,6 +1357,8 @@ String dedeUserId = NetWorkUtil.getInfoFromCookie("DedeUserID", cookies_new);
 ---
 
 ### P31. ◐ 退出登录：调了服务端接口，但用的是无效的 GET 形式
+
+> ✅ **本项目已修**（`d676a77`）：`exitLogin()` 改 POST + `csrf=`，并返回是否成功；本地登录态清理与服务端注销放进同一个后台任务，消除 csrf 被提前清空的竞态
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/api/UserInfoApi.java:212-220`
 
@@ -1302,6 +1398,8 @@ NetWorkUtil.post("https://passport.bilibili.com/login/exit/v2", "csrf=" + csrf, 
 ---
 
 ### P32. 搜索页：建议乱序无保护 + `hasFocus` 门禁丢结果 + 输入法不弹
+
+> ✅ **本项目已修**（`d676a77`）：建议请求加代际号（慢响应不再覆盖新响应、失焦不再丢结果）、点输入框 `post { showSoftInput }` 弹输入法、建议点击前 `clearComposingText()`、`afterTextChanged` 加 `if (refreshing) return`、`requestFragmentFocus()` 加焦点守卫
 
 #### 重要更正：**"搜索建议永远为空"这个 bug 在本项目不存在**
 
@@ -1350,6 +1448,8 @@ NetWorkUtil.post("https://passport.bilibili.com/login/exit/v2", "csrf=" + csrf, 
 ---
 
 ### P33. `asyncInflate` 内容就绪即硬切 → 低性能设备"过渡动画丢失"
+
+> ✅ **本项目已修**（`d676a77`）：`AsyncLayoutInflaterX` 新增按帧驱动的 `fadeIn(View, BooleanSupplier)`，`cancel()` 真正生效（`mCancelled` + 清 Handler 队列），`BaseActivity` 在 onDestroy 取消并在回调里判 `isDestroyed`
 
 **现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/activity/base/BaseActivity.kt:396-407`
 
@@ -1469,6 +1569,8 @@ alpha = Math.min(Math.min(frameCount / 3f, elapsed / 300f), 1f)   // 3 帧 + 300
 
 ### E1. 发布产物的校验与可追溯性
 
+> ✅ **本项目已修**（`4d88b98`）：新增 `verifyVersionConsistency` Gradle 任务（校验 strings.xml 更新日志锚点与 config.json），接入 `check` 与 CI；`util/UpdateManager.kt` 改为显式兼容字符串/原生类型并在解析失败时记日志；`readme.md` badge 与 `docs/FEATURES.md` 基线已纠偏。提交 `8996a1a` = UpdateManager，`f26407e` = 文档
+
 对方 release note 的通行做法：**versionCode/versionName + ABI 说明 + 覆盖安装说明**，并**对部分版本**附 MD5 校验表 / 实机测试清单（逐版本覆盖情况见 §1 的表）。
 
 本项目：`readme.md:7` 的 badge 停在 **26.09.07**；`docs/FEATURES.md:6` 写"适用版本 **26.08.14**"（落后 5 个版本）；版本号分散在 `app/build.gradle:29-30`、`config.json:2-3`（**被 .gitignore 排除，CI 无法校验**）、`app/src/main/res/values/strings.xml:342`。三处靠人工同步，本次审计就发现 `readme.md` 与 `docs/FEATURES.md` 均已漂移。
@@ -1477,9 +1579,13 @@ alpha = Math.min(Math.min(frameCount / 3f, elapsed / 300f), 1f)   // 3 帧 + 300
 
 ### E2. 崩溃可观测性
 
+> ✅ **本项目已修**（`34e5bc9`）：见 P5：崩溃页现在能先显示出来（`Thread.sleep(300)`）。**仍然没有远程崩溃上报**，与上游一致
+
 见 P5。本项目唯一的崩溃收集手段是 `ErrorCatch` → `CatchActivity`，但它**抢在页面显示前杀进程**。对方也没有远程崩溃上报，但至少加了 `Thread.sleep(300)` 让崩溃页先显示出来。
 
 ### E3. CI 覆盖面
+
+> ✅ **本项目已修**（`09623cd`）：新增 `.github/workflows/ci.yml`：`push: branches:[main]` + `pull_request: branches:[main]` + `workflow_dispatch`，跑 `assembleDebug` + `testDebugUnitTest` 并上传报告；`build-release.yml` 在 `assembleRelease` 前插入单测步骤，测试红不再能发版
 
 | | 本项目 `.github/workflows/build-release.yml` | 对方 `.github/workflows/ci.yml`（91 行） |
 |---|---|---|
@@ -1502,6 +1608,8 @@ alpha = Math.min(Math.min(frameCount / 3f, elapsed / 300f), 1f)   // 3 帧 + 300
 ## 六、修复优先级建议
 
 > 排序依据：**用户可感知的损失 × 触发概率 × 修复成本**。S 系列是安全问题，P 系列是功能与稳定性，F 系列是功能差距。
+
+> **📌 执行状态**：以下第一至第五优先的 S / P 系列条目**已全部修复并提交**（逐条对应关系见卷首「〇·附、修复状态总览」与各条目标题下的 ✅ 标记）。**第六优先**中只有 F3 的两项（评论点赞类型、评论图片上传）顺带修掉，其余功能补齐仍未做。
 
 ### 第一优先（安全问题，建议立即修）
 
