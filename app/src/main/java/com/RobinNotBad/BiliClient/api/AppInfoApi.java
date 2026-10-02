@@ -86,9 +86,10 @@ public class AppInfoApi {
                     } else SharedPreferencesUtil.putString("terminal_update_pkg", "");
                 }
 
-                // 原来同时弹「提醒」对话框 + 「更新公告」全屏页，两层叠在一起很烦，这里合并成一处；
-                // 更新细节也统一改用 update_log_current（与「设置 → 关于 → 本次更新」同一份数据）。
-                MsgUtil.showText("更新公告", buildUpdateNotice(context));
+                // 这里原来会再弹一个「更新公告」全屏页（内容就是 update_log_current 全文）。
+                // 现在版本升级后的当版日志由 SplashActivity 打开专门的更新日志页展示（按版本分选项卡），
+                // 两处会同时弹、内容完全重复，且全屏页会盖在日志页上面，所以这里只保留后面
+                // 「删除已下载的旧更新包」与「debug 包警告」两件事，不再弹公告。
                 if (ToolsUtil.isDebugBuild())
                     MsgUtil.showDialog("警告", context.getString(R.string.warning_debug));
                 SharedPreferencesUtil.putInt("app_version_last", version);
@@ -104,22 +105,6 @@ public class AppInfoApi {
             Log.e("debug-terminal", e.toString());
             MsgUtil.err("终端接口出现问题（不影响软件内容）", e);
         }
-    }
-
-    /**
-     * 组装更新公告正文：兼容性提醒 + 本次更新细节。
-     *
-     * 更新细节统一读 {@code R.array.update_log_current}（与「设置 → 关于 → 本次更新」同一份数据）。
-     * 旧实现读的是 {@code R.array.update_log_items}——那是从 2.7.0 以来的全量功能汇总，
-     * 又长又含过时条目（例如早已不存在的「Hilt / Retrofit 架构」），不适合当更新公告。
-     */
-    private static String buildUpdateNotice(Context context) {
-        StringBuilder sb = new StringBuilder(context.getString(R.string.text_update_success));
-        sb.append("\n\n———— 本次更新 ————");
-        for (String item : context.getResources().getStringArray(R.array.update_log_current)) {
-            sb.append("\n").append(item);
-        }
-        return sb.toString();
     }
 
     public static final ArrayList<String> customHeaders = new ArrayList<>() {{

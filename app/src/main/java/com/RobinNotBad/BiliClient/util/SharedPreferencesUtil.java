@@ -49,6 +49,11 @@ public class SharedPreferencesUtil {
     public static String access_key = "access_key";
     public static String refresh_token = "refresh_token";
     public static String setup = "setup";
+    /**
+     * F4：上一次启动时的 versionCode，用于判断「更新后首次启动」。
+     * 由 SplashActivity.shouldShowUpdateLogAfterUpgrade() 读写：与当前 versionCode 不一致
+     * 且属于版本升级时自动打开更新日志页；首次安装只写回、不弹页。
+     */
     public static String last_version = "last_version";
     public static String player = "player";
     public static String padding_horizontal = "padding_horizontal";

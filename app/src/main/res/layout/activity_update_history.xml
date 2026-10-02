@@ -36,11 +36,21 @@
 
     </RelativeLayout>
 
+    <!-- F5：按版本切换的选项卡。tabMode=scrollable 是为了手表窄屏下列多时能横向滚动 -->
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/version_tabs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_below="@id/top"
+        app:tabIndicatorFullWidth="false"
+        app:tabMode="scrollable" />
+
     <com.RobinNotBad.BiliClient.ui.widget.RotaryScrollView
         android:id="@+id/scrollView"
         android:layout_height="match_parent"
         android:layout_width="match_parent"
-        android:layout_below="@id/top">
+        android:layout_alignParentBottom="true"
+        android:layout_below="@id/version_tabs">
 
         <LinearLayout
             android:id="@+id/history_container"

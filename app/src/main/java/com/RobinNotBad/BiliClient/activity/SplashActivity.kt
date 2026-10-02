@@ -11,7 +11,9 @@ import android.util.Log
 import android.widget.TextView
 import com.RobinNotBad.BiliClient.BiliTerminal
 import com.RobinNotBad.BiliClient.BiliTerminalApp
+import com.RobinNotBad.BiliClient.BuildConfig
 import com.RobinNotBad.BiliClient.R
+import com.RobinNotBad.BiliClient.activity.settings.UpdateHistoryActivity
 import com.RobinNotBad.BiliClient.activity.settings.setup.SetupUIActivity
 import com.RobinNotBad.BiliClient.activity.video.RecommendActivity
 import com.RobinNotBad.BiliClient.activity.video.local.LocalListActivity
@@ -33,6 +35,9 @@ class SplashActivity : Activity() {
 
     private lateinit var splashTextView: TextView
     private var splashText: String = "欢迎使用\nRE:哔哩终端"
+
+    /** F4：本次启动是否需要自动展示当版更新日志（只在"版本升级"时为 true）。 */
+    private var pendingUpdateLog = false
 
     private var typewriterIndex = 0
     private var typewriterRunning = false
@@ -76,6 +81,11 @@ class SplashActivity : Activity() {
         splashTextView = findViewById(R.id.splashText)
         splashText = SharedPreferencesUtil.getString("ui_splashtext", "欢迎使用\nRE:哔哩终端")
         startTypewriter(splashText)
+
+        // F4：在这里（而不是进主流程之后）判一次版本，是因为下面可能为了 UETool 悬浮窗权限
+        // 直接 return、稍后由 onActivityResult 再走一遍 proceedSplashFlow；判定结果用字段记住，
+        // 保证"升级后首次启动弹更新日志"只算一次。
+        pendingUpdateLog = shouldShowUpdateLogAfterUpgrade()
 
         // Debug 构建下：若未授予悬浮窗权限，先跳去授权再继续启动流程，确保 UETool 能显示
         if (ensureUEToolOverlayPermission()) return
@@ -157,6 +167,71 @@ class SplashActivity : Activity() {
     }
 
     /**
+     * F4：判断本次启动是否需要自动展示当版更新日志（仅「版本升级」需要）。
+     *
+     * 记录的是 **versionCode**，不是 versionName：versionCode 由本项目版本号规则 YYMMDD0 推出、
+     * 单调递增且唯一；versionName 在 beta 包上带「-BETA<n>」后缀、又靠人肉维护，不适合当基准。
+     *
+     * 判定口径：
+     * - 存的值 == 当前 versionCode：不是升级，不弹；
+     * - 存的值 >= 0（这个键生效之后的任意一次启动）：只要不相等就算升级，弹；
+     * - 存的值 < 0（键不存在，即用户从"还没有这段逻辑"的旧版本升上来）：退回用 PackageInfo 的
+     *   lastUpdateTime > firstInstallTime 区分「覆盖安装（升级）」与「首次安装」——前者弹，
+     *   后者不弹（首装用户刚走完 SetupUIActivity，再糊一脸更新日志纯属噪音）；
+     * - 无论哪种情况都把当前 versionCode 写回，保证同一版本只弹一次。
+     *
+     * 读取包了 try/catch：万一这个键将来被写成非 Int，getInt 的 ClassCastException 不该拖垮
+     * 闪屏，退化成 -1（走上面的"未知"分支）即可。写入前判 sharedPreferences 是否就绪，
+     * 因为 util 里的 putInt 没有判空。
+     */
+    private fun shouldShowUpdateLogAfterUpgrade(): Boolean {
+        val currentCode = BuildConfig.VERSION_CODE
+        val lastCode = try {
+            SharedPreferencesUtil.getInt(SharedPreferencesUtil.last_version, -1)
+        } catch (e: Exception) {
+            Log.e("Splash", "读取 last_version 失败，按未记录处理：${e.message}")
+            -1
+        }
+
+        val upgraded = when {
+            lastCode == currentCode -> false
+            lastCode >= 0 -> true
+            else -> isCoverInstall()
+        }
+
+        if (SharedPreferencesUtil.sharedPreferences != null) {
+            SharedPreferencesUtil.putInt(SharedPreferencesUtil.last_version, currentCode)
+        } else {
+            Log.e("Splash", "sharedPreferences 未就绪，跳过 last_version 写回")
+        }
+        return upgraded
+    }
+
+    /**
+     * last_version 这个键还不存在时的兜底判据：
+     * 包的最后更新时间晚于首次安装时间 => 覆盖安装（版本升级）；两者相等 => 首次安装。
+     */
+    private fun isCoverInstall(): Boolean {
+        return try {
+            val info = packageManager.getPackageInfo(packageName, 0)
+            info.lastUpdateTime > info.firstInstallTime
+        } catch (e: Exception) {
+            Log.e("Splash", "读取安装时间失败，按非升级处理：${e.message}")
+            false
+        }
+    }
+
+    /** F4：构造自动打开更新日志页的 Intent，并预选当前版本选项卡。 */
+    private fun buildUpdateLogIntent(): Intent {
+        val intent = Intent(this, UpdateHistoryActivity::class.java)
+        intent.putExtra(
+            UpdateHistoryActivity.EXTRA_VERSION_INDEX,
+            UpdateHistoryActivity.indexOfCurrentVersion(this)
+        )
+        return intent
+    }
+
+    /**
      * Debug 构建下，检查悬浮窗权限：
      * - 已授权 → 返回 false，让启动流程继续
      * - 未授权 → 跳转系统设置授权页并返回 true，在 onActivityResult 再继续启动
@@ -219,6 +294,18 @@ class SplashActivity : Activity() {
                         splashTextView.text = splashText
                         startActivity(intent)
                         finish()
+                        // F4：版本升级后的首次启动，自动展示当版更新日志。
+                        // 排在这一句之后：日志页叠在首屏之上、返回即回到首屏，闪屏阶段既不阻塞
+                        // UI 线程，也不插入登录 / Cookie 刷新流程中间。setup 尚未完成、要走
+                        // SetupUIActivity 的分支不弹，免得和初始化向导抢屏幕。
+                        //
+                        // 已知重叠（本次未处理，需 AppInfoApi 侧配合）：AppInfoApi.check() 里
+                        // 还有一条老链路——app_version_last < version 时会再弹一个内容重复的
+                        // 「更新公告」ShowTextActivity，并负责删除已下载的旧更新包。详见报告。
+                        if (pendingUpdateLog) {
+                            pendingUpdateLog = false
+                            startActivity(buildUpdateLogIntent())
+                        }
                         // 启动通知（免责声明 / 夜深了）必须排在首屏 startActivity 之后，且在同一个
                         // UI 线程上弹出；否则 check() 的后台线程会抢跑，把 DialogActivity 压在首屏下面
                         AppInfoApi.showStartupNotices(this@SplashActivity)
