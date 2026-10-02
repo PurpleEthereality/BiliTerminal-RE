@@ -47,8 +47,8 @@
 - **F3** 中未做的几项：带图发动态、表情 `type 9` 渲染、转发引用原作者、发布选项（`option` JSON）、动态置顶 / 可见范围 / 编辑、动态卡片评论数入口、话题页、图文详情接口直取。
 - **P6** 判定为"部分"的 3 项，以及 **P14**（经核实其修复理由在本项目不成立，未动）。
 - **P23 的周期上报**（上游 `PROGRESS_REPORT_INTERVAL_MS = 15000`）与**切P即时上报**尚未接线；目前只有"退出播放器时上报"。
-- **E2** 的远程崩溃上报（上游也没有）。
-- **E2 的 release MD5 表**（上游只在 v1.0.2-fix1 / v1.1.1 / v1.1.1-fix 提供过）。
+- **E2** 的**远程（自动）崩溃上报**：双方都没有。—— 但需澄清：本项目**已有用户手动上传崩溃堆栈**的能力（`api/AppInfoApi.java:196 uploadStack` → `https://api.biliterminal.cn/terminal/upload/stack`，由 `activity/CatchActivity.kt:59-76` 接线），而上游反而**把这个按钮隐藏掉了**（对方 `activity/CatchActivity.java:61 btn_upload.setVisibility(View.GONE)`）。所以这一项本项目**不落后**，无需"修复"。
+- ~~**E2 的 release MD5 表**~~ ✅ **已修**（`6b2dea1`）：Release 说明与附件同时提供 `md5sums.txt`。
 
 ## 一、对方 8 个 Release 的内容概览
 
@@ -1579,9 +1579,29 @@ alpha = Math.min(Math.min(frameCount / 3f, elapsed / 300f), 1f)   // 3 帧 + 300
 
 ### E2. 崩溃可观测性
 
-> ✅ **本项目已修**（`34e5bc9`）：见 P5：崩溃页现在能先显示出来（`Thread.sleep(300)`）。**仍然没有远程崩溃上报**，与上游一致
+> ✅ **本项目已修**（`34e5bc9` 修 P5，`6b2dea1` 补 release MD5 表）
+>
+> 澄清一个此前的误记：本项目**并非**只有"崩溃页来不及显示"这一个问题 ——
+> 它其实**已经有用户手动上传崩溃堆栈**的能力，而上游反而没有把这条路走通。详见下。
 
-见 P5。本项目唯一的崩溃收集手段是 `ErrorCatch` → `CatchActivity`，但它**抢在页面显示前杀进程**。对方也没有远程崩溃上报，但至少加了 `Thread.sleep(300)` 让崩溃页先显示出来。
+**① 崩溃页被抢在显示前杀进程** —— 见 P5。`ErrorCatch` → `CatchActivity` 这条链本身没问题，
+问题是 `ErrorCatch.java` 在 `startActivity` 之后**立刻** `killProcess`，而 `startActivity` 是异步的。
+上游的做法是补 `Thread.sleep(300)`；本项目已照做（`app/src/main/java/com/RobinNotBad/BiliClient/ErrorCatch.java:48-51`）。
+
+**② 崩溃堆栈上传** —— 本项目**已有**，而且比上游完整：
+
+| | 本项目 | 对方 |
+|---|---|---|
+| 上传接口 | `api/AppInfoApi.java:196 uploadStack` → `https://api.biliterminal.cn/terminal/upload/stack` | 有同样的 `AppInfoApi` |
+| 上传入口 | `activity/CatchActivity.kt:59-76` 接线 `R.id.upload_btn`，走 `CenterThreadPool.run{}` + `runOnUiThread` 回填报错 ID | ❌ `activity/CatchActivity.java:61` 在 `if (stack != null)` 分支里**无条件** `btn_upload.setVisibility(android.view.View.GONE)` —— 按钮被隐藏，用户根本点不到 |
+| 上传门控 | `activity/CatchActivity.kt:46-57` `allowUpload`：只放行"未知的崩溃原因"，`NumberFormatException`/`UnsatisfiedLinkError`/`JSONException`/`OutOfMemoryError` 四类已知原因直接禁用按钮并提示"此类型报错不可上传" | 无（因为整条路都关着） |
+| 未登录处理 | `activity/CatchActivity.kt:61-62` 提示"我们不对未登录时遇到的问题负责"并跳过上传 | 无 |
+| 失败重试 | `activity/CatchActivity.kt:71` `if (res.code == -1) btnUpload.isEnabled = true` | 无 |
+
+**仍然没有的**：远程**自动**崩溃上报（不需要用户点击、下次启动静默上报）。
+这一点**双方都没有**，本项目不落后，因此不作为缺陷处理。
+
+**新增的**：release 产物的 MD5 校验值（`6b2dea1`），见本档上方"仍未修复"清单的更正 —— 详见 §五 附带项。
 
 ### E3. CI 覆盖面
 
