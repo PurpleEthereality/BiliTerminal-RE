@@ -1,6 +1,6 @@
 # ReBiliClient 修复进度报告
 
-> 更新日期：2026-09-10
+> 更新日期：2026-09-24
 > 基线：`docs/review/00-summary.md`（基于 26.08.27 快照，共 286 个问题）
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
@@ -14,6 +14,39 @@
 | High | 52 | 4（分页 2 + 菜单键/Cookie 锁 2） | 48 待处理 |
 | Medium | 105 | 0 | 105 待处理 |
 | Low/Info | 106 | 0 | 106 待处理 |
+
+### 2026-09-24 深度审查新增（见 `docs/review/audit-2026-09-24.md`）
+
+> 四个方向独立审计 + 逐条回读核实。以下为**新增发现**，与上方 286 问题基线**独立计数**。
+
+> **2026-10-02 修复轮次更新**：下表条目已全部处理完毕。每条的最终状态、涉及文件，以及
+> **两条审计结论的更正**（S3 的泄漏前提不成立、`IjkPlayerBridge.release()` 不能简单 cancel `job`），
+> 见 `docs/review/audit-2026-09-24.md` 的「六、修复轮次后的状态」。
+
+| 严重度 | 新增数量 | 已修复 | 待处理 |
+|---|---|---|---|
+| 严重 | 10 | 10 | 0 |
+| 中等 | 13 组 | 12 组（M6 大部分） | 1 组（M9 属分层重构） |
+| 轻微 | 11 | 11 | 0 |
+
+> 另有四项**有意不修**并已在代码内留注释/说明：M6 的 `callTimeout`（同一 OkHttpClient 兼服务大文件流式下载，设了会掐断正常下载）、M6 的 `api_retry_max_times` 设置项（属设置页功能新增）、M9（API 层直调 `MsgUtil`/全局 `Context`，属分层重构）、M12-b 的 `TV_APP_SEC`（B 站 TV 端公开常量，非可撤销凭证）。
+
+**P0 新增（已全部修复）**：
+
+- [x] S1 WBI 签名「先写日期戳后取 key」→ 首调失败则**当天全部 17 处核心接口 403**（`ConfInfoApi.java:74-83`）— 复查轮次前已修
+- [x] S2 `sortUrlParams` 丢弃含 `=` 的参数（`ConfInfoApi.java:108-116`）— 同源的 `Cookies.java` 漏修点已在修复轮次补上
+- [x] S4 下载失败时删除已完成视频文件夹（`DownloadService.kt:1487-1500`）— 复查轮次前已修（改调 `FileUtil.cleanDownloadTempFiles`）
+- [x] S9 完整 Cookie 经 Intent extra 传给第三方播放器（`PlayerApi.java:399-404`）— 已修，跨进程读取待真机验证
+
+**P1 新增（已全部修复）**：
+
+- [x] S3 所有 API 的 `Response` 从不 `close()` — **前提已更正**：OkHttp 的 `body.string()`/`bytes()` 内部即 `source().use { }`，读完就归还连接；实际只泄漏「body 从未读完」的 10 处，已全部关闭
+- [x] S5 `started` 无同步竞态（`DownloadService.kt:430-435`）— 已改 `@JvmStatic @Volatile` + `@Synchronized`
+- [x] S6 `recoverStuckSections()` 把正在下载的任务重置为 `none`（`DownloadService.kt:689-699`）
+- [x] S7 分片回退字节双重计数（`DownloadService.kt:1356-1358`）
+- [x] S8 登录成功流程跑在 UI 线程（`PasswordLoginFragment.kt:213-237`）
+- [x] S10 ProGuard 整包 keep 使 R8 失效（`proguard-rules.pro:101-103`）— 三条整包规则已删，规则文件整体重写
+- [x] M13 CI 不跑任何测试（`.github/workflows/build-release.yml:104`）— 已新增 `ci.yml`，发版前也先跑 `testDebugUnitTest`
 
 ---
 
@@ -722,6 +755,42 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 
 ---
 
+### 第三十二轮（四方向深度审查 · 只审计未改动）· 26.09.24
+
+**说明**：本轮**不修改任何业务代码**，只做审查与文档化。完整报告见
+**`docs/review/audit-2026-09-24.md`**（新增，含证据代码块、受影响行号表、修复方向）。
+
+**审查范围**：网络/API 层、测试与构建配置、播放器与下载服务、ProGuard/清单/版本管理，
+4 个方向独立审计后**逐条 `sed -n 'Np'` 回读核实**。
+
+**产出**：严重 10 / 中等 13 组 / 轻微 11。
+
+**本轮同时澄清/证伪的事项**（详见 `audit-2026-09-24.md` 第〇节）：
+
+- ✅ **确认已修的 10 项**（不再列为问题）：`saveCookiesFromResponse` 锁、重定向 `response.close()`、
+  `Inflater.end()`、`allowBackup=false`、明文流量白名单、`CaptchaWebViewActivity` 加固、
+  备份规则排除凭据、`TerminalContext` 单例写法、`ConfInfoApi` WbiCache 原子替换、`SplashActivity` 线程。
+- ❌ **证伪 4 项**（不再重复排查）：`PlayerSurfaceBinder.removeCallbacksAndMessages` 影响其他 Handler、
+  `downFileSpeedSeg` 的 `segments` 越界、minSdk 24 下线程池并发创建、`LiveInfoActivity.kt:148` host 拼接缺 scheme。
+- 🔒 **密钥未泄漏**：`key.jks` / `local.properties` / `config.json` 均**从未被 git 跟踪、从未进入历史**。
+
+**五项最值得优先处理**（详见报告第五节）：
+
+| 优先级 | 项 | 理由 | 改动量 |
+|---|---|---|---|
+| 1 | S1 WBI 换序 + S2 `split("=", 2)` | 消除**全天级 403**，影响 17 处核心接口 | 约 3 行 |
+| 2 | S4 删文件夹加保护 | **唯一会丢失用户已下载数据**的缺陷 | 数行 |
+| 3 | M13 CI 加 `testDebugUnitTest` | 一行，**永久防回归**，让 112 个现存用例真正生效 | 1 行 |
+| 4 | S9 停传完整 Cookie | **账号凭证跨进程外流** | 数行 |
+| 5 | S5 + S6 下载竞态与幂等守卫 | 重复写同一文件 | 中等 |
+
+**未覆盖**：`PlayerActivity.kt` 第 500-765、960-1240、1500-2860 行未通读；
+`mips` 空壳 so 是否进 APK 未解包验证；`NetWorkUtil.decompress` 实现未读。
+
+> **本轮无构建验证**：未改动任何代码，故未执行 `assembleDebug` / `testDebugUnitTest`。
+
+---
+
 ## 三、审查前已修复（本次核查确认，无需改动）
 
 | 文件 | 问题 | 防御措施 |
@@ -788,8 +857,8 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 ### P0 剩余 Critical（待排查）
 
 - [x] 私信会话列表逻辑写反：`PrivateMsgApi.java:157`（26.09.08 已修，第四轮）
-- [ ] 下载并发竞态：`DownloadService.start()` 无同步（改动面大，需单独评估）
-- [ ] 分片 join 超时并发写：`DownloadService`（同上）
+- [x] 下载并发竞态：`DownloadService.start()` 无同步（26.10.02 修复轮次：改 `@JvmStatic @Volatile` + `@Synchronized`，检查与置位同锁）
+- [x] 分片 join 超时并发写：`DownloadService`（26.10.02 修复轮次：超时不再逐片累加；分片失败回退不再双重计字节）
 
 ### P0 功能正确性（High）
 
@@ -803,9 +872,9 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 ### P1 架构清理
 
 - [x] 移除 Hilt 等死依赖与 ksp/serialization 插件（26.09.11 已完成）
-- [ ] 处置 `BiliTerminalApp.kt`：Hilt 注解已摘，但该类仍被 `SplashActivity` 的 UETool 逻辑引用（5 处静态方法），既非完全死代码也非 Application 入口
+- [x] 处置 `BiliTerminalApp.kt`：Hilt 注解已摘，但该类仍被 `SplashActivity` 的 UETool 逻辑引用（5 处静态方法），既非完全死代码也非 Application 入口 —— **26.10.02 修复轮次已解决**：类整体删除，UETool 的静态方法与常量移入 `BiliTerminal.kt` 伴生对象，`SplashActivity` 的 7 处调用改指向 `BiliTerminal.`，`proguard-rules.pro` 里该类的 keep 规则一并删除
 - [x] 清空 23 个空目录（di/data/network/ui 等）（26.09.11 已完成，实测空目录 = 0）
-- [ ] 删除幻觉方法（`SharedPreferencesUtil.beginBatchEdit` 等；实测仅剩定义无调用）
+- [ ] 删除幻觉方法（`SharedPreferencesUtil.beginBatchEdit` 等；实测仅剩定义无调用）—— 26.10.02 修复轮次已删 `TerminalContext.leaveDetailPage()` / `getTerminalKey()`、`CenterThreadPool.getThreadPoolInstance()` 与死类 `SSLSocketFactoryCompat`；**`SharedPreferencesUtil.beginBatchEdit`（`:160`）仍只剩定义**
 - [x] 统一 Cookie 写入锁（26.09.08 已修，第四轮）
 
 ### P1 安全
@@ -815,9 +884,9 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - [x] 明文流量收窄为域名白名单（`network_security_config`，26.09.13 第三十轮）
 - [x] 组件导出面收敛：22 个多余 `exported="true"` 改 false（26.09.13 第三十轮）
 - [x] `TestActivity` 改为仅 Debug 包（清单下移 `src/debug` + `BuildConfig.DEBUG` 门控，26.09.13 第三十轮）
-- [ ] 敏感日志清理（PrivateMsgApi/NetWorkUtil.post）
+- [x] 敏感日志清理（PrivateMsgApi/NetWorkUtil.post）—— 26.10.02 修复轮次：`PrivateMsgApi` 的逐条私信正文 `Log.e` 已删除（改为只记条数）；`QRLoginFragment` 的 4 行 token/完整 Cookie 日志在 26.09.08 第四轮已删
 - [ ] 更新 APK 签名/哈希校验
-- [ ] 危险权限收敛（`READ_PHONE_STATE` / `REQUEST_INSTALL_PACKAGES` / `SYSTEM_ALERT_WINDOW` / `MANAGE_EXTERNAL_STORAGE` 未动）
+- [x] 危险权限收敛 —— 26.10.02 修复轮次：主清单已删 `ACCESS_WIFI_STATE`（无任何 `WifiManager` 引用）与 `READ_PHONE_STATE`（无 `TelephonyManager` 引用），`SYSTEM_ALERT_WINDOW` 下移到 `src/debug/AndroidManifest.xml` 只给 UETool 用；`MANAGE_EXTERNAL_STORAGE` 已不在主清单。**有意保留** `REQUEST_INSTALL_PACKAGES`（应用内更新装 APK 必需）与 `READ_EXTERNAL_STORAGE`（minSdk 24 读取外部存储）
 
 ### P2 工程化
 
