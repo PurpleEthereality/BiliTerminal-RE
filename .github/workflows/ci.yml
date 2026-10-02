@@ -60,6 +60,11 @@ jobs:
           fi
           echo "gradle.properties 已清理"
 
+      # 版本号分散在 build.gradle / strings.xml / config.json 三处靠人工同步，
+      # 历史上已实际漂移过（readme badge、docs/FEATURES.md）。见审计 §五 E1。
+      - name: 校验版本号一致性
+        run: ./gradlew :app:verifyVersionConsistency --no-configuration-cache
+
       # 显式关掉配置缓存：CI 只跑一次构建，缓存收益为负，而且配置缓存会把
       # 上一次构建的输入快照写进 build/ 目录，出问题时排查成本高于收益。
       - name: 编译 Debug 包
