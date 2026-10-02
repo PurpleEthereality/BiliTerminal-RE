@@ -62,6 +62,12 @@ open class BaseActivity : AppCompatActivity() {
     // 用单个 Int 而不是逐个比对各设置项：将来再加第 4 个外观模块时不需要改这里。
     private var appliedAppearanceVersion: Int = -1
 
+    // 记录本页面尚未完成的异步 inflate，供 onDestroy 取消。
+    // asyncInflate 的布局是在后台线程池里解析的，页面可能在此之前就被关掉；
+    // 不持有这个引用就没法在 onDestroy 里调用 AsyncLayoutInflaterX.cancel()，
+    // 回调会打到已销毁的页面上（AGENTS.md 记录的坑：cancel() 从未被调用）。
+    private var pendingAsyncInflater: AsyncLayoutInflaterX? = null
+
     override fun attachBaseContext(newBase: Context) {
         old_context = newBase
         super.attachBaseContext(BiliTerminal.getFitDisplayContext(newBase))
@@ -342,6 +348,10 @@ open class BaseActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // 取消还没交付的异步 inflate：布局在线程池里已经跑起来时无法中断，
+        // 但可以让它到达主线程后丢弃结果，避免 setContentView / finishInflate 打在已销毁的页面上。
+        pendingAsyncInflater?.cancel()
+        pendingAsyncInflater = null
         if (eventBusInit) {
             try {
                 EventBus.getDefault().unregister(this)
@@ -395,8 +405,19 @@ open class BaseActivity : AppCompatActivity() {
 
     protected fun asyncInflate(id: Int, callBack: InflateCallBack) {
         setContentView(R.layout.activity_loading)
-        AsyncLayoutInflaterX(this).inflate(id, null) { view, layoutId, _ ->
+        val inflater = AsyncLayoutInflaterX(this)
+        pendingAsyncInflater = inflater
+        inflater.inflate(id, null) { view, layoutId, _ ->
+            // 布局是在后台线程池里解析的，完成时页面可能已经销毁（本基类有 20 个页面在用）。
+            // 对已销毁的页面 setContentView 会失败，而且 onDestroy 里已经 cancel 过，
+            // 这里再兜一层守卫，保证回调不会跑到宿主上。
+            if (isDestroyed) return@inflate
             setContentView(view)
+
+            // 直接 setContentView 是「硬切」：loading 页被内容页瞬间替换，
+            // 低性能手表上转场早已结束，观感就是白屏跳变；这里做一次约 3 帧 / 300ms 的淡入。
+            // 实现放在 AsyncLayoutInflaterX.fadeIn（纯代码，不依赖系统动画缩放，也不新增任何 res 资源）。
+            AsyncLayoutInflaterX.fadeIn(view) { isDestroyed }
 
             if (this is InstanceActivity) (this as InstanceActivity).setMenuClick()
             else setTopbarExit()

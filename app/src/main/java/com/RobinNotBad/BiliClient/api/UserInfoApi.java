@@ -13,6 +13,8 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import okhttp3.Response;
+
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -209,12 +211,30 @@ public class UserInfoApi {
         return all.getInt("code");
     }
 
-    public static void exitLogin() {
+    /**
+     * 退出登录：请求服务端注销当前会话。
+     *
+     * 为什么必须是 POST + csrf：正式的注销端点是
+     * `POST https://passport.bilibili.com/login/exit/v2`，且校验 csrf（bili_jct）。
+     * 之前用不带参数的 GET 根本调不动它 —— 服务端会话（含 refresh_token）不会被失效，
+     * 等于「退出登录」只清了本地 Cookie，Token 一旦泄漏攻击者仍然能用，是安全问题。
+     *
+     * @return 服务端是否确认注销成功（code == 0）。网络异常、csrf 缺失、返回非 0 都返回 false，
+     * 调用方据此提示用户，但**无论成功与否都应清理本地登录态**，不能把用户卡在登录页面。
+     */
+    public static boolean exitLogin() {
         try {
+            // csrf 必须从「还没被清掉的」Cookie 里读，所以调用方要在清本地登录态之前调这个方法
+            String csrf = NetWorkUtil.getInfoFromCookie("bili_jct", SharedPreferencesUtil.getString(SharedPreferencesUtil.cookies, ""));
+            if (csrf.isEmpty()) return false; // 没有 csrf 时服务端必然拒绝，不必白跑一次网络请求
             String url = "https://passport.bilibili.com/login/exit/v2";
-            NetWorkUtil.get(url, NetWorkUtil.webHeaders);
+            Response response = NetWorkUtil.post(url, "csrf=" + csrf, NetWorkUtil.webHeaders);
+            if (!response.isSuccessful() || response.body() == null) return false;
+            // 服务端成功时返回 {"code":0,...}；返回非 0 说明会话没被失效，按失败处理
+            return new JSONObject(response.body().string()).optInt("code", -1) == 0;
         } catch (Exception e) {
             e.printStackTrace();
+            return false;
         }
     }
 

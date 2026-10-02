@@ -57,6 +57,11 @@ class SearchActivity : InstanceActivity() {
     lateinit var searchHistory: ArrayList<String>
     lateinit var searchSuggestions: ArrayList<String>
     private var suggestionRunnable: Runnable? = null
+
+    // 搜索建议的「代际令牌」：每次输入自增，异步返回的建议回调只认自己那一代。
+    // 为什么需要：removeCallbacks 只能取消还没开始跑的延时任务，已经派发进 Thread 的请求取消不掉，
+    // 慢响应返回时会覆盖新响应（建议乱序）；用令牌可以在回调落地时把过期结果整包丢掉。
+    private var suggestionGeneration = 0
     private var suggestionsEnabled: Boolean = false
     private var defaultSearchContent: String? = null
     private var defaultSearchContentEnabled: Boolean = false
@@ -120,7 +125,9 @@ class SearchActivity : InstanceActivity() {
             keywordInput.onFocusChangeListener = View.OnFocusChangeListener { _, b ->
                 if (b) {
                     val keyword = keywordInput.text.toString()
-                    if (keyword.isEmpty() || !suggestionsEnabled) {
+                    // 只有「输入框有内容 且 确实拿到了建议」才显示建议列表，
+                    // 否则会出现建议列表空白、历史记录又看不见的情况
+                    if (keyword.isEmpty() || !suggestionsEnabled || searchSuggestions.isEmpty()) {
                         historyRecyclerview.visibility = View.VISIBLE
                         suggestionsRecyclerview.visibility = View.GONE
                     } else {
@@ -184,6 +191,15 @@ class SearchActivity : InstanceActivity() {
                 }
                 false
             }
+            // 首次点击输入框时，系统只会把焦点交还给输入框，不会自动拉起输入法
+            // （全工程之前没有一处 showSoftInput），用户会觉得「点了没反应」。
+            // 用 post 把拉起动作延后到本轮点击事件处理完之后：否则刚 grant 的焦点会被同一轮事件撤回，键盘仍然不弹。
+            keywordInput.setOnClickListener { v ->
+                v.post {
+                    val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                    imm.showSoftInput(v, InputMethodManager.SHOW_IMPLICIT)
+                }
+            }
 
             try {
                 searchHistory = JsonUtil.jsonToArrayList(
@@ -215,6 +231,9 @@ class SearchActivity : InstanceActivity() {
             searchSuggestionsAdapter = SearchSuggestionsAdapter(this, searchSuggestions)
             searchSuggestionsAdapter.setOnClickListener { position ->
                 val suggestion = searchSuggestions[position]
+                // 中文输入法还在组词（composing）状态时直接 setText，会把组合区的半成品和整词叠加，出现串字；
+                // 先清掉组合态再整词替换
+                keywordInput.clearComposingText()
                 keywordInput.setText(suggestion)
                 keywordInput.setSelection(suggestion.length)
                 searchKeyword(suggestion)
@@ -227,6 +246,10 @@ class SearchActivity : InstanceActivity() {
                     override fun beforeTextChanged(s: CharSequence, start: Int, count: Int, after: Int) {}
                     override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) {}
                     override fun afterTextChanged(s: Editable) {
+                        // searchKeyword() 内部也会 setText/clearFocus，会再次回调到这里；
+                        // 不拦住就会在搜索执行过程中又发起一次建议请求
+                        if (refreshing) return
+
                         val keyword = s.toString()
 
                         if (suggestionRunnable != null) {
@@ -241,23 +264,26 @@ class SearchActivity : InstanceActivity() {
                                 }
                             }
                         } else {
+                            // 每次输入自增代际令牌，回调只认自己那一代
+                            suggestionGeneration++
+                            val gen = suggestionGeneration
                             suggestionRunnable = Runnable {
                                 Thread {
                                     try {
                                         val suggestions = SearchApi.getSearchSuggestions(keyword)
                                         runOnUiThread {
-                                            if (keywordInput.hasFocus()) {
-                                                searchSuggestions.clear()
-                                                searchSuggestions.addAll(suggestions)
-                                                searchSuggestionsAdapter.notifyDataSetChanged()
+                                            // 过期请求直接丢弃（乱序的根因），页面已销毁也不再碰视图
+                                            if (gen != suggestionGeneration || refreshing || isFinishing || isDestroyed) return@runOnUiThread
+                                            searchSuggestions.clear()
+                                            searchSuggestions.addAll(suggestions)
+                                            searchSuggestionsAdapter.notifyDataSetChanged()
 
-                                                if (suggestions.isNotEmpty()) {
-                                                    historyRecyclerview.visibility = View.GONE
-                                                    suggestionsRecyclerview.visibility = View.VISIBLE
-                                                } else {
-                                                    historyRecyclerview.visibility = View.VISIBLE
-                                                    suggestionsRecyclerview.visibility = View.GONE
-                                                }
+                                            if (suggestions.isNotEmpty()) {
+                                                historyRecyclerview.visibility = View.GONE
+                                                suggestionsRecyclerview.visibility = View.VISIBLE
+                                            } else {
+                                                historyRecyclerview.visibility = View.VISIBLE
+                                                suggestionsRecyclerview.visibility = View.GONE
                                             }
                                         }
                                     } catch (e: Exception) {
@@ -410,6 +436,12 @@ class SearchActivity : InstanceActivity() {
                 manager.hideSoftInputFromWindow(curFocus!!.windowToken, InputMethodManager.HIDE_NOT_ALWAYS)
             }
 
+            // 搜索一旦真正执行，就要收起建议面板并作废还没返回的建议请求：
+            // 否则那个请求返回后会把建议卡片重新盖在搜索结果上
+            suggestionGeneration++
+            if (suggestionRunnable != null) handler.removeCallbacks(suggestionRunnable!!)
+            runOnUiThread { suggestionsRecyclerview.visibility = View.GONE }
+
             if (keyword.isEmpty()) {
                 if (defaultSearchContentEnabled && defaultSearchContent != null && defaultSearchContent!!.isNotEmpty()) {
                     keyword = defaultSearchContent!!
@@ -517,6 +549,9 @@ class SearchActivity : InstanceActivity() {
     }
 
     private fun requestFragmentFocus() {
+        // 输入框已经持有焦点时就不要再抢：键盘弹出会改变布局并触发列表滚动回调，
+        // 而滚动回调（onScrolled）每次都会走到这里，把刚拉起的键盘又顶掉
+        if (keywordInput.hasFocus()) return
         val fragmentCurr = supportFragmentManager
             .findFragmentByTag("f" + viewPager.currentItem)
         if (fragmentCurr != null) {

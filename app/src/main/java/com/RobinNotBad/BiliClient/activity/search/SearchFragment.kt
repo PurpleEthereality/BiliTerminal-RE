@@ -27,6 +27,9 @@ open class SearchFragment : Fragment() {
     var listener: OnLoadMoreListener? = null
     var refreshListener: SwipeRefreshLayout.OnRefreshListener? = null
     var keyword: String? = null
+    // @Volatile：子类（SearchVideoFragment 等）在 CenterThreadPool 后台线程写，
+    // 滚动监听在主线程读，无 happens-before 边，主线程可能长期读到陈旧的 false。
+    @Volatile
     var bottom: Boolean = false
         set(value) {
             field = value

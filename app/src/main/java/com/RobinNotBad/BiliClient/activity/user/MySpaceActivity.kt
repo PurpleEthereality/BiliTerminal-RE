@@ -126,16 +126,31 @@ class MySpaceActivity : InstanceActivity() {
 
     private fun handleLogout() {
         if (confirmLogout) {
-            CenterThreadPool.run { UserInfoApi.exitLogin() }
-            SharedPreferencesUtil.removeValue(SharedPreferencesUtil.cookies)
-            SharedPreferencesUtil.removeValue(SharedPreferencesUtil.mid)
-            SharedPreferencesUtil.removeValue(SharedPreferencesUtil.csrf)
-            SharedPreferencesUtil.removeValue(SharedPreferencesUtil.refresh_token)
-            SharedPreferencesUtil.removeValue(SharedPreferencesUtil.access_key)
-            SharedPreferencesUtil.removeValue(SharedPreferencesUtil.cookie_refresh)
-            MsgUtil.showMsg("账号已退出")
-            jumpToLogin()
-            finish()
+            // 旧实现是「丢进线程池请求服务端注销」后立刻清本地 Cookie，两者构成竞态：
+            // exitLogin 在后台线程读 csrf 时本地可能已经清空 → csrf 读成空串 → 服务端会话（含 refresh_token）压根没被注销。
+            // 所以这里把「请求服务端注销 → 清本地登录态」放进同一个后台任务，保证先后顺序。
+            MsgUtil.showMsg("正在退出登录…")
+            CenterThreadPool.run {
+                val serverLogoutOk = try {
+                    UserInfoApi.exitLogin()
+                } catch (e: Exception) {
+                    false
+                }
+                // 不论服务端成功与否都要清本地登录态：否则网络故障会把用户永久卡在「已登录」状态里退不出去。
+                // 服务端失败的情况靠下面的提示告知用户，不阻塞本地退出。
+                SharedPreferencesUtil.removeValue(SharedPreferencesUtil.cookies)
+                SharedPreferencesUtil.removeValue(SharedPreferencesUtil.mid)
+                SharedPreferencesUtil.removeValue(SharedPreferencesUtil.csrf)
+                SharedPreferencesUtil.removeValue(SharedPreferencesUtil.refresh_token)
+                SharedPreferencesUtil.removeValue(SharedPreferencesUtil.access_key)
+                SharedPreferencesUtil.removeValue(SharedPreferencesUtil.cookie_refresh)
+                runOnUiThread {
+                    // 服务端注销失败时明确提示：用户/排查者才知道服务端会话可能仍然有效
+                    MsgUtil.showMsg(if (serverLogoutOk) "账号已退出" else "服务端注销失败，已清除本地登录状态")
+                    jumpToLogin()
+                    finish()
+                }
+            }
         } else {
             MsgUtil.showMsg("再点一次退出登录！")
             confirmLogout = !confirmLogout

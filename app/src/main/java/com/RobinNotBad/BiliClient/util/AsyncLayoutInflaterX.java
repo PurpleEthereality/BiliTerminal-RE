@@ -3,8 +3,10 @@ package com.RobinNotBad.BiliClient.util;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Message;
+import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.view.Choreographer;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -25,6 +27,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BooleanSupplier;
 
 public class AsyncLayoutInflaterX {
     private static final String TAG = "AsyncLayoutInflatePlus";
@@ -63,10 +66,26 @@ public class AsyncLayoutInflaterX {
         }
     }
 
-    private Handler.Callback mHandlerCallback = new Handler.Callback() {
+    /**
+     * 已取消标志。inflate 任务已经在线程池里跑起来时无法中断，所以取消只能靠这一层：
+     * 回调到达主线程后先看标志，已取消就直接丢弃结果。
+     *
+     * 用 volatile 是因为置位发生在主线程（BaseActivity.onDestroy），而读取发生在
+     * Handler 回调里（也在主线程，但语义上要求跨线程可见，避免以后被挪到别的 Looper 上出问题）。
+     */
+    private volatile boolean mCancelled = false;
+
+    // 必须是 final：Handler 在构造时就已经捕获了这个引用，cancel() 里把字段置 null 是无效的
+    // （字段被置 null 后 Handler 仍然持有原对象，回调照样会执行并打到已销毁的页面上）。
+    private final Handler.Callback mHandlerCallback = new Handler.Callback() {
         @Override
         public boolean handleMessage(Message msg) {
             InflateRequest request = (InflateRequest) msg.obj;
+            // 页面已销毁 / 已调用 cancel()：丢弃这次结果，绝不再回调宿主
+            if (mCancelled) {
+                releaseRequest(request);
+                return true;
+            }
             if (request.view == null) {
                 request.view = mInflater.inflate(
                         request.resid, request.parent, false);
@@ -228,8 +247,56 @@ public class AsyncLayoutInflaterX {
     }
 
 
+    /**
+     * 取消本次异步 inflate：丢弃尚未交付的回调。
+     *
+     * 调用时机：宿主（[com.RobinNotBad.BiliClient.activity.base.BaseActivity]）在 onDestroy 时调用。
+     * inflate 任务可能已经在线程池里跑完甚至已经 post 到主线程队列，所以这里做两件事：
+     * 1. 置取消标志 —— 拦下正在主线程队列里排队、或之后才被 post 的回调；
+     * 2. 清掉 Handler 队列里还没执行的 post。
+     *
+     * 注意 cancel() 后该实例不应再次使用（标志不会自动复位也没有必要复位，
+     * BaseActivity 每次 asyncInflate 都会 new 一个新实例）。
+     */
     public void cancel() {
+        mCancelled = true;
         mHandler.removeCallbacksAndMessages(null);
-        mHandlerCallback = null;
+    }
+
+    /**
+     * 把刚替换上去的内容视图做一次淡入，避免「白屏硬切」的观感。
+     *
+     * 为什么不用 ViewPropertyAnimator / ObjectAnimator：系统动画会被「动画时长缩放」设置影响，
+     * 部分手表 ROM 把它置 0，这类动画在那些设备上完全不播，等同于没做。
+     * 所以这里自己按帧驱动，不读任何系统动画缩放。
+     *
+     * 为什么必须按「帧数」而不是「时间」驱动：低配手表单帧绘制耗时可能就超过动画总时长
+     * （对方在 W527 上实测如此），纯时间型淡入会在第一帧绘制时就已经算完，观感仍是硬切。
+     * 因此取「3 帧」和「300ms」两个上限中的更小者：帧数保证至少跨 3 次绘制才到不透明，
+     * 时间上限只作兜底，防止极端情况下长时间停在半透明。
+     *
+     * @param view      刚 setContentView 上去的内容视图
+     * @param cancelled 宿主是否已销毁的回调；返回 true 时立刻收尾（置为完全不透明）并停止续帧，
+     *                  避免对已销毁页面持续请求下一帧
+     */
+    public static void fadeIn(@NonNull final View view, @Nullable final BooleanSupplier cancelled) {
+        view.setAlpha(0f);
+        Choreographer.getInstance().postFrameCallback(new Choreographer.FrameCallback() {
+            private final long startMs = SystemClock.uptimeMillis();
+            private int frameCount = 0;
+
+            @Override
+            public void doFrame(long frameTimeNanos) {
+                frameCount++;
+                long elapsedMs = SystemClock.uptimeMillis() - startMs;
+                float alpha = Math.min(Math.min(frameCount / 3f, elapsedMs / 300f), 1f);
+                view.setAlpha(alpha);
+                if (alpha < 1f && (cancelled == null || !cancelled.getAsBoolean())) {
+                    Choreographer.getInstance().postFrameCallback(this);
+                } else {
+                    view.setAlpha(1f);
+                }
+            }
+        });
     }
 }
