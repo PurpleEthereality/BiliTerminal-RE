@@ -100,6 +100,11 @@ jobs:
           echo "--- local.properties ---"
           sed -E 's/(KEY_PASSWORD|ALIAS_PASSWORD)=.*/\1=***/' local.properties
 
+      # 发版前先跑单测：此前 112 个用例不在任何自动化路径执行，测试全红也能发出 Release
+      # （见 docs/review/upstream-fork-audit.md §五 E3）。红着测试就不该发版。
+      - name: 运行单元测试
+        run: ./gradlew :app:testDebugUnitTest --stacktrace
+
       - name: 构建签名发行 APK
         run: ./gradlew :app:assembleRelease
 
@@ -110,17 +115,36 @@ jobs:
           path: app/build/outputs/apk/release/
           if-no-files-found: error
 
-      # 计算目标 tag：tag 推送用 pushed ref；手工触发用输入的 tag；为空则跳过 Release
-      - name: 计算发行 tag
+      # 计算目标 tag 与发布说明：tag 推送用 pushed ref；手工触发用输入的 tag；为空则跳过 Release。
+      # inputs 一律经 env 传入，不直接插进 shell 脚本。
+      - name: 计算发行 tag 与发布说明
         id: tag
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_BODY: ${{ inputs.release_body }}
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "push" ]; then
+            tag="$REF_NAME"
           else
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            tag="$INPUT_TAG"
           fi
-          echo "DEBUG event=${{ github.event_name }} tag=$(cat "$GITHUB_OUTPUT" | grep '^tag=' | cut -d= -f2-)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          # 单独给出 has_body 供下游判断，不再用 "inputs.release_body == ''" 表达分支
+          # —— push 事件下 inputs.* 恒为空，那种写法只是碰巧算出期望结果。
+          if [ -n "$INPUT_BODY" ]; then
+            {
+              echo "has_body=true"
+              echo "body<<RELEASE_BODY_EOF"
+              printf '%s\n' "$INPUT_BODY"
+              echo "RELEASE_BODY_EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "has_body=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "DEBUG event=$EVENT_NAME tag=$tag has_body=$(grep '^has_body=' "$GITHUB_OUTPUT" | cut -d= -f2-)"
 
       - name: 创建 GitHub Release
         if: steps.tag.outputs.tag != ''
@@ -130,8 +154,8 @@ jobs:
           name: ${{ inputs.release_name || steps.tag.outputs.tag }}
           # 版本说明支持 Markdown：提供了 release_body 则按内容渲染（GitHub 默认 Markdown）；
           # 未提供时用 generate_release_notes 自动生成 commits 摘要（同样是 Markdown）。
-          body: ${{ inputs.release_body }}
-          generate_release_notes: ${{ inputs.release_body == '' }}
+          body: ${{ steps.tag.outputs.body }}
+          generate_release_notes: ${{ steps.tag.outputs.has_body != 'true' }}
           files: app/build/outputs/apk/release/*.apk
           target_commitish: main
           draft: false
