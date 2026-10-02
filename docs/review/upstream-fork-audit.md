@@ -22,7 +22,7 @@
 
 ## 〇·附、修复状态总览
 
-> 本报告列出的缺陷项已参考上游分叉 `cyq114514/Re-BiliTerminal` 逐条修复完毕，代码分布在 12 个提交中。
+> 本报告列出的缺陷项已参考上游分叉 `cyq114514/Re-BiliTerminal` 逐条修复完毕，代码分布在 16 个提交中。
 > 逐条实现细节、每个子代理的取舍理由与验证记录见 **`docs/review/fork-fix-worklog.md`**。
 
 | 组 | 覆盖条目 | 提交 |
@@ -36,16 +36,19 @@
 | 搜索 / UI 生命周期 / 登录退出 | P12 / P31 / P32 / P33 | `d676a77` |
 | CI 覆盖面（E3） | 新增 PR 与主干 CI，发版前先跑单测 | `09623cd` |
 | 版本号一致性（E1）与文档纠偏 | `verifyVersionConsistency` 任务 + UpdateManager 加固 + readme/FEATURES 纠偏 | `4d88b98` `8996a1a` `f26407e` |
-| 报告与工作日志 | 本报告 + `docs/review/fork-fix-worklog.md` | `31a1d3e` |
+| 补齐审计漏核的闪退点（P6 第 1 / 6 / 7 项的复核） | P34 / P35 / P36（P37 / P38 在修） | `8cf777a` |
+| Release 产物可追溯性（E2） | Release 说明与附件同时提供 `md5sums.txt` | `6b2dea1` `265a820` |
+| E2 判定更正 | 崩溃堆栈上传能力本项目已有、上游反而隐藏了按钮 | `a9c15e7` |
+| 报告与工作日志 | 本报告 + `docs/review/fork-fix-worklog.md` | `31a1d3e` `786d7ce` |
 
 **验证**：`./gradlew :app:assembleDebug :app:testDebugUnitTest` 通过，**112 个单测 0 失败 0 错误**；`verifyVersionConsistency` 在
 配置缓存开/关两种路径下均通过，且把更新日志锚点改错时会如实失败。
 
 **仍未修复**（属功能差距或需产品决策，不是"已确认缺陷"）：
 
-- **F1** 后台/熄屏继续播放、**F2** 搜索番剧、**F4** 更新后首次启动自动展示当版日志、**F5** 更新日志按版本选项卡（见 §四）。
-- **F3** 中未做的几项：带图发动态、表情 `type 9` 渲染、转发引用原作者、发布选项（`option` JSON）、动态置顶 / 可见范围 / 编辑、动态卡片评论数入口、话题页、图文详情接口直取。
-- **P6** 判定为"部分"的 3 项，以及 **P14**（经核实其修复理由在本项目不成立，未动）。
+- **F1** 后台/熄屏继续播放、**F2** 搜索番剧、**F4** 更新后首次启动自动展示当版日志、**F5** 更新日志按版本选项卡（见 §四）。—— 这四项连同 **P23 周期上报**、**P37/P38** 已由 Wave 2 的并行子代理接手。
+- **F3** 中未做的几项：转发引用原作者、发布选项（`option` JSON）、动态置顶 / 可见范围 / 编辑、动态卡片评论数入口、话题页、图文详情接口直取。（带图发动态、表情 `type 9` 渲染已并入 Wave 2）
+- **P6 第 1 项已核实完毕**（见 P34–P38），**第 6 / 7 项也已核实完毕**（对方 26f1742 的主题是"主线程别读 `ijkPlayer.currentPosition`"，本项目仍有 8 处待改）；**P14** 经核实其修复理由在本项目不成立，未动。
 - **P23 的周期上报**（上游 `PROGRESS_REPORT_INTERVAL_MS = 15000`）与**切P即时上报**尚未接线；目前只有"退出播放器时上报"。
 - **E2** 的**远程（自动）崩溃上报**：双方都没有。—— 但需澄清：本项目**已有用户手动上传崩溃堆栈**的能力（`api/AppInfoApi.java:196 uploadStack` → `https://api.biliterminal.cn/terminal/upload/stack`，由 `activity/CatchActivity.kt:59-76` 接线），而上游反而**把这个按钮隐藏掉了**（对方 `activity/CatchActivity.java:61 btn_upload.setVisibility(View.GONE)`）。所以这一项本项目**不落后**，无需"修复"。
 - ~~**E2 的 release MD5 表**~~ ✅ **已修**（`6b2dea1`）：Release 说明与附件同时提供 `md5sums.txt`。
@@ -445,35 +448,37 @@ android.os.Process.killProcess(android.os.Process.myPid());
 
 ### P6. 其他对方修复项：逐条核实结果
 
-对方 `1.1.1-fix` / `1.1.2` 清单在本项目的逐条核实结果（✅ 已有防护 / ❌ 仍存在 / ◐ 部分）：
+对方 `1.1.1-fix` / `1.1.2` 清单在本项目的逐条核实结果。
 
-| # | 对方描述 | 本项目判定 | 详见 |
-|---|---|---|---|
-| 1 | 动态列表、搜索页、转发类型判断、无UP主视频详情页的闪退 | ◐ 部分核实：**搜索建议乱序/门禁问题已确认**；动态列表、转发类型判断、无UP主视频详情页**本轮未单独核实** | P32 |
-| 2 | 后台任务异常不再直接杀死进程 | ❌ 仍存在 | P21 |
-| 3 | 下载：损坏文件导致解压卡死 | ❌ **仍存在（100% CPU 死循环）** | P15 |
-| 4 | 下载：HTTP 错误响应被存成视频 | ✅ **已有防护，且比对方更严** | 见下 |
-| 5 | 下载：进度通知静默失效 | ❌ 仍存在 | P17 |
-| 6 | 播放器：非正常退出路径的资源释放 | ◐ 与 P2/P3 同源，本轮无新增独立证据 | P30 |
-| 7 | 播放器：快进/快退、切清晰度不再有主线程卡住的风险 | ◐ 与 P2/P3 同源，本轮无新增独立证据 | P30 |
-| 8 | 番剧选集边界：空季误入、切季瞬间自动定位错位 | ❌ 仍存在（可 `IndexOutOfBoundsException`） | P19 |
-| 9 | 消息中心下滑加载卡死/闪退 | ❌ **仍存在（三类独立缺陷）** | P18 |
-| 10 | 打开应用时网络波动被要求重新登录 | ◐ 部分残留（DedeUserID 缺失已防，返回 false 后仍清登录态） | P29 |
-| 11 | 退出登录改为真正在服务端注销会话 | ◐ 调了服务端，但用 GET 且无 csrf，会话不保证失效 | P31 |
-| 12 | 弱网下点赞、投币、发弹幕不重复执行 | ◐ **网络层已等价、客户端无去重** | P22 |
-| 13 | 视频播放失败明确提示原因并可重试，不再误以为已播完 | ❌ **仍存在**：`onError` 返回 false 被 ijkplayer 转成 onCompletion | P27 |
-| —— | **（我方额外发现，对方清单未列）** | | |
-| 15 | 下载失败时删除已完成视频文件夹 | ❌ 仍存在（**真实数据丢失，对方也未修**） | P16 |
-| 16 | `started` / `exitCode` 无 `@Volatile`、`start()` 无同步 | ❌ 仍存在 | P20 |
-| 17 | 番剧播放进度**整条链路缺失**（读不到也写不了） | ❌ **仍存在，且与对方 v1.0.0 修复对应** | P23 |
-| 18 | 多P续播不校验 `last_play_cid` → 续播跳到错误位置 | ❌ 仍存在 | P24 |
-| 19 | 切分P后观看记录记到旧分P | ❌ 仍存在 | P24 |
-| 20 | WBI 密钥按天缓存 + 先写标记后取密钥 + `sortUrlParams` 丢参数 | ❌ 仍存在 | P25 |
-| 21 | 番剧续播上报用 `type=archive` → pgc 记录永不出现 | ❌ 仍存在 | P23 |
-| 22 | 评论区无世代号/无超时/无空页重试，数据改动在主线程外 | ❌ 仍存在 | P26 |
-| 23 | 音频模式切换无销毁守卫 → 重建播放器无人释放 | ❌ 仍存在 | P28 |
-| 24 | 搜索建议乱序无保护 + `hasFocus` 门禁丢结果 + 输入法不弹 | ❌ 仍存在 | P32 |
-| 25 | `asyncInflate` 就绪即硬切，低性能设备过渡动画丢失 | ❌ 仍存在 | P33 |
+"审计时判定"列是**首次审计当时的结论**（✅ 已有防护 / ❌ 仍存在 / ◐ 部分），保留原样以便对照；"本轮处置"列是**参考上游修复后的最终状态**，提交号对应关系见 `## 〇·附、修复状态总览`。
+
+| # | 对方描述 | 审计时判定 | 本轮处置 | 详见 |
+|---|---|---|---|---|
+| 1 | 动态列表、搜索页、转发类型判断、无UP主视频详情页的闪退 | ◐ 部分核实：**搜索建议乱序/门禁问题已确认**；动态列表、转发类型判断、无UP主视频详情页**本轮未单独核实** | ✅ 已补核实并修复：无UP主详情页 `staff[0]` 越界（P35，`8cf777a`）、动态 `official_signs` 越界（P36，`8cf777a`）、`List.of` 平台 API 误用（P34，`8cf777a`）、搜索建议乱序与门禁丢结果（P32，`d676a77`）；动态列表在后台线程突变（P37）已并入 Wave 2 | P32 / **P34–P38** |
+| 2 | 后台任务异常不再直接杀死进程 | ❌ 仍存在 | ✅ 已修（`34e5bc9`）：协程体加 `try/catch(Throwable)`，`ErrorCatch` 的 `killProcess` 前加 `Thread.sleep(300)` | P21 |
+| 3 | 下载：损坏文件导致解压卡死 | ❌ **仍存在（100% CPU 死循环）** | ✅ 已修（`34e5bc9`）：补 `needsInput()/needsDictionary()` 与 `i == 0` 双保险跳出 | P15 |
+| 4 | 下载：HTTP 错误响应被存成视频 | ✅ **已有防护，且比对方更严** | ✅ 无需改动（本项目三条下载路径都有响应码校验，对方只补了一处） | 见下 |
+| 5 | 下载：进度通知静默失效 | ❌ 仍存在 | ✅ 已修（`34e5bc9`）：`TimerTask.run()` 整体 `try/catch(Throwable)` | P17 |
+| 6 | 播放器：非正常退出路径的资源释放 | ◐ 与 P2/P3 同源，本轮无新增独立证据 | ✅ 已修（`d292950`，P30）；另本轮核实本项目 `onDestroy`（`PlayerActivity.kt:1648-1655`）**无条件清理**，比上游 26f1742 的写法更彻底 | P30 |
+| 7 | 播放器：快进/快退、切清晰度不再有主线程卡住的风险 | ◐ 与 P2/P3 同源，本轮无新增独立证据 | ✅ 已修（`d292950`，P2，弹幕回调线程不再直接调 JNI）；**本轮补核实**：上游 26f1742 的主题是"主线程别读 `ijkPlayer.currentPosition`"，本项目仍有 8 处，已连同 P23 一起派给子代理 | P2 / P30 / **P34–P38** |
+| 8 | 番剧选集边界：空季误入、切季瞬间自动定位错位 | ❌ 仍存在（可 `IndexOutOfBoundsException`） | ✅ 已修（`07e9705`，P19） | P19 |
+| 9 | 消息中心下滑加载卡死/闪退 | ❌ **仍存在（三类独立缺陷）** | ✅ 已修（`34e5bc9`，P18）：整文件重写，成功/失败两条路径都复位 | P18 |
+| 10 | 打开应用时网络波动被要求重新登录 | ◐ 部分残留（DedeUserID 缺失已防，返回 false 后仍清登录态） | ✅ 已修（`fd947f0`，P29）：只有本地确实取不到 `SESSDATA` 才 `resetLogin()` | P29 |
+| 11 | 退出登录改为真正在服务端注销会话 | ◐ 调了服务端，但用 GET 且无 csrf，会话不保证失效 | ✅ 已修（`d676a77`，P31）：改 POST + `csrf=`，并校验返回 `code == 0` | P31 |
+| 12 | 弱网下点赞、投币、发弹幕不重复执行 | ◐ **网络层已等价、客户端无去重** | ✅ 已修（`3058512`，P22）：`VideoInfoFragment` 三个请求标志 + `ReplyAdapter`/`DynamicHolder` 的 `likingRpids` 去重 | P22 |
+| 13 | 视频播放失败明确提示原因并可重试，不再误以为已播完 | ❌ **仍存在**：`onError` 返回 false 被 ijkplayer 转成 onCompletion | ✅ 已修（`d292950`，P27）：`onError` 改 `return true` 阻断误判，配套 `playerError` 标志与重试路径 | P27 |
+| —— | **（我方额外发现，对方清单未列）** | | | |
+| 15 | 下载失败时删除已完成视频文件夹 | ❌ 仍存在（**真实数据丢失，对方也未修**） | ✅ 已修（`34e5bc9`，P16）：改只清同层临时文件，不递归删目录 | P16 |
+| 16 | `started` / `exitCode` 无 `@Volatile`、`start()` 无同步 | ❌ 仍存在 | ✅ 已修（`34e5bc9`，P20） | P20 |
+| 17 | 番剧播放进度**整条链路缺失**（读不到也写不了） | ❌ **仍存在，且与对方 v1.0.0 修复对应** | ✅ 已修（`07e9705`，P23）：新增心跳接口 `reportHistoryPgc`、`type=all`、epid 定位；周期/切P即时上报并入 Wave 2 | P23 |
+| 18 | 多P续播不校验 `last_play_cid` → 续播跳到错误位置 | ❌ 仍存在 | ✅ 已修（`07e9705`，P24）：`adoptLastPlayTime` + `normalizeProgress` | P24 |
+| 19 | 切分P后观看记录记到旧分P | ❌ 仍存在 | ✅ 已修（`07e9705`，P24）：`finish()` 回传 `cid`、`switchToOnlinePage` 回写 Activity 的 `cid` | P24 |
+| 20 | WBI 密钥按天缓存 + 先写标记后取密钥 + `sortUrlParams` 丢参数 | ❌ 仍存在 | ✅ 已修（`07e9705`，P25）：TTL 30 分钟、成功后落时间戳、类锁、首个 `=` 切分、MONTH+1 | P25 |
+| 21 | 番剧续播上报用 `type=archive` → pgc 记录永不出现 | ❌ 仍存在 | ✅ 已修（`07e9705`，P23）：改 `type=all` 并按 `business` 分派 | P23 |
+| 22 | 评论区无世代号/无超时/无空页重试，数据改动在主线程外 | ❌ 仍存在 | ✅ 已修（`3058512`，P26）：`loadGeneration` + 30s 超时 + 空页重试 + 数据改动移入主线程 | P26 |
+| 23 | 音频模式切换无销毁守卫 → 重建播放器无人释放 | ❌ 仍存在 | ✅ 已修（`d292950`，P28） | P28 |
+| 24 | 搜索建议乱序无保护 + `hasFocus` 门禁丢结果 + 输入法不弹 | ❌ 仍存在 | ✅ 已修（`d676a77`，P32）：代际号 + `post { showSoftInput }` + `clearComposingText` | P32 |
+| 25 | `asyncInflate` 就绪即硬切，低性能设备过渡动画丢失 | ❌ 仍存在 | ✅ 已修（`d676a77`，P33）：`AsyncLayoutInflaterX.fadeIn()` + 取消标志 + onDestroy 保护 | P33 |
 
 **第 4 项（HTTP 错误存成视频）的"已有防护"证据** —— 本项目三条下载路径都有响应码校验，比对方补的范围更全：
 
@@ -1480,6 +1485,100 @@ alpha = Math.min(Math.min(frameCount / 3f, elapsed / 300f), 1f)   // 3 帧 + 300
 
 ---
 
+### P34. ✅ `util/DmImgParamUtil.java` 用了 API 30 才有的 `List.of(...)` → Android 7~10 上必崩
+
+> ✅ **本项目已修**（`8cf777a`）：改用 `new JSONArray(new Object[]{...})` 构造，与上游同义
+
+**现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/util/DmImgParamUtil.java:113-114`
+
+```java
+.put("wh", List.of(f114(width, height)))
+.put("of", List.of(f514(y, x)))
+```
+
+**问题**：`java.util.List.of` 是 **Android 11（API 30）** 才加入的静态方法。本项目 `minSdk 24`，且 `app/build.gradle:85-88` 的 `compileOptions` **没有开启 `coreLibraryDesugaringEnabled`**（AGP 的 core library desugaring 也不覆盖 `of()` 系列）⇒ **Android 7~10 上调用必然 `NoSuchMethodError`**。
+
+**可达路径很宽**：`getDmImgParams()`（`:19-30`）无条件调用 `generateDmImgList()` 与 `generateDmImgInter()`，后者就是出事的那一段；再经 `getDmImgParamsUrl()`（`:32-39`）被
+- `api/UserInfoApi.java:100` 与 `:152`（取用户信息）
+- `api/DynamicApi.java:503` 与 `:540`（带图发动态 / 发评论）
+
+引用。也就是说**在 Android 7~10 上打开用户信息页就会崩**。
+
+**修法**（顺带删掉因此未使用的 `import java.util.List;`）：
+
+```java
+.put("wh", new JSONArray(new Object[]{f114(width, height)}))
+.put("of", new JSONArray(new Object[]{f514(y, x)}))
+```
+
+**全库复查**：修完后 `Map.of(` / `List.of(` / `Set.of(` / `Collectors.` / `.stream()` **零命中**。
+
+> **教训**：这类"高版本平台 API 在低版本 `NoSuchMethodError`"编译器、Lint、单测**全都查不出来**（编译期只校验类型存在），只有实机或 lint 的 `NewApi` 检查能发现 —— 与上一轮修的 `hasOnLongClickListeners` 同族。新增代码时不要用 `of()` 系列。
+
+---
+
+### P35. ✅ 无 UP 主 / 联合投稿视频详情页：`videoInfo.staff[0]` 越界闪退
+
+> ✅ **本项目已修**（`8cf777a`）：加 `isNullOrEmpty()` 守卫
+
+**现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/activity/video/info/VideoInfoActivity.kt:94`
+
+```kotlin
+ReplyFragment.newInstance(videoInfo.aid, 1, videoInfo.stats.reply, seek_reply, videoInfo.staff[0].mid)
+```
+
+**问题**：`videoInfo.staff` 未必非空。`api/VideoInfoApi.java:198-229` 的填充条件是**两个都成立**：① `videoInfo.isCooperation == true` 且返回的 `staff` 数组非空；② `data.optJSONObject("owner") != null`。联合投稿 `staff` 为空、或 UP 已注销 / 被隐藏导致 `owner` 缺失时，`videoInfo.staff` 就是**空列表** ⇒ `IndexOutOfBoundsException`，详情页直接起不来 —— 正是对方描述的"无 UP 主视频详情页闪退"。
+
+**修法**：`val upMid = if (videoInfo.staff.isNullOrEmpty()) 0L else videoInfo.staff[0].mid`，再把 `upMid` 传给 `ReplyFragment.newInstance(...)`。
+
+> 同族未动：`model/VideoInfo.java:108-110 toCard()` 里也有 `staff.get(0).name`，但 `toCard()` **全库零调用者**（死代码），本轮未动。
+
+---
+
+### P36. ✅ 用户动态页：`official_signs[userInfo.official]` 越界闪退
+
+> ✅ **本项目已修**（`8cf777a`）：改 `coerceIn`
+
+**现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/UserDynamicAdapter.kt:221-229`
+
+```kotlin
+holder.verifyName.text = official_signs[userInfo.official]
+```
+
+**问题**：`official_signs` 是固定 10 项的文案数组，而 `userInfo.official` 直接取自服务端 `official.role`，**不保证落在 0~9**（上游注释称实测见过 10）⇒ 越界闪退。
+
+**修法**：`val officialIdx = userInfo.official.coerceIn(0, official_signs.size - 1)`（与上游 `Math.max(0, Math.min(userInfo.official, official_signs.length - 1))` 等价）。
+
+---
+
+### P37. 🚧 动态列表在后台线程突变 `dynamicList`
+
+**现状代码**：`app/src/main/java/com/RobinNotBad/BiliClient/activity/dynamic/DynamicActivity.kt:140-153`
+
+转发/发布成功后，在 `CenterThreadPool.run { }` 的**后台线程**里执行 `dynamicList!!.add(0, dynamic)`，随后才 `runOnUiThread { notifyItemInserted(1) }`。上游 26f1742（`DynamicActivity.java:126-129`）把 `add` **移进 `runOnUiThread`**，注释：「list 突变与 Adapter 通知必须在同一线程」。
+
+**状态**：已并入 Wave 2，派给子代理（连同 P38），连同 `:253` 附近的 `notifyItemInserted(1)` 一起检查同类问题。
+
+---
+
+### P38. 🚧 动态 Adapter 的 `onViewRecycled` 不清 holder 图片缓存
+
+**现状代码**：`adapter/dynamic/DynamicAdapter.kt` 与 `adapter/dynamic/UserDynamicAdapter.kt` 的 `onViewRecycled`
+
+`DynamicHolder` 内部有"同 URL 跳过加载"的图片缓存，复用前若不清理，recycled 的 holder 会**残留上一条动态的头图 / 配图**。上游 26f1742 在 `DynamicAdapter.java:137-141` 与 `UserDynamicAdapter.java:120-124` 补了：
+
+```java
+if (holder instanceof DynamicHolder) ((DynamicHolder) holder).clearImageCache();
+```
+
+**状态**：已并入 Wave 2，派给子代理（需先在 `DynamicHolder` 里按上游语义补出 `clearImageCache()`）。
+
+---
+
+> **P6 表第 1 / 6 / 7 项的补充说明**：本轮把对方 26f1742 提交（1.1.1-fix）**逐文件读完**后，才定出 P34–P38 五条。其中 P34/P35/P36 是**真实闪退点**（已修），P37/P38 是列表与位图复用缺陷（在修）。另有 6 条核实后**确认本项目无缺口**，见下节表格。
+
+---
+
 ### 已核对但**不是**缺陷（记录以免重复排查）
 
 | 位置 | 核对结论 |
@@ -1489,6 +1588,13 @@ alpha = Math.min(Math.min(frameCount / 3f, elapsed / 300f), 1f)   // 3 帧 + 300
 | `activity/MenuActivity.kt` 的 `as` 强转 | 全文件无硬 `as` 强转（grep 无命中），对方的"菜单强转"修复对本项目不适用。 |
 | `app/src/main/AndroidManifest.xml:34` `android:networkSecurityConfig="@xml/network_security_config"` | 本项目**已做**明文流量按域名白名单收敛（v1.1.2 对应项），且 `:28` `allowBackup="false"`。**无缺口。** |
 | `activity/player/PlayerActivity.kt:274` `bottom_buttons`、`ShortVideoPlayerActivity.kt:315` `bottomControl` | 均为视图字段，与 P7 的 `bottom` 状态字段无关，不受 P7 影响。 |
+| `activity/video/info/VideoInfoFragment.kt:580-584` | 对方 `VideoInfoFragment.java:547-556` 修的是"三连成功后**在后台线程**改 ImageView"；本项目该处**已经是** `runOnUiThread { coin/like/fav.setImageResource(...) }`。**无需改动。** |
+| `api/DynamicApi.java:385` | 对方 26f1742 修 `Pattern.compile("@" + name)` 未转义导致昵称含正则元字符时抛 `PatternSyntaxException`；本项目**已用 `Pattern.quote(key)`**（连注释都与上游一致）。**无需改动。** |
+| `api/DynamicApi.java:594` 与 `:611` | 对方补 `modules == null` 时 `dynamic.userInfo = new UserInfo();` 防下游 bind NPE；本项目结构不同 —— `:594` 先 `UserInfo userInfo = new UserInfo();`、`:611` 无条件 `dynamic.userInfo = userInfo`。**无需改动。** |
+| 全库 Java 文件里的 `Map.of(...)` | 对方 26f1742 因 `minSdk < 30` 把 `Map.of` 改成静态块 `HashMap`；本项目修完 P34 后全库已无 `Map.of` / `Set.of` / `List.of`。**无需改动。** |
+| `activity/player/PlayerActivity.kt:1178-1180` | 对方 26f1742 才给 `onlineTimer` 补"重建前 `cancel()`"；本项目**已有** `onlineTimer?.cancel(); onlineTimer = null`。**本项目更优。** |
+| `activity/player/PlayerActivity.kt:1648-1655` | 对方 `onDestroy` 在 `isFinishing == false` 时提前 `return`，会漏掉 native 播放器与 5 个 Timer 的释放；本项目用 `destroyed` 标志后**无条件清理**。**本项目更优。** |
+| `activity/player/PlayerActivity.kt:172` / `:319` | 对方修 `danmaku_url.equals("")` 的 NPE；本项目 Kotlin 侧是 `danmaku_url: String = ""` + `intent.getStringExtra("danmaku") ?: ""`，不可能 NPE。**无需改动。** |
 
 ---
 
