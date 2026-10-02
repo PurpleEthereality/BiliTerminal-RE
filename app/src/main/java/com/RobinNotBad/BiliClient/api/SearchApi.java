@@ -119,6 +119,48 @@ public class SearchApi {
         }
     }
 
+    /**
+     * 单独搜索番剧（search_type=media_bangumi）的结果拆解。
+     * 与 {@link #getVideosFromSearchResult} 里的 media_bangumi 分支不同：这里的 input 就是
+     * data.result 本身（一个番剧条目数组），外面没有再套一层 result_type，所以直接遍历即可。
+     * <p>
+     * 番剧条目里没有 aid/bvid，借用 VideoCard 的已有字段承载：
+     * aid=media_id（剧集 mdid，番剧详情页正是用它拉取信息）、bvid=season_id（ssid，仅作稳定 id 用）、
+     * type 固定 "media_bangumi"（VideoCardHolder 已按该 type 跳番剧详情页）。
+     *
+     * @param input           search_type=media_bangumi 返回的 data.result
+     * @param videoCardList   结果追加到这里
+     */
+    public static void getBangumiFromSearchResult(JSONArray input, ArrayList<VideoCard> videoCardList)
+            throws JSONException {
+        if (input == null) return;
+
+        for (int i = 0; i < input.length(); i++) {
+            JSONObject card = input.optJSONObject(i);
+            if (card == null) continue;
+
+            String title = card.optString("title", "");
+            title = title.replace("<em class=\"keyword\">", "").replace("</em>", "");
+            title = StringUtil.htmlToString(title);
+
+            // 搜索结果里的封面是协议相对地址（//i0.hdslb.com/...），而 GlideUtil 对不以 http 开头的
+            // url 会原样返回、不加尺寸后缀，Glide 本身也不认无 scheme 的地址 —— 不补 scheme 封面必然失败
+            String cover = card.optString("cover", "");
+            if (cover.startsWith("//")) cover = "https:" + cover;
+
+            String areas = card.optString("areas", "");          // 地区，卡片第二行
+            String indexShow = card.optString("index_show", ""); // 更新进度（如"全14话"），卡片第三行
+            // index_show 是聚合搜索（all/v2）才稳定给出的字段，单独的 search_type=media_bangumi
+            // 接口文档里没有它，实测可能为空；为空时退用 styles（风格，如"原创/科幻/推理"），
+            // 免得卡片第三行整行消失（VideoCardHolder 对空 view 是直接隐藏）
+            if (indexShow.isEmpty()) indexShow = card.optString("styles", "");
+            long mediaId = card.optLong("media_id", 0);
+            String seasonId = card.optString("season_id", "");
+
+            videoCardList.add(new VideoCard(title, areas, indexShow, cover, mediaId, seasonId, "media_bangumi"));
+        }
+    }
+
     public static void getUsersFromSearchResult(JSONArray input, List<UserInfo> userInfoList) throws JSONException {
         for (int i = 0; i < input.length(); i++) {
             JSONObject card = input.getJSONObject(i); // 获得用户卡片

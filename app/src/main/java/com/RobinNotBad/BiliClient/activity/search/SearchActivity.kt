@@ -72,8 +72,8 @@ class SearchActivity : InstanceActivity() {
     // 搜索类别动态列表：根据用户设置动态管理启用的搜索类别及排序
     private lateinit var categoryList: ArrayList<String>
 
-    // 默认搜索类别顺序
-    private val defaultCategoryOrder = arrayOf("video", "article", "user", "live")
+    // 默认搜索类别顺序（番剧紧跟视频，与上游一致）
+    private val defaultCategoryOrder = arrayOf("video", "bangumi", "article", "user", "live")
 
     var specialList = arrayOf("心理疾病", "自杀", "自尽", "自残", "抑郁", "双相", "安眠药")
     var specialNamesList = arrayOf("严炜", "陈学峰", "徐波", "易德元", "舒微函", "张自东", "杨国明", "张俊胜")
@@ -153,7 +153,7 @@ class SearchActivity : InstanceActivity() {
                 }
             }
             viewPager.adapter = vpfAdapter
-            // 标题随类别页变化：搜索-视频 / 搜索-专栏 / 搜索-用户 / 搜索-直播
+            // 标题随类别页变化：搜索-视频 / 搜索-番剧 / 搜索-专栏 / 搜索-用户 / 搜索-直播
             updatePageName(viewPager.currentItem)
 
             viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
@@ -312,13 +312,14 @@ class SearchActivity : InstanceActivity() {
     }
 
     /**
-     * 标题随搜索类别页变化（搜索-视频 / 搜索-专栏 / 搜索-用户 / 搜索-直播）。
+     * 标题随搜索类别页变化（搜索-视频 / 搜索-番剧 / 搜索-专栏 / 搜索-用户 / 搜索-直播）。
      * 仅修改标题文字，不影响标题栏点击（菜单/返回详情）与长按搜索按钮等隐藏功能
      */
     private fun updatePageName(position: Int) {
         if (!::categoryList.isInitialized || position < 0 || position >= categoryList.size) return
         val sub = when (categoryList[position]) {
             "video" -> "视频"
+            "bangumi" -> "番剧"
             "article" -> "专栏"
             "user" -> "用户"
             "live" -> "直播"
@@ -329,7 +330,7 @@ class SearchActivity : InstanceActivity() {
 
     /**
      * 根据用户偏好设置构建启用的搜索类别列表
-     * 视频始终启用且在第一位，其他类别根据设置决定是否显示及排序
+     * 视频始终启用且在第一位；番剧固定启用；其他类别根据设置决定是否显示及排序
      */
     private fun buildCategoryList() {
         categoryList = ArrayList()
@@ -337,11 +338,22 @@ class SearchActivity : InstanceActivity() {
         // 读取已保存的排序配置
         val sortConf = SharedPreferencesUtil.getString(SharedPreferencesUtil.SEARCH_CATEGORY_SORT, "")
 
-        if (!TextUtils.isEmpty(sortConf) && sortConf.split(";").size == defaultCategoryOrder.size) {
+        // 旧逻辑要求保存的类别数必须与默认表完全相等，一旦默认表加了新类别（本次加「番剧」），
+        // 旧配置就会整份作废，用户在设置页排好的顺序也随之失效（而设置页目前只能写 4 个类别）。
+        // 改成：保存的每一项都是已知类别就采用它，默认表里新增、旧配置里还没有的类别补在后面。
+        val savedKeys: List<String> = if (TextUtils.isEmpty(sortConf)) emptyList() else sortConf.split(";")
+        val savedKeysUsable = savedKeys.isNotEmpty() && savedKeys.all { defaultCategoryOrder.contains(it) }
+
+        if (savedKeysUsable) {
             // 使用已保存的排序顺序
-            val orderedKeys = sortConf.split(";")
-            for (key in orderedKeys) {
+            for (key in savedKeys) {
                 if (isCategoryEnabled(key)) {
+                    categoryList.add(key)
+                }
+            }
+            // 补上保存配置里还没有的类别（版本升级新增、设置页尚未提供开关的 tab）
+            for (key in defaultCategoryOrder) {
+                if (!savedKeys.contains(key) && isCategoryEnabled(key)) {
                     categoryList.add(key)
                 }
             }
@@ -367,6 +379,8 @@ class SearchActivity : InstanceActivity() {
     private fun isCategoryEnabled(categoryKey: String): Boolean {
         return when (categoryKey) {
             "video" -> true  // 视频始终启用
+            // 番剧目前没有对应的设置开关（设置页只有专栏/用户/直播三项），固定启用
+            "bangumi" -> true
             "article" -> SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.SEARCH_CATEGORY_ARTICLE_SHOW, true)
             "user" -> SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.SEARCH_CATEGORY_USER_SHOW, true)
             "live" -> SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.SEARCH_CATEGORY_LIVE_SHOW, true)
@@ -380,6 +394,7 @@ class SearchActivity : InstanceActivity() {
     private fun createFragmentForCategory(categoryKey: String): Fragment {
         return when (categoryKey) {
             "video" -> SearchVideoFragment.newInstance()
+            "bangumi" -> SearchBangumiFragment.newInstance()
             "article" -> SearchArticleFragment.newInstance()
             "user" -> SearchUserFragment.newInstance()
             "live" -> SearchLiveFragment.newInstance()
