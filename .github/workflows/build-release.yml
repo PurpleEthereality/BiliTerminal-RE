@@ -44,6 +44,10 @@ jobs:
 
       - name: 配置 Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # 与 ci.yml 同一处坑：默认 packages 里的旧 "tools" 包已下架，
+          # sdkmanager 会 `Warning: Failed to find package 'tools'` + exit 1 打死 job。
+          packages: 'platform-tools'
 
       - name: 赋予 gradlew 可执行权限
         run: chmod +x gradlew

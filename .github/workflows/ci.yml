@@ -40,6 +40,14 @@ jobs:
 
       - name: 配置 Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # 不能省：sdkmanager 的旧 "tools" 包已被 Google 从 SDK 仓库下架，
+          # 而本 action 的默认 packages 是 "tools platform-tools"，
+          # 于是 sdkmanager 会以 `Warning: Failed to find package 'tools'` + exit 1 直接打死整个 job
+          # （2026-10-02 run 36973006267 就是这样失败的，见 job 日志第 971~992 行）。
+          # 只装 platform-tools：编译要的 platform / build-tools 由 AGP 在授权后按需自动下载
+          # （上一步 sdkmanager --licenses 已全部接受）。
+          packages: 'platform-tools'
 
       - name: 赋予 gradlew 可执行权限
         run: chmod +x gradlew
