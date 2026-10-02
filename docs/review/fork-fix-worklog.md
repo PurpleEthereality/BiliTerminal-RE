@@ -172,6 +172,17 @@
 - 三路径实测：`--no-configuration-cache` 通过；**开启配置缓存也通过**（`Configuration cache entry stored.`）；把锚点临时改成 `26.09.25` 后 `EXIT=1` 并报 `版本号不一致：` + `src/main/res/values/strings.xml 里找不到更新日志锚点「【26.09.24 本次更新】」`；还原后 md5 与改动前一致（`0fee020acf60e673365812b1780e61bf`）、`git diff` 干净、再跑通过。
 - `util/UpdateManager.kt` 加固：`parseConfig` 原来用 `json.optInt("versionCode", 0)` / `json.optBoolean("forceUpdate", false)` —— 因为 JSON 里写的是字符串，靠 `optXxx` 的字符串容错才**碰巧**读对；一旦真写成别的类型，就会被静默容错成默认值，表现为"发布了新版本客户端却查不到更新"。改为私有助手 `readIntField(json, "versionCode")` / `readBooleanField(json, "forceUpdate", false)`，兼容字符串与原生类型，无法解析时 `Logu.e(TAG, …)` 记日志再返回默认值；格式正确时行为不变。
 
+### E2：发布产物的可追溯性 —— Release 附 MD5 校验值 ✅
+
+原状：release 只上传 APK 本体，用户无法核对下载到的包是否完整 / 是否被替换过。上游也只在部分版本（v1.0.2-fix1 / v1.1.1 / v1.1.1-fix）提供过 MD5 表。
+
+- `build-release.yml` 在 `:app:assembleRelease` 之后新增「生成 APK 校验值（MD5）」步骤：对 `app/build/outputs/apk/release/*.apk` 逐个算 MD5，写出**标准两列格式**的 `md5sums.txt`（用户在 APK 同目录直接 `md5sum -c md5sums.txt` 就能校验），同时把「MD5 + 文件名 + 字节数」写进 `$GITHUB_OUTPUT`。
+- `md5sums.txt` 作为 Release 附件一并上传（`files:` 改成两行 glob），发布说明里也附一份 —— 两条路都留着，避免 GitHub 在 `generate_release_notes` 模式下改写 `body` 时把它弄丢。
+- **两个自己踩到的坑**（已修，记下来免得再犯）：
+  1. `$GITHUB_OUTPUT` 的多行值**末尾不带换行**（GitHub 会把 delimiter 前那个换行吃掉），所以拼 Markdown 代码围栏时必须显式补 `\n`，否则收尾的 ``` 会粘到最后一行校验值后面。本机用"忠实复刻 GitHub 解析语义"的脚本才复现出来 —— 直接 `println` 出来的字符串是带换行的，会漏掉这个 bug。
+  2. `md5sums.txt` 一开始写成 `MD5  文件名  (4096 字节)`，第三列会让 `md5sum -c` 把 `(4096 字节)` 当成文件名的一部分而全部 FAIL。改成标准两列，尺寸只在发布说明里展示。
+- 本机模拟了 tag push（无 body）与 `workflow_dispatch`（有 body）两条路径，`$GITHUB_OUTPUT` 解析正确、围栏闭合正确、`md5sum -c` 退出码 0。
+
 ## 环境说明（重要）
 
 本机是 Linux（工作目录在 Windows NTFS 分区 `/run/media/zise/ECB28636B28604F4/...`）。原 `local.properties` 与 `gradle.properties` 都指向 Windows 路径（`D:\Program Files\android-sdk`、`C:\Program Files\Java\jdk-17`），在 Linux 下无法直接构建。
