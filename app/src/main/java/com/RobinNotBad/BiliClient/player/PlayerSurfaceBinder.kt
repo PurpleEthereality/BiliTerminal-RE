@@ -53,9 +53,18 @@ class PlayerSurfaceBinder(
     /** 是否正在等 surface 就绪（即调用过 [await] 且当时未就绪）。只在主线程读写。 */
     private var awaiting = false
 
+    /**
+     * 从 TextureView 的 SurfaceTexture 包出来的 Surface。
+     * `Surface(st)` 是 native 句柄的包装，不会因为 Java 对象被 GC 而归还：原来
+     * `currentTarget()` 与 `onSurfaceTextureAvailable` 每次调用都新建一个、旧的无处释放，
+     * 反复 `await()`/`isReady()` 就会持续泄漏。这里按 SurfaceTexture 实例缓存，换纹理或解绑时才 release。
+     */
+    private var textureSurface: Surface? = null
+    private var textureSurfaceToken: SurfaceTexture? = null
+
     private val textureListener = object : TextureView.SurfaceTextureListener {
         override fun onSurfaceTextureAvailable(st: SurfaceTexture, width: Int, height: Int) {
-            deliver(SurfaceTarget.Texture(Surface(st)))
+            deliver(SurfaceTarget.Texture(obtainTextureSurface(st)))
         }
 
         override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, width: Int, height: Int) {
@@ -63,7 +72,10 @@ class PlayerSurfaceBinder(
         }
 
         override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
+            // 纹理即将销毁：先让播放器松手，再放掉我们自己包出来的 Surface。
+            // 返回 true 表示由框架释放 SurfaceTexture 本身
             onSurfaceLost()
+            releaseTextureSurface()
             return true
         }
 
@@ -113,6 +125,9 @@ class PlayerSurfaceBinder(
         textureView?.surfaceTextureListener = null
         surfaceView?.holder?.removeCallback(surfaceCallback)
         mainHandler.removeCallbacksAndMessages(null)
+        // 先让播放器松手再释放，避免 Surface 被释放时播放器还拿着它
+        onSurfaceLost()
+        releaseTextureSurface()
         textureView = null
         surfaceView = null
     }
@@ -141,12 +156,29 @@ class PlayerSurfaceBinder(
     private fun currentTarget(): SurfaceTarget? {
         textureView?.let { view ->
             val st = view.surfaceTexture
-            return if (view.isAvailable && st != null) SurfaceTarget.Texture(Surface(st)) else null
+            return if (view.isAvailable && st != null) SurfaceTarget.Texture(obtainTextureSurface(st)) else null
         }
         surfaceView?.let { view ->
             val holder = view.holder
             if (holder.surface?.isValid == true) return SurfaceTarget.Holder(holder)
         }
         return null
+    }
+
+    /** 取（必要时新建）SurfaceTexture 对应的 Surface；同一个 SurfaceTexture 只建一个。 */
+    private fun obtainTextureSurface(st: SurfaceTexture): Surface {
+        val existing = textureSurface
+        if (existing != null && textureSurfaceToken === st) return existing
+        existing?.release()
+        val surface = Surface(st)
+        textureSurface = surface
+        textureSurfaceToken = st
+        return surface
+    }
+
+    private fun releaseTextureSurface() {
+        textureSurface?.release()
+        textureSurface = null
+        textureSurfaceToken = null
     }
 }

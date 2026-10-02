@@ -12,12 +12,14 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Map;
 import java.util.TreeMap;
 
 import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 /**
  * Created by liupe on 2018/10/6.
@@ -46,7 +48,7 @@ public class LoginApi {
 
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");
-            byte[] digest = md.digest(signStr.getBytes());
+            byte[] digest = md.digest(signStr.getBytes(StandardCharsets.UTF_8));
             String sign = new BigInteger(1, digest).toString(16);
             while (sign.length() < 32) sign = "0" + sign;
 
@@ -92,11 +94,20 @@ public class LoginApi {
 
     public static void requestSSOs() throws JSONException, IOException {
         String listUrl = "https://passport.bilibili.com/x/passport-login/web/sso/list";
-        JSONObject listResult = new JSONObject(NetWorkUtil.post(listUrl, new NetWorkUtil.FormData().put("csrf", SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, "")).toString()).body().string());
+        JSONObject listResult;
+        try (Response listResponse = NetWorkUtil.post(listUrl, new NetWorkUtil.FormData().put("csrf", SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, "")).toString())) {
+            ResponseBody listBody = listResponse.body();
+            if (listBody == null) return;
+            listResult = new JSONObject(listBody.string());
+        }
         if (listResult.has("data") && !listResult.isNull("data")) {
             JSONArray sso = listResult.getJSONObject("data").getJSONArray("sso");
             for (int i = 0; i < sso.length(); i++) {
-                NetWorkUtil.post(sso.getString(i), "");
+                // SSO 广播只要发出去，不看响应内容；不读 body 就必须显式关闭，
+                // 否则每条广播都会漏掉一个连接（一次登录可累积 N 条）。
+                try (Response ignored = NetWorkUtil.post(sso.getString(i), "")) {
+                    // 故意留空
+                }
             }
         }
     }

@@ -13,17 +13,18 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
-    <uses-permission android:name="android.permission.INTERNET" /> <!-- Geetest -->
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Android 14 起前台服务必须声明类型，播放保活走 mediaPlayback -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <!-- UETool 调试悬浮窗所需的系统悬浮窗权限（仅 Debug 构建需要用户手动授权开启） -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 审计 M12-c 收敛：
+         · 移除 ACCESS_WIFI_STATE —— 原注释写「Geetest」，但极验 SDK 已删除，全库无 WifiManager 引用；
+         · 移除 READ_PHONE_STATE —— 全库无 TelephonyManager/getNetworkOperator 引用，属安装即索要的敏感权限；
+         · SYSTEM_ALERT_WINDOW 只服务 Debug 版 UETool 悬浮窗，已下移到 src/debug/AndroidManifest.xml，
+           发布包不再声明该权限。 -->
 
     <application
         android:name=".BiliTerminal"

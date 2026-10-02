@@ -126,8 +126,9 @@ public class LinkUrlUtil {
 
     private static void handleShortUrl(Context context, String url) {
         CenterThreadPool.run(() -> {
-            try {
-                Response response = NetWorkUtil.get(url, NetWorkUtil.webHeaders, location -> handleWebURL(context, location));
+            // 必须 try-with-resources：code() != 200（短链 302、白名单外 3xx、404/412）时
+            // 下面根本不读 body，而 OkHttp 只在 body 读到 EOF 时才把连接还给连接池。
+            try (Response response = NetWorkUtil.get(url, NetWorkUtil.webHeaders, location -> handleWebURL(context, location))) {
                 ResponseBody body;
                 if (response.code() == 200 && (body = response.body()) != null) {
                     JSONObject json = new JSONObject(body.string());

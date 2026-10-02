@@ -10,7 +10,6 @@ import android.os.Looper
 import android.util.Log
 import android.widget.TextView
 import com.RobinNotBad.BiliClient.BiliTerminal
-import com.RobinNotBad.BiliClient.BiliTerminalApp
 import com.RobinNotBad.BiliClient.BuildConfig
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.settings.UpdateHistoryActivity
@@ -239,14 +238,14 @@ class SplashActivity : Activity() {
      * Release 构建不做任何处理。
      */
     private fun ensureUEToolOverlayPermission(): Boolean {
-        if (!BiliTerminalApp.isDebugBuild()) return false
-        if (BiliTerminalApp.canDrawOverlaysCompat(this)) {
+        if (!BiliTerminal.isDebugBuild()) return false
+        if (BiliTerminal.canDrawOverlaysCompat(this)) {
             // 已授权：直接显示 UETool 悬浮窗
-            Handler(Looper.getMainLooper()).postDelayed({ BiliTerminalApp.showUEToolMenu() }, 300L)
+            Handler(Looper.getMainLooper()).postDelayed({ BiliTerminal.showUEToolMenu() }, 300L)
             return false
         }
         // 未授权：先跳转授予悬浮窗权限
-        BiliTerminalApp.requestOverlayPermission(this)
+        BiliTerminal.requestOverlayPermission(this)
         return true
     }
 
@@ -254,10 +253,10 @@ class SplashActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         // 从悬浮窗授权页返回
-        if (requestCode == BiliTerminalApp.REQUEST_OVERLAY_PERMISSION_FOR_UETOOL) {
-            if (BiliTerminalApp.canDrawOverlaysCompat(this)) {
+        if (requestCode == BiliTerminal.REQUEST_OVERLAY_PERMISSION_FOR_UETOOL) {
+            if (BiliTerminal.canDrawOverlaysCompat(this)) {
                 // 授权成功：立即显示 UETool，然后继续原来的启动流程
-                Handler(Looper.getMainLooper()).postDelayed({ BiliTerminalApp.showUEToolMenu() }, 200L)
+                Handler(Looper.getMainLooper()).postDelayed({ BiliTerminal.showUEToolMenu() }, 200L)
             } else {
                 // 用户未授予：Toast 提示，不阻塞启动
                 try {

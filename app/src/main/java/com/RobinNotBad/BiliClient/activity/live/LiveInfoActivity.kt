@@ -252,8 +252,4 @@ class LiveInfoActivity : BaseActivity() {
         hostAdapter!!.selectedItemIndex = 0
     }
 
-    override fun onDestroy() {
-        TerminalContext.getInstance().leaveDetailPage()
-        super.onDestroy()
-    }
 }

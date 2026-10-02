@@ -92,16 +92,16 @@ object UpdateManager {
 
     private fun doFetchUpdateConfig(): UpdateConfig {
         val request = Request.Builder().url(CONFIG_URL).get().build()
-        val response = okHttpClient.newCall(request).execute()
+        // use{} 保证失败分支抛异常时连接也归还（OkHttp 只在 body 读到 EOF 时才自动归还）
+        return okHttpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IOException("服务器响应错误: ${response.code}")
+            }
 
-        if (!response.isSuccessful) {
-            throw IOException("服务器响应错误: ${response.code}")
+            val body = response.body?.string() ?: throw IOException("响应体为空")
+
+            parseConfig(body)
         }
-
-        val body = response.body?.string() ?: throw IOException("响应体为空")
-        response.close()
-
-        return parseConfig(body)
     }
 
     private fun parseConfig(jsonStr: String): UpdateConfig {
@@ -180,6 +180,8 @@ object UpdateManager {
                     val retryRequest = Request.Builder().url(url).get().build()
                     response = okHttpClient.newCall(retryRequest).execute()
                     if (!response.isSuccessful) {
+                        // 重试仍失败：body 不会有人读，必须显式关闭，否则连接不归还
+                        response.close()
                         CenterThreadPool.runOnUiThread { onError("下载失败: ${response.code}") }
                         return@run
                     }

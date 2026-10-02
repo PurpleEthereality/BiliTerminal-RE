@@ -117,9 +117,11 @@ class DownloadActivity : BaseActivity() {
     private fun download(url: String, file: File, desc: String, exitOnFinish: Boolean) {
         dldText = desc
         try {
+            // 先建文件再发请求：createNewFile() 抛 IOException 时 response 还没拿到，
+            // 否则会走 catch 直接 finish，连接不归还（详见 OkHttp body 读尽才归还的语义）
+            if (!file.exists()) file.createNewFile()
             val response: Response = NetWorkUtil.get(url,
                 if (noBiliHeaders) AppInfoApi.customHeaders else NetWorkUtil.webHeaders)
-            if (!file.exists()) file.createNewFile()
             val inputStream: InputStream = response.body!!.byteStream()
             val fileOutputStream = FileOutputStream(file)
             val bytes = ByteArray(1024 * 10)

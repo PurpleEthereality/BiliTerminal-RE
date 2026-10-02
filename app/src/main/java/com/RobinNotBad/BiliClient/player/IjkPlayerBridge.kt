@@ -39,8 +39,9 @@ class IjkPlayerBridge(
     private val onError: (Int, String) -> Unit = { _, _ -> }
 ) {
     private var mediaPlayer: IjkMediaPlayer? = null
-    private var job: Job = SupervisorJob()
-    private val scope = CoroutineScope(Dispatchers.Main + job)
+    // 注意 scope 与 job 都是 var：release() 要能真正停掉协程，又不能让实例报废
+    // （ShortVideoPlayerActivity 的 onViewRecycled 会调 release()，同一个 holder 随后还会复用）
+    private var scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var progressJob: Job? = null
 
     private val _state = MutableStateFlow(PlayerState())
@@ -190,8 +191,16 @@ class IjkPlayerBridge(
     }
 
     fun seekTo(positionMs: Long) {
-        mediaPlayer?.seekTo(positionMs)
-        _state.update { it.copy(currentPosition = positionMs) }
+        // 钳制到 [0, duration]：调用方（拖动条、恢复播放进度）可能传来负值或超过时长的值，
+        // 而 _state 里的位置会被进度条直接读出来显示，乐观写入越界值会让 UI 与播放器不一致
+        val dur = _state.value.duration
+        val target = when {
+            positionMs < 0L -> 0L
+            dur > 0L && positionMs > dur -> dur
+            else -> positionMs
+        }
+        mediaPlayer?.seekTo(target)
+        _state.update { it.copy(currentPosition = target) }
     }
 
     fun setSpeed(speed: Float) {
@@ -250,6 +259,14 @@ class IjkPlayerBridge(
             mediaPlayer?.release()
         } catch (_: Exception) {}
         mediaPlayer = null
+        // 真正停掉本实例的所有协程（进度轮询等），并立刻换一组新的 scope。
+        // 只 cancel progressJob 会留下一个永远处于 active 的 SupervisorJob scope；
+        // 而直接 cancel 顶层 job 又会让复用路径失效——release() 不是终结：
+        // ShortVideoPlayerActivity.kt:243 的 onViewRecycled 会调它，同一 holder 之后还会
+        // initPlayer() → createPlayer() 复用，那时 startProgressTracking() 会 launch 到已取消的
+        // scope 里静默失效（进度条从此不动）。所以这里 cancel 后立即重建。
+        scope.cancel()
+        scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
         _state.update { PlayerState() }
     }
 }

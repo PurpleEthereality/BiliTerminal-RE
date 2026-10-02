@@ -79,8 +79,4 @@ class DynamicInfoActivity : BaseActivity() {
         rFragment!!.notifyReplyInserted(event)
     }
 
-    override fun onDestroy() {
-        TerminalContext.getInstance().leaveDetailPage()
-        super.onDestroy()
-    }
 }

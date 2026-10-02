@@ -85,8 +85,13 @@ class DanmakuManager(
         if (!file.exists()) return
 
         try {
-            val parser = createParser(file.inputStream())
-            configureAndPrepare(parser)
+            // 用 use{} 包住输入流：原来 file.inputStream() 交给 createParser 后，
+            // 解析中途抛异常或提前结束时这个文件描述符就没人关了。
+            // DanmakuParser.prepare() 是同步解析，configureAndPrepare 返回后流已读完，可安全关闭
+            file.inputStream().use { stream ->
+                val parser = createParser(stream)
+                configureAndPrepare(parser)
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -270,5 +275,8 @@ class DanmakuManager(
 
     fun release() {
         try { danmakuView.release() } catch (_: Exception) {}
+        // 复位 isPrepared：show/hide/pause/resume/seekTo 都有 `if (!isPrepared) return` 守卫，
+        // 释放后不复位会让复用同一 DanmakuManager 的路径以为弹幕还挂在已释放的 view 上
+        _state.update { it.copy(isPrepared = false) }
     }
 }

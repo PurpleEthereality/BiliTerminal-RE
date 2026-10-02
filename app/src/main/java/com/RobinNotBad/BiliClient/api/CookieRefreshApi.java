@@ -12,6 +12,7 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.spec.MGF1ParameterSpec;
@@ -48,7 +49,7 @@ public class CookieRefreshApi {
             OAEPParameterSpec oaepParameterSpec = new OAEPParameterSpec("SHA-256", "MGF1", MGF1ParameterSpec.SHA256, PSource.PSpecified.DEFAULT);
             cipher.init(Cipher.ENCRYPT_MODE, publicKey, oaepParameterSpec);
             String data = "refresh_" + timestamp;
-            return base16Encode(cipher.doFinal(data.getBytes()));
+            return base16Encode(cipher.doFinal(data.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             e.printStackTrace();
         }

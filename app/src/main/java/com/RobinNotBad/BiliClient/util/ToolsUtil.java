@@ -8,6 +8,7 @@ import com.RobinNotBad.BiliClient.BuildConfig;
 import com.RobinNotBad.BiliClient.R;
 
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
@@ -36,7 +37,7 @@ public class ToolsUtil {
         byte[] secretBytes;
         try {
             MessageDigest md = MessageDigest.getInstance("MD5");
-            md.update(plainText.getBytes());
+            md.update(plainText.getBytes(StandardCharsets.UTF_8));
             secretBytes = md.digest();
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("没有md5这个算法！");

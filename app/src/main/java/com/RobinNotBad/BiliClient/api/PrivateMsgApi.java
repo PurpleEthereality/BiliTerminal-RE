@@ -91,11 +91,10 @@ public class PrivateMsgApi {
                 list.add(msgObject);
 
             }
-            Log.e("", "返回msgList");
-            for (PrivateMessage i : list) {
-                Log.e("msg",
-                        i.name + "." + i.uid + "." + i.msgId + "." + i.timestamp + "." + i.content + "." + i.type);
-            }
+            // 修复 M12：原实现逐条 Log.e 打印 name/uid/msgId/content，等于把私信正文
+            // （含图片、撤回内容）长期留在 logcat 里，任何拿到日志的进程都能读到。
+            // 这里只保留条数，调试信息量足够且不再落正文。
+            Log.d("PrivateMsgApi", "返回 msgList，共 " + list.size() + " 条");
         }
         return list;
     }

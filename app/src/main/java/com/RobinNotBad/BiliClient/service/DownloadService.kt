@@ -53,6 +53,17 @@ class DownloadService : Service() {
         // 这几个字段会被下载协程与主线程同时读写，必须 @Volatile 保证可见性：
         // started 决定调度循环是否继续，exitCode/percent/state 决定通知与退出时的清理动作。
         @JvmStatic @Volatile var started: Boolean = false
+
+        /**
+         * 本服务的下载批次是否已在执行。
+         *
+         * [onStartCommand] 可能被重复投递（START_STICKY 重建、或多次 startForegroundService），
+         * 没有这道守卫就会并发跑起两个下载批次、双线程写同一文件（审计 S6）。
+         * 不能用 [started] 代替：start() 是先置 started 再 startForegroundService，
+         * 首次合法调用进来时 started 已经是 true，用它判断会把正常请求也挡掉。
+         */
+        @Volatile private var batchRunning: Boolean = false
+
         @JvmStatic @Volatile var exitCode: Int = 0
         @JvmStatic @Volatile var percent: Float = -1f
         @JvmStatic @Volatile var state: String? = null
@@ -539,6 +550,15 @@ class DownloadService : Service() {
         if (serviceIntent == null) {
             return START_STICKY
         }
+        // 幂等守卫（审计 S6）：服务已在一个批次里时，重复的 onStartCommand 必须直接返回。
+        // 否则第二个批次会重新执行 recoverStuckSections()，把第一个批次正在下载的 section
+        // 由 "downloading" 改回 "none"，调度器随即二次拾取同一文件，两个线程写同一路径。
+        // 早退发生在 startForeground 之前是安全的：首次调用已把服务拉成前台。
+        if (batchRunning) {
+            Logu.d("下载批次已在进行中，忽略重复的 onStartCommand")
+            return START_STICKY
+        }
+        batchRunning = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(FOREGROUND_ID, statusBuilder.build(),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -696,13 +716,14 @@ class DownloadService : Service() {
 
     /** 恢复上次会话遗留的"下载中"记录，并清理残留进度 */
     private fun recoverStuckSections() {
-        getDownloadProgressMap().let { it.clear() }
-        val all = getAll()
-        if (all != null) {
-            for (s in all) {
-                if (s.state == "downloading") {
-                    setState(s.id, "none")
-                }
+        val all = getAll() ?: return
+        for (s in all) {
+            // 只重置「本进程没有线程在下载」的遗留记录：downloadProgressMap 里有条目的，
+            // 说明有活跃下载线程正在写这个 section，改回 "none" 会让调度器二次拾取、
+            // 双线程写同一文件（审计 S6）。同时顺手清掉它的残留进度，避免列表显示假进度。
+            if (s.state == "downloading" && !downloadProgressMap.containsKey(s.id)) {
+                setState(s.id, "none")
+                removeDownloadProgress(s.id)
             }
         }
     }
@@ -803,7 +824,7 @@ class DownloadService : Service() {
                             exitCode = result
                             return false
                         }
-                        safeReplaceTemp(audioTmp, File(path_single, "audio.m4a"))
+                        if (!replaceTempOrFail(audioTmp, File(path_single, "audio.m4a"))) return false
                     } else if (useDash) {
                         // DASH分段进度：视频(0-100%) → 音频(0-100%)；不合并，保留分离双文件直接播放
                         // 先下载到临时文件，全部成功后再替换正式文件（重新下载/切换清晰度时不破坏旧视频）
@@ -823,8 +844,8 @@ class DownloadService : Service() {
                             exitCode = result
                             return false
                         }
-                        safeReplaceTemp(videoTmp, File(path_single, "video.mp4"))
-                        safeReplaceTemp(audioTmp, File(path_single, "audio.m4a"))
+                        if (!replaceTempOrFail(videoTmp, File(path_single, "video.mp4"))) return false
+                        if (!replaceTempOrFail(audioTmp, File(path_single, "audio.m4a"))) return false
                         setDownloadProgress(downloadSection.id, 1.0f, "下载完成")
                     } else {
                         // MP4格式或无音轨DASH：直接下载单个文件（音视频已合并/无音轨）
@@ -836,7 +857,7 @@ class DownloadService : Service() {
                             exitCode = result
                             return false
                         }
-                        safeReplaceTemp(videoTmp, File(path_single, "video.mp4"))
+                        if (!replaceTempOrFail(videoTmp, File(path_single, "video.mp4"))) return false
                         // 清理旧 DASH 音频残留：从 DASH（video.mp4+audio.m4a）切换到普通 MP4 时，
                         // 旧的 audio.m4a 不会随新下载被覆盖，残留会导致播放器误判双文件、旧音频继续播放
                         val staleAudio = File(path_single, "audio.m4a")
@@ -876,7 +897,7 @@ class DownloadService : Service() {
                             exitCode = result
                             return false
                         }
-                        safeReplaceTemp(audioTmp, File(path_page, "audio.m4a"))
+                        if (!replaceTempOrFail(audioTmp, File(path_page, "audio.m4a"))) return false
                     } else if (useDash) {
                         // DASH分段进度：视频(0-100%) → 音频(0-100%)；不合并，保留分离双文件直接播放
                         // 先下载到临时文件，全部成功后再替换正式文件（重新下载/切换清晰度时不破坏旧视频）
@@ -896,8 +917,8 @@ class DownloadService : Service() {
                             exitCode = result
                             return false
                         }
-                        safeReplaceTemp(videoTmp, File(path_page, "video.mp4"))
-                        safeReplaceTemp(audioTmp, File(path_page, "audio.m4a"))
+                        if (!replaceTempOrFail(videoTmp, File(path_page, "video.mp4"))) return false
+                        if (!replaceTempOrFail(audioTmp, File(path_page, "audio.m4a"))) return false
                         setDownloadProgress(downloadSection.id, 1.0f, "下载完成")
                     } else {
                         // MP4格式或无音轨DASH：直接下载单个文件（音视频已合并/无音轨）
@@ -909,7 +930,7 @@ class DownloadService : Service() {
                             exitCode = result
                             return false
                         }
-                        safeReplaceTemp(videoTmp, File(path_page, "video.mp4"))
+                        if (!replaceTempOrFail(videoTmp, File(path_page, "video.mp4"))) return false
                         // 清理旧 DASH 音频残留：从 DASH（video.mp4+audio.m4a）切换到普通 MP4 时，
                         // 旧的 audio.m4a 不会随新下载被覆盖，残留会导致播放器误判双文件、旧音频继续播放
                         val staleAudio = File(path_page, "audio.m4a")
@@ -938,33 +959,56 @@ class DownloadService : Service() {
     }
 
     /**
-     * 临时文件替换正式文件（备份→替换→恢复）。
+     * 临时文件替换正式文件（备份→替换→恢复），返回是否成功。
      * 下载先写临时文件、全部成功后才替换，避免下载期间破坏旧视频；
      * 替换失败时恢复旧文件，保证重新下载（切换清晰度）不丢旧数据。
+     *
+     * 审计 M11-c：原来返回 void，替换失败只留一行日志，调用方照样
+     * `notifyCompletion("下载成功")` 并删掉下载记录 —— 用户以为下好了，实际文件没换过去。
      */
-    private fun safeReplaceTemp(tmpFile: File, finalFile: File) {
-        if (!tmpFile.exists()) return
+    private fun safeReplaceTemp(tmpFile: File, finalFile: File): Boolean {
+        if (!tmpFile.exists()) {
+            Logu.e("DownloadService", "替换失败：临时文件不存在 ${tmpFile.name}")
+            return false
+        }
         val bakFile = File(finalFile.parentFile, finalFile.name + ".bak")
+        var ok = false
         try {
-            if (finalFile.exists()) {
-                if (!finalFile.renameTo(bakFile)) {
-                    // 无法备份（罕见）：直接尝试覆盖（Android 上 rename 可覆盖目标）
-                    if (tmpFile.renameTo(finalFile)) tmpFile.delete()
-                    return
+            // 无旧文件，或旧文件成功备份到 .bak，才走正常替换
+            if (!finalFile.exists() || finalFile.renameTo(bakFile)) {
+                if (tmpFile.renameTo(finalFile)) {
+                    if (bakFile.exists()) bakFile.delete()
+                    ok = true
+                } else {
+                    // 替换失败：恢复旧文件，保留临时文件供排查
+                    if (bakFile.exists()) bakFile.renameTo(finalFile)
+                    Logu.e("DownloadService", "替换文件失败：${finalFile.name}，已保留旧文件")
                 }
-            }
-            if (tmpFile.renameTo(finalFile)) {
-                if (bakFile.exists()) bakFile.delete()
             } else {
-                // 替换失败：恢复旧文件，保留临时文件供排查
-                if (bakFile.exists()) bakFile.renameTo(finalFile)
-                Logu.e("DownloadService", "替换文件失败：${finalFile.name}，已保留旧文件")
+                // 无法备份（罕见）：直接尝试覆盖（Android 上 rename 可覆盖目标）
+                ok = tmpFile.renameTo(finalFile)
+                if (ok) tmpFile.delete()
+                else Logu.e("DownloadService", "备份与覆盖均失败：${finalFile.name}")
             }
         } catch (e: Exception) {
+            Logu.e("DownloadService", "替换文件异常：${finalFile.name} ${e.message}")
             if (bakFile.exists() && !finalFile.exists()) {
                 try { bakFile.renameTo(finalFile) } catch (_: Exception) {}
             }
         }
+        return ok
+    }
+
+    /**
+     * [safeReplaceTemp] 的调用方包装（审计 M11-c）。
+     * 只负责置错误码并让调用方 return false —— 失败后的状态收敛
+     * （recordFailure / setState "error" / exitMessage）统一由 runDownloadSection 处理，
+     * 这里不要重复设置，也不要用共享的 section 字段去猜当前任务。
+     */
+    private fun replaceTempOrFail(tmpFile: File, finalFile: File): Boolean {
+        if (safeReplaceTemp(tmpFile, finalFile)) return true
+        exitCode = ERR_FILE
+        return false
     }
 
     /**
@@ -1018,6 +1062,9 @@ class DownloadService : Service() {
     }
 
     private fun startNotifyProgress() {
+        // 幂等（审计 M11-d）：重复进入时不能无条件新建 Timer，否则旧 Timer 既没 cancel
+        // 又丢掉了引用，泄漏一个线程并让它每秒继续往通知栏写。
+        if (notifyTimer != null) return
         notifyTimer = Timer()
         notifyTimer!!.schedule(object : TimerTask() {
             override fun run() {
@@ -1079,12 +1126,14 @@ class DownloadService : Service() {
                 return NORMAL
 
             val subtitleFolder = File(folder, "subtitles")
-            if (!subtitleFolder.mkdirs())
+            // 审计 M11-e：mkdirs() / createNewFile() 在"目标已存在"时返回 false，
+            // 原来用它判失败，导致目录或同名 JSON 已存在（重下、续传）时直接报 ERR_FILE。
+            if (!subtitleFolder.exists() && !subtitleFolder.mkdirs())
                 return ERR_FILE
             for (subtitleLink in subtitleLinks) {
                 if (subtitleLink.id != -1L) {
                     val subtitleFile = File(subtitleFolder, subtitleLink.lang + ".json")
-                    if (!subtitleFile.createNewFile())
+                    if (!resetFile(subtitleFile))
                         return ERR_FILE
                     val result = downFile(subtitleLink.url, subtitleFile)
                     if (result != NORMAL)
@@ -1356,10 +1405,15 @@ class DownloadService : Service() {
             }
         }
 
-        // 等待线程结束（带超时），避免遗留写盘
+        // 等待线程结束（带超时），避免遗留写盘。
+        // 超时是"整批分片"的总预算而不是每个线程各 30s（审计 M11-g）：
+        // 原来逐个 t.join(30000)，32 个分片最坏会阻塞 16 分钟。
+        val joinDeadline = System.currentTimeMillis() + 30_000L
         for (t in threads) {
+            val remain = joinDeadline - System.currentTimeMillis()
+            if (remain <= 0) break
             try {
-                t.join(30000)
+                t.join(remain)
             } catch (ignored: InterruptedException) {
             }
         }
@@ -1369,6 +1423,17 @@ class DownloadService : Service() {
 
         // 完整性校验：任一失败或下载字节不足都视为失败，回退整文件单线程重下
         if (anyFailed.get() || totalDownloaded.get() < totalSize) {
+            // 回退前必须把分片阶段已经计入的字节从全局计数里扣掉（审计 S7）：
+            // downFileSpeedSingle 会用 FileOutputStream 截断重写整个文件，并再次
+            // addDownloadedBytes()，不回滚就让 totalBytesDownloaded 把同一批字节算两遍，
+            // sampleSpeed() 得出的速度与批次统计虚高。
+            val segBytes = totalDownloaded.get()
+            if (segBytes > 0) addDownloadedBytes(-segBytes)
+            // 进度同步退回阶段起点：单线程重下会从 0 重新推进 percent，
+            // 若保留分片阶段的高位进度，进度条会先满后退。
+            if (sectionId > 0) {
+                setDownloadProgress(sectionId, baseProgress, state ?: "下载中", 0L, totalSize)
+            }
             return downFileSpeedSingle(url, file, client, headers, totalSize, sectionId, baseProgress, endProgress)
         }
 
@@ -1454,6 +1519,10 @@ class DownloadService : Service() {
         }
         var bufferedSink: BufferedSink? = null
         try {
+            // 审计 M11-f：原实现不校验 HTTP 状态码，404/412 的错误页会被当成弹幕正文写进
+            // danmaku.xml，播放时表现为"弹幕全空"却又是成功状态。
+            if (!response.isSuccessful)
+                return ERR_NETWORK
             if (!resetFile(danmakuFile))
                 return ERR_FILE
 
@@ -1481,6 +1550,7 @@ class DownloadService : Service() {
         Logu.d("结束")
 
         started = false
+        batchRunning = false
         percent = -1f
         state = null
         speedStr = ""

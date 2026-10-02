@@ -9,6 +9,12 @@
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!--
+      审计 M12-c：SYSTEM_ALERT_WINDOW 只用于 Debug 版的 UETool 悬浮窗调试菜单，
+      因此只在 debug 源集声明，发布包不再索要这条高敏感权限。
+    -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <application>
         <activity
             android:name=".activity.settings.TestActivity"

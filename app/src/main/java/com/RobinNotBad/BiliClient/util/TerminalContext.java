@@ -32,6 +32,8 @@ import com.RobinNotBad.BiliClient.model.UserInfo;
 import com.RobinNotBad.BiliClient.model.VideoInfo;
 
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * @author silent碎月
@@ -263,7 +265,16 @@ public class TerminalContext {
             }
             //LiveRoom下载完成后下UserInfo
             UserInfo userInfo = UserInfoApi.getUserInfo(liveRoom.uid);
-            LivePlayInfo playInfo = livePlayInfoFuture.get();
+            // 原来是无超时的 get()：getRoomPlayInfo 一旦挂住（房间已下播、接口半死不活），
+            // 调用方会永久阻塞在一个 IO 线程上，直播页则一直转圈。
+            // 30s 足够覆盖一次连接(8s)+读(16s)并留出重试余量；超时就放弃这次预取并取消后台任务。
+            LivePlayInfo playInfo;
+            try {
+                playInfo = livePlayInfoFuture.get(30, TimeUnit.SECONDS);
+            } catch (TimeoutException e) {
+                livePlayInfoFuture.cancel(true);
+                return Result.failure(new IllegalTerminalStateException("获取直播播放信息超时（30s）"));
+            }
             LiveInfo liveInfo = new LiveInfo(userInfo, liveRoom, playInfo);
             if (saveToCache) {
                 contentLruCache.put(ContentType.Live.getTypeCode() + "_" + roomId, liveInfo);
@@ -274,12 +285,6 @@ public class TerminalContext {
         }
     }
     // ---------------------------详情页跳转功能 end---------------------------------------
-
-    /**
-     * 退出详情页的调用，所有启动详情页的Activity中需要再onDestroy的回调中调用该方法，释放自己的上下文对象
-     */
-    public void leaveDetailPage() {
-    }
 
     public Result<Reply> fetchReply(ContentType contentType, long contentId, long replyId, boolean saveToCache) {
         Result<Reply> replyResult = ReplyApi.getRootReply(contentType, contentId, replyId);
@@ -359,25 +364,6 @@ public class TerminalContext {
     }
 
 
-    public String getTerminalKey(Object item) {
-        if (item instanceof VideoInfo) {
-            VideoInfo videoInfo = (VideoInfo) item;
-            if (TextUtils.isEmpty(videoInfo.bvid)) {
-                return ContentType.Video.getTypeCode() + "_" + videoInfo.aid;
-            } else {
-                return ContentType.Video.getTypeCode() + "_" + videoInfo.bvid;
-            }
-        } else if (item instanceof ArticleInfo) {
-            return ContentType.Article.getTypeCode() + "_" + ((ArticleInfo) item).id;
-        } else if (item instanceof Dynamic) {
-            return ContentType.Dynamic.getTypeCode() + "_" + ((Dynamic) item).dynamicId;
-        } else if (item instanceof LiveInfo) {
-            return ContentType.Live.getTypeCode() + "_" + ((LiveInfo) item).getLiveRoom().roomid;
-        } else if (item instanceof Reply) {
-            Reply reply = (Reply) item;
-        }
-        return null;
-    }
     // ------------------------- 数据源上下文 end ------------------------------------
 
 

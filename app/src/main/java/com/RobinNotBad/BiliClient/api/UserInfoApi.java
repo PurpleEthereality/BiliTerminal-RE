@@ -228,10 +228,13 @@ public class UserInfoApi {
             String csrf = NetWorkUtil.getInfoFromCookie("bili_jct", SharedPreferencesUtil.getString(SharedPreferencesUtil.cookies, ""));
             if (csrf.isEmpty()) return false; // 没有 csrf 时服务端必然拒绝，不必白跑一次网络请求
             String url = "https://passport.bilibili.com/login/exit/v2";
-            Response response = NetWorkUtil.post(url, "csrf=" + csrf, NetWorkUtil.webHeaders);
-            if (!response.isSuccessful() || response.body() == null) return false;
-            // 服务端成功时返回 {"code":0,...}；返回非 0 说明会话没被失效，按失败处理
-            return new JSONObject(response.body().string()).optInt("code", -1) == 0;
+            // try-with-resources：body 为 null 或 isSuccessful() 为 false 时下面提前 return，
+            // 而 OkHttp 只在 body 读到 EOF 时才归还连接（412 风控页/5xx 很常见）。
+            try (Response response = NetWorkUtil.post(url, "csrf=" + csrf, NetWorkUtil.webHeaders)) {
+                if (!response.isSuccessful() || response.body() == null) return false;
+                // 服务端成功时返回 {"code":0,...}；返回非 0 说明会话没被失效，按失败处理
+                return new JSONObject(response.body().string()).optInt("code", -1) == 0;
+            }
         } catch (Exception e) {
             e.printStackTrace();
             return false;

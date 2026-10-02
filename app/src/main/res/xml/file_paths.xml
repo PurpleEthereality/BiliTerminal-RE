@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <root-path
-        name="root"
+    <!--
+      审计 M12-e：原来第一条是 <root-path name="root" path="" />，等于把整个文件系统根
+      （含 /data、/system、/proc）都注册进 FileProvider 的可授权范围。实际需要的只是
+      用户可自定义的下载/图片目录，因此按存储卷收窄：
+        · external-media-path path=""   → /storage/emulated/0/Android/media/<包名>/（默认下载目录）
+        · external-path path=""         → /storage/emulated/0/（用户自定义的主存储路径、Pictures）
+      两者覆盖所有「用户能选到」的保存位置，同时不再包含应用私有数据目录与系统分区。
+    -->
+    <external-media-path
+        name="ext_media_root"
+        path="" />
+    <external-path
+        name="storage_root"
         path="" />
     <external-files-path
         name="ext_files"

@@ -473,7 +473,7 @@ public class PlayerApi {
                 intent.setClassName(context.getString(R.string.player_package_mtv),
                         "com.xinxiangshicheng.wearbiliplayer.cn.player.PlayerActivity");
                 intent.setAction(Intent.ACTION_VIEW);
-                intent.putExtra("cookie", SharedPreferencesUtil.getString("cookies", ""));
+                intent.putExtra("cookie", buildPlayerCookie());
                 intent.putExtra("mode", (playerData.isLocal() ? "2" : "0"));
                 intent.putExtra("url", playerData.videoUrl);
                 intent.putExtra("danmaku", playerData.danmakuUrl);
@@ -497,7 +497,7 @@ public class PlayerApi {
                     intent.setData(Uri.parse(playerData.videoUrl));
 
                     Map<String, String> headers = new HashMap<>();
-                    headers.put("Cookie", SharedPreferencesUtil.getString("cookies", ""));
+                    headers.put("Cookie", buildPlayerCookie());
                     headers.put("Referer", "https://www.bilibili.com/");
                     intent.putExtra("cookie", (Serializable) headers);
                     intent.putExtra("agent", NetWorkUtil.USER_AGENT_WEB);
@@ -512,6 +512,37 @@ public class PlayerApi {
                 break;
         }
         return intent;
+    }
+
+    /**
+     * 允许跨进程传给外部播放器的 Cookie 键（白名单）。
+     *
+     * 审计 S9：原来直接把 SharedPreferences 里的完整 Cookie 串塞进 Intent extra，
+     * 而 Intent extra 会跨进程交给用户安装的任意第三方播放器。完整 Cookie 里含
+     * · {@code SESSDATA} —— 长期有效的账号凭证；
+     * · {@code bili_jct} —— 写操作（发评论、改收藏、改设置）用的 CSRF token。
+     * 也就是说任何被选作播放器的应用读一下 extra 就能完整接管账号。
+     * 这与本项目 {@code allowBackup="false"}` + 备份规则专门排除 SharedPreferences
+     * （理由写明"一旦导出等于账号被接管"）的安全约定自相矛盾。
+     *
+     * 播放只需要过 CDN 鉴权，下列几个键足够；{@code bili_jct} 与 {@code DedeUserID}
+     * 对播放没有任何作用，一律不外传。
+     */
+    private static final String[] PLAYBACK_COOKIE_KEYS = {
+            "SESSDATA", "buvid3", "buvid4", "bili_ticket"
+    };
+
+    /** 按白名单裁剪出最小播放凭证串（见 {@link #PLAYBACK_COOKIE_KEYS}）。 */
+    private static String buildPlayerCookie() {
+        String all = SharedPreferencesUtil.getString("cookies", "");
+        StringBuilder sb = new StringBuilder();
+        for (String key : PLAYBACK_COOKIE_KEYS) {
+            String value = NetWorkUtil.getInfoFromCookie(key, all);
+            if (value.isEmpty()) continue;
+            if (sb.length() > 0) sb.append("; ");
+            sb.append(key).append('=').append(value);
+        }
+        return sb.toString();
     }
 
     public static Uri getVideoUri(Context context, String path) {

@@ -139,7 +139,12 @@ public class NetWorkUtil {
                     .dns(new Inet4Selector())
                     .pingInterval(8, TimeUnit.SECONDS)
                     .connectTimeout(8, TimeUnit.SECONDS)
-                    .readTimeout(16, TimeUnit.SECONDS).build());
+                    .readTimeout(16, TimeUnit.SECONDS)
+                    .writeTimeout(16, TimeUnit.SECONDS).build());
+            // 有意不设 callTimeout：本实例是全 App 唯一的 OkHttpClient，既跑普通 API，也跑
+            // DownloadActivity / UpdateManager 的大文件流式下载；callTimeout 覆盖"整个调用含读完 body"，
+            // 一旦设置就会把耗时正常的长下载一并掐断。单次调用的时长上限交给
+            // connectTimeout/readTimeout，以及下载侧自己的进度/取消逻辑。
         }
         return INSTANCE.get();
     }
@@ -317,6 +322,11 @@ public class NetWorkUtil {
                 
             } catch (IOException e) {
                 lastException = e;
+                // 调用方主动取消时（OkHttp 抛 IOException("Canceled")）重试没有意义：
+                // 结果已经没人要了，重试只会再发一次请求、再占一条连接，而且新 call 未必继承取消状态。
+                if ("Canceled".equals(e.getMessage())) {
+                    throw e;
+                }
                 Logu.d("DoctypeRetry", "网络异常，第" + attempt + "次重试: " + e.getMessage());
             }
             
@@ -387,11 +397,23 @@ public class NetWorkUtil {
     }
 
 
+    /**
+     * 从 Cookie 串里取指定键对应的值，取不到返回空串。
+     *
+     * 审计 M1：原实现是
+     * <pre>if (i.contains(name + "=")) return i.substring(name.length() + 1);</pre>
+     * 匹配用子串、取值用前缀裁剪，两者并不一致：
+     * 键名出现在条目中间时（例如查 SESSDATA 而条目是 {@code x_SESSDATA=abc}）也会命中，
+     * 但 substring 是按 name 的长度从头切的，切回来的是错位的垃圾串；
+     * 条目带前导空格时同样错位。这里改为严格按 "key=" 前缀比对。
+     */
     public static String getInfoFromCookie(String name, String cookie) {
-        String[] cookies = cookie.split("; ");
-        for (String i : cookies) {
-            if (i.contains(name + "="))
-                return i.substring(name.length() + 1);
+        if (name == null || name.isEmpty() || cookie == null || cookie.isEmpty()) return "";
+        String prefix = name + "=";
+        for (String i : cookie.split(";")) {
+            String item = i.trim();
+            if (item.startsWith(prefix))
+                return item.substring(prefix.length());
         }
         return "";
     }

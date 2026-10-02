@@ -13,7 +13,9 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 //搜索API 自己写的
 //逐渐感觉拆json是个很爽的事（
@@ -21,18 +23,36 @@ import java.util.List;
 
 public class SearchApi {
 
-    public static String seid = "";
-    public static String search_keyword = "";
+    /**
+     * seid 是 B 站为一次搜索会话下发的分页标记，翻页时要原样带回。
+     * <p>
+     * 早先它是两个全局静态字段（seid + search_keyword）：同时打开两个搜索页时，
+     * 后发起的那一页会把关键词和 seid 顶掉，前一页再翻页就会带着别人的关键词/seid 去请求（结果串页，
+     * 而且 seid 与关键词不匹配时 B 站可能直接返回空列表）。现在按关键词隔离，
+     * 并用访问序 LRU 限制条目数，避免用户搜过多少词就常驻多少条。
+     */
+    private static final int MAX_SEID_ENTRIES = 16;
+    private static final LinkedHashMap<String, String> SEID_BY_KEYWORD =
+            new LinkedHashMap<String, String>(MAX_SEID_ENTRIES, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+                    return size() > MAX_SEID_ENTRIES;
+                }
+            };
+
+    private static synchronized String getSeid(String keyword) {
+        String seid = SEID_BY_KEYWORD.get(keyword);
+        return seid == null ? "" : seid;
+    }
+
+    private static synchronized void putSeid(String keyword, String seid) {
+        if (seid != null && !seid.isEmpty()) SEID_BY_KEYWORD.put(keyword, seid);
+    }
 
     public static JSONArray search(String keyword, int page) throws IOException, JSONException {
-        if (!search_keyword.equals(keyword)) {
-            search_keyword = keyword;
-            seid = "";
-        }
-
         String url = "https://api.bilibili.com/x/web-interface/wbi/search/all/v2?";
         url += "page=" + page +
-                "&keyword=" + URLEncoder.encode(search_keyword, "UTF-8") + "&seid=" + seid;
+                "&keyword=" + URLEncoder.encode(keyword, "UTF-8") + "&seid=" + getSeid(keyword);
 
         JSONObject all = NetWorkUtil.getJson(ConfInfoApi.signWBI(url)); // 得到一整个json
 
@@ -40,7 +60,9 @@ public class SearchApi {
             return null;
         JSONObject data = all.getJSONObject("data"); // 搜索列表中的data项又是一个json，把它提出来
 
-        seid = data.getString("seid");
+        // optString 而非 getString：个别风控/降级响应里没有 seid 字段，getString 会抛 JSONException
+        // 把整页搜索结果一起带走
+        putSeid(keyword, data.optString("seid", ""));
 
         if (data.has("result") && !data.isNull("result"))
             return data.getJSONArray("result"); // 其实这还不是我们要的结果，下面的函数对它进行再次拆解 这里做了判空
@@ -49,14 +71,9 @@ public class SearchApi {
     }
 
     public static Object searchType(String keyword, int page, String type) throws IOException, JSONException {
-        if (!search_keyword.equals(keyword)) {
-            search_keyword = keyword;
-            seid = "";
-        }
-
         String url = "https://api.bilibili.com/x/web-interface/wbi/search/type?";
         url += "page=" + page +
-                "&keyword=" + URLEncoder.encode(search_keyword, "UTF-8") + "&search_type=" + type + "&seid=" + seid;
+                "&keyword=" + URLEncoder.encode(keyword, "UTF-8") + "&search_type=" + type + "&seid=" + getSeid(keyword);
 
         JSONObject all = NetWorkUtil.getJson(ConfInfoApi.signWBI(url)); // 得到一整个json
 
@@ -64,7 +81,7 @@ public class SearchApi {
             return null;
         JSONObject data = all.getJSONObject("data"); // 搜索列表中的data项又是一个json，把它提出来
 
-        seid = data.getString("seid");
+        putSeid(keyword, data.optString("seid", ""));
 
         if (data.has("result") && !data.isNull("result"))
             return data.get("result"); // 其实这还不是我们要的结果，下面的函数对它进行再次拆解 这里做了判空

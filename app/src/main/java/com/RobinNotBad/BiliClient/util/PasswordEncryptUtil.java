@@ -2,6 +2,7 @@ package com.RobinNotBad.BiliClient.util;
 
 import android.util.Base64;
 
+import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.spec.X509EncodedKeySpec;
@@ -26,7 +27,7 @@ public class PasswordEncryptUtil {
         PublicKey publicKey = keyFactory.generatePublic(keySpec);
         Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
         cipher.init(Cipher.ENCRYPT_MODE, publicKey);
-        byte[] encryptedBytes = cipher.doFinal((hash + password).getBytes());
+        byte[] encryptedBytes = cipher.doFinal((hash + password).getBytes(StandardCharsets.UTF_8));
         return Base64.encodeToString(encryptedBytes, Base64.NO_WRAP);
     }
 }

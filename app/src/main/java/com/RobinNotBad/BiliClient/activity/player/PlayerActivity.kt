@@ -1331,19 +1331,21 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
 
     private fun downdanmuOld() {
         try {
-            val response = NetWorkUtil.get(danmaku_url, NetWorkUtil.webHeaders)
-            var bufferedSink: BufferedSink? = null
-            try {
-                if (!danmakuFile!!.exists()) danmakuFile!!.createNewFile()
-                val sink = danmakuFile!!.sink()
-                val decompressBytes = NetWorkUtil.decompress(response.body!!.bytes())
-                bufferedSink = sink.buffer()
-                bufferedSink!!.write(decompressBytes)
-                bufferedSink!!.close()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            } finally {
-                bufferedSink?.close()
+            // use{} 保证 createNewFile()/sink() 抛异常提前跳出时连接也归还
+            NetWorkUtil.get(danmaku_url, NetWorkUtil.webHeaders).use { response ->
+                var bufferedSink: BufferedSink? = null
+                try {
+                    if (!danmakuFile!!.exists()) danmakuFile!!.createNewFile()
+                    val sink = danmakuFile!!.sink()
+                    val decompressBytes = NetWorkUtil.decompress(response.body!!.bytes())
+                    bufferedSink = sink.buffer()
+                    bufferedSink!!.write(decompressBytes)
+                    bufferedSink!!.close()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    bufferedSink?.close()
+                }
             }
             prepareDanmaku { it.loadFromXmlFile(danmakuFile!!.toString()) }
         } catch (e: Exception) {

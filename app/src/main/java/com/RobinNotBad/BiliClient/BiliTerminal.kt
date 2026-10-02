@@ -7,8 +7,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import com.RobinNotBad.BiliClient.activity.base.InstanceActivity
 import com.RobinNotBad.BiliClient.activity.settings.UpdateActivity
 import com.RobinNotBad.BiliClient.activity.user.info.UserInfoActivity
@@ -22,6 +24,7 @@ import com.RobinNotBad.BiliClient.util.PerformanceManager
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.RobinNotBad.BiliClient.util.TerminalContext
 import com.RobinNotBad.BiliClient.util.UpdateManager
+import me.ele.uetool.UETool
 import org.json.JSONException
 import java.io.IOException
 import java.lang.ref.WeakReference
@@ -114,8 +117,60 @@ class BiliTerminal : Application() {
         fun getVersion(): Int =
             context!!.packageManager.getPackageInfo(context!!.packageName, 0).versionCode
 
+        /**
+         * 是否 Debug 构建。
+         * 用 BuildConfig.DEBUG（编译期常量）而不是比较 BUILD_TYPE 字符串：前者能被 R8
+         * 常量折叠，从而把 debug-only 分支整体 strip；后者是运行期判断，永远消除不掉（审计 M12-d）。
+         */
         @JvmStatic
-        fun isDebugBuild(): Boolean = "debug" == BuildConfig.BUILD_TYPE
+        fun isDebugBuild(): Boolean = BuildConfig.DEBUG
+
+        /**
+         * UETool 悬浮窗请求码（入口 Activity onActivityResult 使用）。
+         *
+         * 原先这几个 UETool 辅助方法挂在 [BiliTerminalApp] 上——那是个从未被实例化的
+         * Application 死类（Manifest 的 Application 一直是 [BiliTerminal]），
+         * 只有 SplashActivity 借它的 companion 当工具类用（审计 M13-e）。
+         * 现收拢到真正的 Application 类里，死类已删除。
+         */
+        @JvmStatic
+        val REQUEST_OVERLAY_PERMISSION_FOR_UETOOL = 10086
+
+        /**
+         * 检查是否拥有系统悬浮窗绘制权限（兼容 Android M 以下）。
+         * @param context 任意可用 Context（通常传 Activity）
+         */
+        @JvmStatic
+        fun canDrawOverlaysCompat(context: Context): Boolean {
+            return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context)
+        }
+
+        /** 跳转到系统设置页申请悬浮窗权限。 */
+        @JvmStatic
+        fun requestOverlayPermission(activity: Activity) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !canDrawOverlaysCompat(activity)) {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${activity.packageName}")
+                )
+                activity.startActivityForResult(intent, REQUEST_OVERLAY_PERMISSION_FOR_UETOOL)
+            }
+        }
+
+        /**
+         * 显示 UETool 调试悬浮窗（仅 Debug 构建有真实实现；Release 依赖 uetool-no-op 空实现）。
+         */
+        @JvmStatic
+        fun showUEToolMenu() {
+            if (isDebugBuild()) {
+                try {
+                    UETool.showUETMenu()
+                } catch (e: Exception) {
+                    // 兜底：防止 WindowManager / Context 异常导致应用崩溃
+                    e.printStackTrace()
+                }
+            }
+        }
 
         @JvmStatic
         fun jumpToVideo(context: Context, aid: Long) {

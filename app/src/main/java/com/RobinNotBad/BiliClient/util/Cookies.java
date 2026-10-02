@@ -16,10 +16,11 @@ public class Cookies {
         cookieMap.clear();
         String[] cookies = cookieString.split("; ");
         for (String cookie : cookies) {
-            String[] parts = cookie.split("=");
-            if (parts.length == 2) {
-                cookieMap.put(parts[0], parts[1]);
-            }
+            // 必须按第一个 '=' 切分：Cookie 值本身允许含 '='（如 buvid3、bili_ticket 的 base64 填充），
+            // 用 split("=") + length==2 会把这类 Cookie 整体丢弃（审计 S2 的漏修点）
+            int eq = cookie.indexOf('=');
+            if (eq <= 0 || eq == cookie.length() - 1) continue; // 无 '='、空键或空值都跳过
+            cookieMap.put(cookie.substring(0, eq).trim(), cookie.substring(eq + 1));
         }
     }
 

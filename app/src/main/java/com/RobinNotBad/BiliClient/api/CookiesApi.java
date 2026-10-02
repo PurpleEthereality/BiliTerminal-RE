@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
@@ -31,6 +32,8 @@ import java.util.Random;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+
+import okhttp3.Response;
 
 /**
  * Cookies相关API
@@ -135,9 +138,9 @@ public class CookiesApi {
     public static String hmacSha256(String key, String message)
             throws NoSuchAlgorithmException, InvalidKeyException {
         Mac sha256Hmac = Mac.getInstance("HmacSHA256");
-        SecretKeySpec secretKey = new SecretKeySpec(key.getBytes(), "HmacSHA256");
+        SecretKeySpec secretKey = new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         sha256Hmac.init(secretKey);
-        byte[] hashBytes = sha256Hmac.doFinal(message.getBytes());
+        byte[] hashBytes = sha256Hmac.doFinal(message.getBytes(StandardCharsets.UTF_8));
         StringBuilder hexHash = new StringBuilder();
         for (byte b : hashBytes) {
             String hex = Integer.toHexString(0xff & b);
@@ -155,7 +158,12 @@ public class CookiesApi {
     }};
 
     public static void checkCookies() throws JSONException, IOException {
-        NetWorkUtil.get("https://www.bilibili.com/");
+        // 这次请求只为让服务端下发 Set-Cookie，响应内容不需要。
+        // 不读 body 必须显式关闭：OkHttp 只在 body 读到 EOF 时才把连接还给连接池。
+        // 启动、登录、切换账号都会走这里，漏一条就是稳定漏一个连接。
+        try (Response ignored = NetWorkUtil.get("https://www.bilibili.com/")) {
+            // 故意留空
+        }
 
         Cookies cookies = NetWorkUtil.getCookies();
 

@@ -1,6 +1,5 @@
 package com.RobinNotBad.BiliClient.util;
 
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
@@ -8,14 +7,10 @@ import androidx.core.util.Consumer;
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
 
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 import kotlin.Unit;
 import kotlin.coroutines.Continuation;
@@ -37,33 +32,12 @@ public class CenterThreadPool {
     private static final boolean FORCE_DISABLED = false;
     private static final Handler MAIN_THREAD_HANDLER = new Handler(Looper.getMainLooper());
     private static final CoroutineScope COROUTINE_SCOPE;
-    private static final AtomicReference<ExecutorService> THREAD_POOL;
-
-    private static ExecutorService getThreadPoolInstance() {
-        if (THREAD_POOL == null) return null;
-        int bestThreadPoolSize = Runtime.getRuntime().availableProcessors();
-        ThreadPoolExecutor pool = new ThreadPoolExecutor(
-                bestThreadPoolSize / 2,
-                bestThreadPoolSize * 2,
-                60,
-                TimeUnit.SECONDS,
-                new ArrayBlockingQueue<>(20)
-        );
-        if (THREAD_POOL.compareAndSet(null, pool)) {
-            return pool;
-        }
-        // 如果CAS失败说明其他线程已设置，直接返回现有值
-        return THREAD_POOL.get();
-    }
 
     static {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            COROUTINE_SCOPE = null;
-            THREAD_POOL = new AtomicReference<>();
-        } else {
-            COROUTINE_SCOPE = CoroutineScopeKt.CoroutineScope((CoroutineContext) Dispatchers.getIO());
-            THREAD_POOL = null;
-        }
+        // 原来这里按 SDK_INT < 17 分出一个裸线程池分支；本项目 minSdk 24，该分支不可达，
+        // 连带 THREAD_POOL 字段、getThreadPoolInstance()（首行拿到 null 就返回）以及
+        // run() 里的 `else if (THREAD_POOL != null)` 全是死代码，已一并删除。
+        COROUTINE_SCOPE = CoroutineScopeKt.CoroutineScope((CoroutineContext) Dispatchers.getIO());
     }
 
 
@@ -74,32 +48,25 @@ public class CenterThreadPool {
      */
     public static void run(Runnable runnable) {
         try {
-            //能用协程用协程
-            if (COROUTINE_SCOPE != null) {
-                BuildersKt.launch(COROUTINE_SCOPE, EmptyCoroutineContext.INSTANCE, CoroutineStart.DEFAULT, (CoroutineScope scope, Continuation<? super Unit> continuation) -> {
-                    try {
-                        runnable.run();
-                    } catch (Throwable e) {
-                        // 协程体内未捕获异常没有 CoroutineExceptionHandler 兜底，
-                        // 会冒泡到 Thread.setDefaultUncaughtExceptionHandler（ErrorCatch），直接杀掉整个应用。
-                        // 后台任务失败不应该拖垮 App，这里兜住并只记日志。
-                        MsgUtil.err(e);
-                    }
-                    return Unit.INSTANCE;
-                });
-                //协程不可用时尝试以原生线程池运行
-            } else if (THREAD_POOL != null) {
-                ExecutorService service = getThreadPoolInstance();
-                if (service != null) service.submit(runnable);
-                else new Thread(runnable).start();
-            } else {
-                //都不可用再开线程
-                new Thread(runnable).start();
-            }
+            BuildersKt.launch(COROUTINE_SCOPE, EmptyCoroutineContext.INSTANCE, CoroutineStart.DEFAULT, (CoroutineScope scope, Continuation<? super Unit> continuation) -> {
+                try {
+                    runnable.run();
+                } catch (Throwable e) {
+                    // 协程体内未捕获异常没有 CoroutineExceptionHandler 兜底，
+                    // 会冒泡到 Thread.setDefaultUncaughtExceptionHandler（ErrorCatch），直接杀掉整个应用。
+                    // 后台任务失败不应该拖垮 App，这里兜住并只记日志。
+                    MsgUtil.err(e);
+                }
+                return Unit.INSTANCE;
+            });
         } catch (Throwable e) {
-            //最后再放手一博
-            //new Thread(runnable).start();
-            e.printStackTrace();
+            // 调度本身失败（极小概率）时再放手一博：原先这里只是把 new Thread 注释掉，
+            // 等于任务被静默丢弃；现在真的开一条裸线程兜底。
+            try {
+                new Thread(runnable).start();
+            } catch (Throwable t) {
+                MsgUtil.err(e);
+            }
         }
     }
 

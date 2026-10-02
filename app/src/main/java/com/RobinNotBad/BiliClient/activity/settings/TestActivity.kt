@@ -177,7 +177,12 @@ class TestActivity : BaseActivity() {
                     val response = NetWorkUtil.postJson("https://api.deepseek.com/chat/completions",
                         requestJson.toString(),
                         deepseekHeaders)
-                    val body = response.body ?: return@run
+                    val body = response.body
+                    // 提前 return / 循环内抛异常都要归还连接（body 读尽才自动归还）
+                    if (body == null) {
+                        response.close()
+                        return@run
+                    }
                     val source = body.source()
 
                     MsgUtil.showMsg("得到响应，请继续等待！")
@@ -186,35 +191,37 @@ class TestActivity : BaseActivity() {
 
                     val contentBuilder = StringBuilder()
 
-                    while (!source.exhausted()) {
-                        val line = source.readUtf8Line() ?: break
-                        Log.d("debug-deepseek", line)
+                    try {
+                        while (!source.exhausted()) {
+                            val line = source.readUtf8Line() ?: break
+                            Log.d("debug-deepseek", line)
 
-                        if (line.startsWith("data:")) {
-                            val jsonData = line.substring(6).trim()
-                            if ("[DONE]" == jsonData) break
+                            if (line.startsWith("data:")) {
+                                val jsonData = line.substring(6).trim()
+                                if ("[DONE]" == jsonData) break
 
-                            val data = JSONObject(jsonData)
-                            val choices = data.getJSONArray("choices")
-                            val delta = choices.getJSONObject(0).getJSONObject("delta")
+                                val data = JSONObject(jsonData)
+                                val choices = data.getJSONArray("choices")
+                                val delta = choices.getJSONObject(0).getJSONObject("delta")
 
-                            val deltaContent: String
-                            if (!delta.isNull("reasoning_content")) {
-                                deltaContent = delta.optString("reasoning_content")
-                            } else if (!delta.isNull("content")) {
-                                if (reasoning) {
-                                    reasoning = false
-                                    runOnUiThread { output.append("\n\n*思考结束*\n\n") }
-                                }
-                                deltaContent = delta.optString("content")
-                            } else deltaContent = ""
+                                val deltaContent: String
+                                if (!delta.isNull("reasoning_content")) {
+                                    deltaContent = delta.optString("reasoning_content")
+                                } else if (!delta.isNull("content")) {
+                                    if (reasoning) {
+                                        reasoning = false
+                                        runOnUiThread { output.append("\n\n*思考结束*\n\n") }
+                                    }
+                                    deltaContent = delta.optString("content")
+                                } else deltaContent = ""
 
-                            if (!reasoning) contentBuilder.append(deltaContent)
-                            runOnUiThread { output.append(deltaContent) }
+                                if (!reasoning) contentBuilder.append(deltaContent)
+                                runOnUiThread { output.append(deltaContent) }
+                            }
                         }
+                    } finally {
+                        response.close()
                     }
-
-                    response.close()
 
                     val output_str = contentBuilder.toString()
                     if (output_str.isNotEmpty()) {

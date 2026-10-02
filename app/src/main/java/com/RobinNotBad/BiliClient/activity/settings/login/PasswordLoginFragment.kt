@@ -21,6 +21,7 @@ import com.RobinNotBad.BiliClient.api.CookiesApi
 import com.RobinNotBad.BiliClient.api.LoginApi
 import com.RobinNotBad.BiliClient.util.AccountManager
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
+import com.RobinNotBad.BiliClient.util.Logu
 import com.RobinNotBad.BiliClient.util.NetWorkUtil
 import com.RobinNotBad.BiliClient.util.PasswordEncryptUtil
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
@@ -211,12 +212,22 @@ class PasswordLoginFragment : Fragment() {
     }
 
     private fun handleLoginSuccess(loginJson: JSONObject) {
-        CenterThreadPool.runOnUiThread {
+        // 审计 S8：登录成功后的收尾里夹着同步阻塞网络请求（LoginApi.requestSSOs 直接走 OkHttp
+        // execute()），原来整段包在 runOnUiThread 里，等于在 UI 线程上做网络 + 磁盘 IO，
+        // 弱网下界面卡死甚至 ANR。现在把 IO 放工作线程，只有真正触碰 UI 的部分
+        // （startActivity / finish）回到主线程；setStatusText 内部已自带 runOnUiThread。
+        CenterThreadPool.run {
             try {
                 val cookies = SharedPreferencesUtil.getString(SharedPreferencesUtil.cookies, "")
 
-                SharedPreferencesUtil.putLong(SharedPreferencesUtil.mid, NetWorkUtil.getInfoFromCookie("DedeUserID", cookies).toLong())
-                SharedPreferencesUtil.putString(SharedPreferencesUtil.csrf, NetWorkUtil.getInfoFromCookie("bili_jct", cookies))
+                SharedPreferencesUtil.putLong(
+                    SharedPreferencesUtil.mid,
+                    NetWorkUtil.getInfoFromCookie("DedeUserID", cookies).toLong()
+                )
+                SharedPreferencesUtil.putString(
+                    SharedPreferencesUtil.csrf,
+                    NetWorkUtil.getInfoFromCookie("bili_jct", cookies)
+                )
 
                 val loginData = loginJson.optJSONObject("data")
                 val tokenInfo = if (loginData != null) loginData.optJSONObject("token_info") else null
@@ -231,16 +242,22 @@ class PasswordLoginFragment : Fragment() {
                 AccountManager.saveCurrentAccount()
                 NetWorkUtil.refreshHeaders()
 
+                // SSO 上报失败不影响登录结果，但不能再用空 catch 静默吞掉（异常连日志都没有）
                 try {
                     LoginApi.requestSSOs()
-                } catch (ignored: Exception) {
+                } catch (e: Exception) {
+                    Logu.e("PasswordLogin", "上报 SSO 失败：${e.message}")
                 }
 
-                val instance: InstanceActivity? = BiliTerminal.getInstanceActivityOnTop()
-                if (instance != null && !instance.isDestroyed) instance.finish()
+                CenterThreadPool.runOnUiThread {
+                    val instance: InstanceActivity? = BiliTerminal.getInstanceActivityOnTop()
+                    if (instance != null && !instance.isDestroyed) instance.finish()
 
-                startActivity(Intent(requireContext(), SplashActivity::class.java))
-                if (isAdded) requireActivity().finish()
+                    if (isAdded) {
+                        startActivity(Intent(requireContext(), SplashActivity::class.java))
+                        requireActivity().finish()
+                    }
+                }
             } catch (e: Exception) {
                 setStatusText("登录成功但处理异常: " + e.message)
             }

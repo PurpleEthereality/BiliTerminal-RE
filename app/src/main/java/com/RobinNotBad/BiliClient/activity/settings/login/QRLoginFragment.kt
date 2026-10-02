@@ -268,6 +268,8 @@ class QRLoginFragment : Fragment() {
         try {
             val response = LoginApi.getTVLoginState()
             if (!isAdded) {
+                // 提前 return 时 body 还没读，必须显式关闭，否则连接不归还
+                response.close()
                 this@QRLoginFragment.timer?.cancel()
                 return
             }
@@ -366,6 +368,8 @@ class QRLoginFragment : Fragment() {
     private fun detectWebLoginState() {
         val response = LoginApi.getLoginState()
         if (!isAdded) {
+            // 提前 return 时 body 还没读，必须显式关闭，否则连接不归还
+            response.close()
             this@QRLoginFragment.timer?.cancel()
             return
         }
@@ -410,7 +414,8 @@ class QRLoginFragment : Fragment() {
                 LoginApi.requestSSOs()
                 if (loginJson.getJSONObject("data").has("url")) {
                     try {
-                        NetWorkUtil.get(loginJson.getJSONObject("data").optString("url"))
+                        // 只用来触发服务端记录，响应内容无用；不读 body 必须显式关闭
+                        NetWorkUtil.get(loginJson.getJSONObject("data").optString("url")).close()
                     } catch (ignored: Throwable) {
                     }
                 }
