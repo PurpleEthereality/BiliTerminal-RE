@@ -229,7 +229,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 ### 6.3 API 层组织
 
-`api/` 目录下约 40 个类，每个对应一个 B 站功能域，**全部**通过 `NetWorkUtil` 发请求、用 `org.json` 手工拆包。没有 Retrofit、没有数据类映射（除 `model/` 下少量 POJO）。
+`api/` 目录下约 41 个类，每个对应一个 B 站功能域，**全部**通过 `NetWorkUtil` 发请求、用 `org.json` 手工拆包。没有 Retrofit、没有数据类映射（除 `model/` 下少量 POJO）。
 
 ### 6.4 明文流量与凭据保护（26.09.13 加固，改网络/清单前必读）
 
@@ -324,6 +324,31 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 普通播放器与短视频的弹幕栈是两套（前者内联，后者走 `DanmakuManager`），统一它们是合并两个播放器时**风险最低、收益最高的第一步**，但要先解决上面第 1 条的并发约束。
 
 3. **`DanmakuManager` 的位置回调在"播放器未就绪/正在重建"时必须返回负数**。`updateTimer` 跑在 `DanmakuView` 的渲染线程上，与主线程重建 `IjkMediaPlayer` 的动作并发；`IjkMediaPlayer` 的 native 层不是线程安全的，窗口期读到的脏位置一旦灌进 `DanmakuTimer`，**整批弹幕会被判定为"已过期"而一条都不显示**，且因为是竞态所以**间歇性**出现（26.09.10 真实踩过：合并弹幕栈时删掉了原 `if (ijkPlayer != null && isPrepared)` 守卫，导致"普通视频弹幕间歇性消失"）。对应的两个 `isPrepared` 字段也因此加了 `@Volatile`。
+
+---
+
+### 7.5 后台播放服务（`service/PlaybackService.kt`，26.09.25 新增）
+
+`PlayerActivity` 退到后台且用户开了设置项 `player_background`（字面量，见 `SettingsKeys.PLAYER_BACKGROUND`）时，
+`onPause` 会通过 `PlaybackService.start(this, this)` 起一个 `foregroundServiceType="mediaPlayback"` 的前台服务挂通知栏遥控。
+
+- **播放器实例仍归 `PlayerActivity` 持有**，Service 只通过 `WeakReference<PlayerActivity>` 反查状态与下发指令
+  （`serviceTogglePlay`/`serviceStopPlayback`/`serviceReportNow` 等桥接方法定义在 `PlayerActivity` 里）。这不是 MediaSession 方案：
+  通知是普通 `NotificationCompat.Builder` + 两个 `PendingIntent.getService` 自定义 action。
+- **通知 id 1028（播放）、1027 是 `DownloadService`**；渠道 `playback_channel` 与下载的 `biliterminal_download` 分开。
+- **`onStartCommand` 第一行必须 `startForeground`**（Android 5 秒规则）；`FOREGROUND_SERVICE_MEDIA_PLAYBACK` 权限与
+  Manifest 里的 `<service ... android:foregroundServiceType="mediaPlayback">` 是运行期硬性要求（Android 14 起），删任一个都会崩。
+- **TimerTask 必须整体 try/catch**：Timer 的 `TimerTask` 抛未捕获异常会**永久终止整个 Timer**，进度通知从此静默失效。
+- 已知限制：点通知走 `getLaunchIntentForPackage`（本项目 = `SplashActivity`）+ `FLAG_ACTIVITY_REORDER_TO_FRONT`，
+  与上游一致；`PlayerActivity` 没有 `launchMode`，所以 `onNewIntent` 里那句 `finish()` 是死代码，未改动。
+  当前版本**没有 wakelock**（`WAKE_LOCK` 权限未声明、`IjkMediaPlayer.setWakeMode` 未调用），熄屏能否持续播放待真机确认。
+
+### 7.6 更新日志页按版本分页（`activity/settings/UpdateHistoryActivity.kt`，26.09.25 新增）
+
+`res/values/strings.xml` 的 `R.array.update_log_current`（首行 = 当前版本）与 `R.array.update_history_log`
+（每个 `## YYYY-MM-DD` 段 = 一个历史版本）是**唯一数据源**，不要另建静态日志表（上游曾有两份互相漂移的日志源）。
+`SplashActivity` 在覆盖安装后的首次启动会自动打开该页（只弹一次，存 versionCode），
+旧「更新公告」全屏弹页（`AppInfoApi.check` 里那句 `MsgUtil.showText`）已删除以避免同一次升级弹两个内容重复的页面。
 
 ---
 
@@ -567,9 +592,9 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 ---
 
-## 9. API 层映射表（40 个类，改功能时定位用）
+## 9. API 层映射表（41 个类，改功能时定位用）
 
-按功能域分组。`api/` 下 38 个 Java + 2 个 Kotlin（`HotSearchApi.kt`、`ShortVideoFeedApi.kt`）。
+按功能域分组。`api/` 下 39 个 Java + 2 个 Kotlin（`HotSearchApi.kt`、`ShortVideoFeedApi.kt`）。
 
 ### 视频与播放
 
@@ -582,7 +607,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 | `RecommendApi` | 推荐/热门/入站必刷/相关 | `getRecommend`、`getPopular`、`getPrecious`、`getRelated` |
 | `RankingApi` | 排行榜 | `getRanking` |
 | `HotSearchApi.kt` | 热搜 | `getHotSearch`、`parseHotSearch` |
-| `SearchApi` | 搜索/建议/默认内容 | `search`、`searchType`、`getSearchSuggestions`、`getDefaultSearchContent` |
+| `SearchApi` | 搜索/建议/默认内容 | `search`、`searchType`、`getBangumiFromSearchResult`、`getSearchSuggestions`、`getDefaultSearchContent` |
 | `HistoryApi` | 历史记录 | `getHistory`、`reportHistory`、`deleteHistory` |
 | `WatchLaterApi` | 稍后再看 | `getWatchLaterList`、`add`、`delete` |
 | `ShortVideoFeedApi.kt` | 短视频 Feed | `fetchFeedPage`、`fetchVideoUrl` |
@@ -608,7 +633,8 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 | `ReplyApi` | 评论 | `getReplies`、`getRootReply`、`sendReply`、`likeReply`、`uploadReplyImage` |
 | `PrivateMsgApi` | 私信 | `getPrivateMsg`、`getSessionsList`、`sendMsg` |
 | `MessageApi` | 消息中心/未读/消息设置 | `getUnread`、`checkMessageUnread`、`getLikeMsg/getReplyMsg/getAtMsg`、`getSystemMsg` |
-| `EmoteApi` | 表情包 | `getEmotes`、`getMyPackages`、`setPackage`、`analyzeEmotePackages` |
+| `EmoteApi` | 表情包 | `getEmotes`、`getEmoteTexts`、`getMyPackages`、`setPackage`、`analyzeEmotePackages` |
+| `ImageApi` | 发动态/评论配图（选图压缩 → 上传图床） | `prepareImage`、`uploadImage`、`sniffImageType`（底层复用 `ReplyApi.uploadReplyImage`） |
 | `VipApi` | 大会员 | `getVipInfo`、`addExperience` |
 | `CreativeCenterApi` | 创作中心 | `getVideoStat`、`getBeUPTime` |
 | `ExpLogApi` / `CoinLogApi` / `ElectricApi` / `LoginRecordApi` | 经验/硬币/充电/登录记录流水 | 各自一个 `getXxx()` |
@@ -635,7 +661,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 ### 网络出口的 3 个例外
 
-40 个类里只有 3 处**绕过** `NetWorkUtil` 自建 Request，因此不受它的解压/重试/Cookie 管理保护：
+41 个类里只有 3 处**绕过** `NetWorkUtil` 自建 Request，因此不受它的解压/重试/Cookie 管理保护：
 
 1. `ReplyApi.java:190-208` `uploadReplyImage`（multipart，不处理 br/gzip）
 2. `UserInfoApi.java:291-303` `updateUserInfo`（自带 `decompressResponse`）

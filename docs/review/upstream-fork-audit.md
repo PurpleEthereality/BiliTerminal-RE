@@ -22,7 +22,7 @@
 
 ## 〇·附、修复状态总览
 
-> 本报告列出的缺陷项已参考上游分叉 `cyq114514/Re-BiliTerminal` 逐条修复完毕，代码分布在 16 个提交中。
+> 本报告列出的缺陷项已参考上游分叉 `cyq114514/Re-BiliTerminal` 逐条修复完毕，代码分布在 **21 个提交**中。
 > 逐条实现细节、每个子代理的取舍理由与验证记录见 **`docs/review/fork-fix-worklog.md`**。
 
 | 组 | 覆盖条目 | 提交 |
@@ -36,22 +36,28 @@
 | 搜索 / UI 生命周期 / 登录退出 | P12 / P31 / P32 / P33 | `d676a77` |
 | CI 覆盖面（E3） | 新增 PR 与主干 CI，发版前先跑单测 | `09623cd` |
 | 版本号一致性（E1）与文档纠偏 | `verifyVersionConsistency` 任务 + UpdateManager 加固 + readme/FEATURES 纠偏 | `4d88b98` `8996a1a` `f26407e` |
-| 补齐审计漏核的闪退点（P6 第 1 / 6 / 7 项的复核） | P34 / P35 / P36（P37 / P38 在修） | `8cf777a` |
+| 补齐审计漏核的闪退点（P6 第 1 / 6 / 7 项的复核） | P34 / P35 / P36 | `8cf777a` |
+| P37 / P38（动态列表后台突变、Adapter 不清图缓存） | 并入 Wave 2 动态组 | `f3-dynamic` 系列 |
 | Release 产物可追溯性（E2） | Release 说明与附件同时提供 `md5sums.txt` | `6b2dea1` `265a820` |
 | E2 判定更正 | 崩溃堆栈上传能力本项目已有、上游反而隐藏了按钮 | `a9c15e7` |
+| P6 表改判 + P34–P38 详节 + F2/F4/F5 处置 | 报告自身更新 | `dfc0a3a` |
+| 番剧进度上报全链路（P23/P24） | `reportHistoryPgc` 接线、历史列表带 epid 定位上次观看集、播放侧周期/即时上报、8 处主线程 JNI 读取清理 | `cfdf76c` |
+| F4 / F5 更新日志按版本分页 | 升级后首次启动自动展示当版日志；删除与它重复的旧「更新公告」弹页 | `79ac9a1` |
+| F2 搜索番剧 tab | `getBangumiFromSearchResult` + `SearchBangumiFragment` + 设置开关 + 容错解析 | `637ad00` |
+| F1 后台播放（S1/S2/S3） | 新增 `service/PlaybackService.kt` + Manifest 权限/声明 + 生命周期挂钩 + 设置文案 | `f1-playback` 系列 |
+| F3 三类功能补齐 | 带图发动态（`api/ImageApi.java`）/ 表情 type9 / 转发引用原作者（含视频转发） / 图文动态接口直取 | `f3` 系列 |
 | 报告与工作日志 | 本报告 + `docs/review/fork-fix-worklog.md` | `31a1d3e` `786d7ce` |
 
-**验证**：`./gradlew :app:assembleDebug :app:testDebugUnitTest` 通过，**112 个单测 0 失败 0 错误**；`verifyVersionConsistency` 在
-配置缓存开/关两种路径下均通过，且把更新日志锚点改错时会如实失败。
+**验证**：`./gradlew :app:assembleDebug :app:testDebugUnitTest` 通过，**112 个单测 0 失败 0 错误**（16 个测试类）；
+`verifyVersionConsistency` 在配置缓存开/关两种路径下均通过，且把更新日志锚点改错时会如实失败。
 
 **仍未修复**（属功能差距或需产品决策，不是"已确认缺陷"）：
 
-- **F1** 后台/熄屏继续播放、**F2** 搜索番剧、**F4** 更新后首次启动自动展示当版日志、**F5** 更新日志按版本选项卡（见 §四）。—— 这四项连同 **P23 周期上报**、**P37/P38** 已由 Wave 2 的并行子代理接手。
-- **F3** 中未做的几项：转发引用原作者、发布选项（`option` JSON）、动态置顶 / 可见范围 / 编辑、动态卡片评论数入口、话题页、图文详情接口直取。（带图发动态、表情 `type 9` 渲染已并入 Wave 2）
-- **P6 第 1 项已核实完毕**（见 P34–P38），**第 6 / 7 项也已核实完毕**（对方 26f1742 的主题是"主线程别读 `ijkPlayer.currentPosition`"，本项目仍有 8 处待改）；**P14** 经核实其修复理由在本项目不成立，未动。
-- **P23 的周期上报**（上游 `PROGRESS_REPORT_INTERVAL_MS = 15000`）与**切P即时上报**尚未接线；目前只有"退出播放器时上报"。
-- **E2** 的**远程（自动）崩溃上报**：双方都没有。—— 但需澄清：本项目**已有用户手动上传崩溃堆栈**的能力（`api/AppInfoApi.java:196 uploadStack` → `https://api.biliterminal.cn/terminal/upload/stack`，由 `activity/CatchActivity.kt:59-76` 接线），而上游反而**把这个按钮隐藏掉了**（对方 `activity/CatchActivity.java:61 btn_upload.setVisibility(View.GONE)`）。所以这一项本项目**不落后**，无需"修复"。
-- ~~**E2 的 release MD5 表**~~ ✅ **已修**（`6b2dea1`）：Release 说明与附件同时提供 `md5sums.txt`。
+- **F3 中仍未做的几项**（均为"对齐上游的功能增量"，非稳定性问题）：发布选项（`option` JSON）、动态置顶 / 可见范围 / 编辑动态、动态卡片评论数入口、`#话题#` 话题页、动态正文里的 BV/网页链接不可点击、番剧详情页的顶部季选项卡与「正在播放」标记。
+- **P6 第 1 / 6 / 7 项均已核实完毕**（见 P34–P38）；**P14** 经核实其修复理由在本项目不成立，未动。
+- **E2 的远程（自动）崩溃上报**：双方都没有。需澄清：本项目**已有用户手动上传崩溃堆栈**的能力（`api/AppInfoApi.java:196 uploadStack` → `https://api.biliterminal.cn/terminal/upload/stack`，由 `activity/CatchActivity.kt:59-76` 接线），而上游反而**把这个按钮隐藏掉了**（对方 `activity/CatchActivity.java:61 btn_upload.setVisibility(View.GONE)`）。所以这一项本项目**不落后**，无需"修复"。
+- **F1 的 wakelock**：本轮只上前台服务，未加 `WAKE_LOCK` + `IjkMediaPlayer.setWakeMode`；熄屏能否真持续播放待真机确认。
+- **本次修复全部未经真机/联网联调**（只有编译 + 单测），涉及服务端交互的项（表情 type9、带图发动态 `scene=2`、番剧心跳上报、通知栏遥控）需真机复验。高优先复验项见 `docs/review/fork-fix-worklog.md`。
 
 ## 一、对方 8 个 Release 的内容概览
 
@@ -1611,6 +1617,10 @@ if (holder instanceof DynamicHolder) ((DynamicHolder) holder).clearImageCache();
 
 **后果**：熄屏或切后台播放会被系统杀。**这对本项目（手表 + 低内存设备）是最实际的功能缺口。**
 
+> **本轮处置：✅ 已实现**（提交 `f1-playback-service` 系列）。新增 `service/PlaybackService.kt`（前台服务 `mediaPlayback` + 通知栏遥控 + 进度条 + 点通知回播放页）、`AndroidManifest.xml` 补 `FOREGROUND_SERVICE_MEDIA_PLAYBACK` 权限与 `<service>` 声明、`PlayerActivity` 加状态桥与生命周期挂钩、设置项文案改「后台/熄屏继续播放」。
+> 与上游的**有意差异**：上游 `targetSdk 26` 不受 Android 12 后台启动限制与 Android 14 `foregroundServiceType` 约束，本项目 `targetSdk 34` 两者都要处理；用 `WeakReference` 取代上游的裸静态引用；`PendingIntent` 补 `FLAG_IMMUTABLE`。
+> **尚未做**：`WAKE_LOCK` / `IjkMediaPlayer.setWakeMode`（先上线不带 wakelock 的版本，真机确认熄屏是否真持续播放后再决定）；无 `MediaSessionCompat`（上游也不是 MediaStyle 方案）。详见 `docs/architecture-map.md` §7.5。
+
 ---
 
 ### F2. 搜索番剧
@@ -1618,6 +1628,10 @@ if (holder instanceof DynamicHolder) ((DynamicHolder) holder).clearImageCache();
 对方：搜索结果左右滑动到「番剧」页，可直接搜番剧并进详情页观看。
 
 **本项目现状**：`api/SearchApi.java:57-59` 的 `search_type` 参数由调用方传入，`:105` 已经能解析"番剧卡片" —— **底层解析能力已存在，缺的是 UI 入口**。
+
+> **本轮处置：✅ 已实现**（提交 `637ad00` + 后续设置项）。新增 `api/SearchApi.getBangumiFromSearchResult(JSONArray, ArrayList<VideoCard>)`（`search_type=media_bangumi` 的 `data.result` 是**扁平数组**，与 all/v2 的分组结构不同，故不能复用原解析）、新增 `activity/search/SearchBangumiFragment.kt`、`SearchActivity.defaultCategoryOrder` 插入 `"bangumi"`。
+> **顺带修掉一个会让老用户配置整份失效的坑**：`SearchActivity.buildCategoryList()` 原先要求保存的类别项数**等于**类别总数，默认表一加第 5 项，所有老用户排好的 tab 顺序就全废；改为容忍式解析（保存项都是已知类别即采用，新增类别补在末尾）。`SearchSortActivity` 同一问题一并修。
+> **后续补齐**：设置页新增「显示"番剧"搜索」开关（`SharedPreferencesUtil.SEARCH_CATEGORY_BANGUMI_SHOW`）；`VideoQuickCache.handle` 拦住 `type == "media_bangumi"` 的卡片（它的 `aid` 位装的是 `media_id`，长按"快速缓存"必然失败）。
 
 ---
 
@@ -1645,6 +1659,18 @@ if (holder instanceof DynamicHolder) ((DynamicHolder) holder).clearImageCache();
 
 > 注：既有文档 `docs/功能对比报告-BiliTerminal-vs-ReBiliClient.md` 对比的是**另一个仓库**（`PianoEthan/BiliTerminal`，v3.1.0-Qx，minSdk 14），与本文档对象不同，无重复。
 
+**本轮处置（按上表编号）**：
+
+| 编号 | 处置 | 落点 |
+|---|---|---|
+| F3-b 带图发动态 | ✅ **已实现** | 新增 `api/ImageApi.java`（选图→压缩→复用 `ReplyApi.uploadReplyImage` 上传图床→拼 `pics`）；`SendDynamicActivity` 加选图入口与缩略图预览、`DynamicApi.publishImageContent`（有图 `scene=2`）；`res/layout/activity_send_dynamic.xml` 加 `add_pic`/`add_pic_text`/`pics_preview`。**未做真机联调**（`new_dyn` biz、`scene=2` 均照上游） |
+| F3-c 带图发评论压缩 | ✅ **已修** | `ReplyApi.uploadReplyImage(byte[], String, String, String)` 带 `mimeType`/`biz` 重载；`WriteReplyActivity` 改为 GIF 原样透传（>20MB 才拒）、PNG 保透明、魔数嗅探兜底 provider 谎报 |
+| F3-g 图文动态接口直取 | ✅ **已实现（范围与上游一致）** | `OpusApi` 改为 `id > 1e8` 先打 `x/polymer/web-dynamic/v1/opus/detail`，失败才回退抓页面；**专栏 cv（id ≤ 1e8）仍抓页面** —— 上游也只覆盖图文动态。旧条目里 `OpusInfoActivity.kt:46 → :220-230 fetchOpus` 是**过时行号**，该页现为 `TerminalContext.getOpusById` → `Result` → LiveData |
+| F3-h 评论点赞类型 | ✅ **已修** | `ReplyApi.likeReply(long, long, int, boolean)` 带 `type` 重载，旧三参重载委托为 `REPLY_TYPE_VIDEO`；`ReplyAdapter` 两处调用改传真实 `replyType` |
+| F3-i 表情渲染 / 转发引用原作者 | ✅ **已修** | `DynamicApi.buildContents(..., Set<String> emoteTexts)` 把文本节点里的 `[表情名]` 切成 type9 节点、`EmoteApi.getEmoteTexts(business)` 提供白名单；`appendRepostQuote(...)` + 7 参 `relayVideo`/`relayDynamic`，动态与**视频**转发都会带 `//@UP主:原文` |
+| F3-a 番剧选集区 | ◐ **部分修** | 本轮只修了越界崩溃（P19：空季/空剧集列表不再 IOOBE），**未补**顶部季选项卡与「正在播放」标记 —— 上游那部分是纯 UI 增量，与稳定性无关 |
+| F3-e / F3-f / F3-j / F3-k | ❌ **未做** | 置顶/可见范围/编辑动态/发布选项/动态正文 BV 与话题跳转/评论数入口——均属"对齐上游的功能增量"，未列入本轮修复优先级 |
+
 ---
 
 ### F4. （功能缺失）"更新后首次启动自动展示当版日志"
@@ -1654,6 +1680,11 @@ if (holder instanceof DynamicHolder) ((DynamicHolder) holder).clearImageCache();
 `MenuActivity.kt` 无版本比较、`SplashActivity.kt:169-225` 无、`UpdateHistoryActivity` 的唯一入口是 `activity/settings/AboutActivity.kt:122`（需用户手动进"关于"页）。
 
 **对方的实现**：`MenuActivity` 中 `VERSION_NAME != last_version` 时写回 + `UpdateLog.indexOf(version)` + 启动 `UpdateLogActivity(version_index)`。**依赖"版本选项卡"式更新日志（见 F3 第 9 条），本项目不具备该数据模型。**
+
+> **本轮处置：✅ 已实现**（提交 `79ac9a1`）。`SplashActivity.shouldShowUpdateLogAfterUpgrade()` 存 **versionCode**（不是 versionName：versionCode 是 `YYMMDD0` 单调唯一，versionName 带 `-BETA<n>` 后缀且人肉维护）：
+> `lastCode == currentCode` → 不弹；`lastCode >= 0` → 升级，弹；`lastCode < 0`（键不存在，从更老的版本上来）→ 用 `PackageInfo.lastUpdateTime > firstInstallTime` 区分覆盖安装（弹）/首次安装（不弹）。
+> 判定只算一次（UETool 悬浮窗授权会提前 `return` 并由 `onActivityResult` 二次进入启动流程，故用 `pendingUpdateLog` 缓存结果）。
+> **顺带消除重复弹页**：`AppInfoApi.check()` 里那句 `MsgUtil.showText("更新公告", buildUpdateNotice(context))` 已删除 —— 它和本功能会在同一次升级启动里叠着弹两个内容重复的页面（全屏公告还会盖在日志页上）；保留下来的旧更新包清理与 debug 包警告未动。
 
 ---
 
@@ -1668,6 +1699,11 @@ if (holder instanceof DynamicHolder) ((DynamicHolder) holder).clearImageCache();
 **缺的是"版本维度"**：对方是 `util/UpdateLog.java`（`LOG[版本][条目]` + `count` / `version` / `items` / `indexOf`）+ `VersionTabAdapter` + `activity_update_log.xml` + `version_index` Intent 参数 —— 本项目**这些类与布局全部不存在**。
 
 差异的实际后果：F4（更新后自动展示当版日志）无法实现；用户也无法按版本跳转查看。
+
+> **本轮处置：✅ 已实现**（提交 `79ac9a1`）。`UpdateHistoryActivity` 重写为 `TabLayout` 按版本分页：`parseVersions(currentItems, historyItems)` 把 `R.array.update_log_current`（首行 = 当前版本）与 `R.array.update_history_log` 的每个 `## YYYY-MM-DD` 段解析成 `VersionLog(version, lines)`，**当前版本排 index 0**，`HashSet` 去重（重复版本整组丢弃），日期段转 `yy.MM.dd` 版本名。
+> **有意不照抄上游**：**不新增 `util/UpdateLog.java` 那种静态 `String[][] LOG` 表** —— 那会让 `strings.xml` 与 Java 常量变成两份会互相漂移的日志源；本项目坚持单一数据源（`strings.xml`）。
+> 布局 `res/layout/activity_update_history.xml` 加 `version_tabs`，并给 `RotaryScrollView` 补 `layout_alignParentBottom`（`RelativeLayout` 里 `match_parent + layout_below` 不会压缩子 View，末尾约一个顶栏高度的内容滚不到）。
+> `AboutActivity` 未改：不传 extra 时默认 index 0 恰好就是"当前版本"选项卡。
 
 ---
 
