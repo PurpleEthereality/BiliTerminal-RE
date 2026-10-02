@@ -254,7 +254,12 @@ class PrivateMsgActivity : BaseActivity() {
                         MsgUtil.showMsg("已加载更多消息！")
                     }
                     isLoadingMore = false
-                } else runOnUiThread { MsgUtil.showMsg("没有更多消息了") }
+                } else runOnUiThread {
+                    // 没有更多消息：必须复位 isLoadingMore，否则它一直为 true，
+                    // 之后每次滑到顶都会重复弹这条提示
+                    isLoadingMore = false
+                    MsgUtil.showMsg("没有更多消息了")
+                }
             } catch (e: Exception) {
                 runOnUiThread { MsgUtil.err(e) }
             }

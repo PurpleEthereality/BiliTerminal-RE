@@ -50,11 +50,13 @@ import java.util.TimerTask
 class DownloadService : Service() {
 
     companion object {
-        @JvmStatic var started: Boolean = false
-        @JvmStatic var exitCode: Int = 0
-        @JvmStatic var percent: Float = -1f
-        @JvmStatic var state: String? = null
-        @JvmStatic var section: DownloadSection? = null
+        // 这几个字段会被下载协程与主线程同时读写，必须 @Volatile 保证可见性：
+        // started 决定调度循环是否继续，exitCode/percent/state 决定通知与退出时的清理动作。
+        @JvmStatic @Volatile var started: Boolean = false
+        @JvmStatic @Volatile var exitCode: Int = 0
+        @JvmStatic @Volatile var percent: Float = -1f
+        @JvmStatic @Volatile var state: String? = null
+        @JvmStatic @Volatile var section: DownloadSection? = null
         @JvmStatic var speedStr: String = ""
         @JvmStatic var isSpeedMode: Boolean = false
         private var firstDown: Long = -1
@@ -427,9 +429,16 @@ class DownloadService : Service() {
         }
 
         @JvmStatic
+        @Synchronized
         fun start(first: Long) {
-            if (started)
+            // 检查后置位（check-then-act）必须在同一把锁里完成：
+            // start() 的入口不止一个（添加下载、恢复暂停、下载页手动继续），
+            // 并发进入时两个线程会同时通过 if 检查、各自启动一个下载批次，最终并发写同一批文件。
+            if (started) {
+                // 不重复启动，但要给出可感知的反馈，避免用户点了"继续下载"以为没生效
+                MsgUtil.showMsg("下载队列已在进行中")
                 return
+            }
             started = true
             Logu.d("start")
             firstDown = first
@@ -1012,20 +1021,26 @@ class DownloadService : Service() {
         notifyTimer = Timer()
         notifyTimer!!.schedule(object : TimerTask() {
             override fun run() {
-                // 周期性采样所有并行下载的聚合速度
-                DownloadService.sampleSpeed()
+                try {
+                    // 周期性采样所有并行下载的聚合速度
+                    DownloadService.sampleSpeed()
 
-                if (section == null || notifyTimer == null)
-                    return
+                    if (section == null || notifyTimer == null)
+                        return
 
-                val overall = DownloadService.computeOverallProgress(
-                    DownloadService.getAll() ?: emptyList()
-                )
-                statusBuilder.setContentText(
-                    "总进度 " + (overall * 100).toInt() + "% · " + (section?.name_short ?: "下载中")
-                )
-                statusBuilder.setProgress(100, (overall * 100).toInt(), false)
-                notifyManager.notify(FOREGROUND_ID, statusBuilder.build())
+                    val overall = DownloadService.computeOverallProgress(
+                        DownloadService.getAll() ?: emptyList()
+                    )
+                    statusBuilder.setContentText(
+                        "总进度 " + (overall * 100).toInt() + "% · " + (section?.name_short ?: "下载中")
+                    )
+                    statusBuilder.setProgress(100, (overall * 100).toInt(), false)
+                    notifyManager.notify(FOREGROUND_ID, statusBuilder.build())
+                } catch (e: Throwable) {
+                    // TimerTask 抛出的未捕获异常会永久终止整个 Timer，进度通知从此静默失效且无任何提示。
+                    // 这里必须吞掉异常让 Timer 继续跑，但要留下日志便于定位。
+                    Logu.e("DownloadService", "刷新下载通知失败：${e.message}")
+                }
             }
         }, 500, 1000)
     }
@@ -1493,7 +1508,11 @@ class DownloadService : Service() {
                 notifyExit(exitMessage!!)
                 if (exitCode != NORMAL) {
                     setState(id, "none")
-                    FileUtil.deleteFolder(folder)
+                    // 注意：这里绝不能删整个任务目录。单 P 任务的目录（FileUtil.getVideoDownloadPath(title, null)）
+                    // 就是 <下载根>/<标题> 本身，递归删除会把上一次成功下载好的视频/音频/封面/弹幕一起清掉，
+                    // 属于真实数据丢失。批次非正常结束（服务被回收、用户停止、中途出错）时只清理本次下载的
+                    // 临时文件与 .DOWNLOADING 标记，成品一律保留。
+                    FileUtil.cleanDownloadTempFiles(folder)
                 }
                 refreshDownloadList()
             }

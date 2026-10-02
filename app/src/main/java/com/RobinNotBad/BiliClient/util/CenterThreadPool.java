@@ -77,7 +77,14 @@ public class CenterThreadPool {
             //能用协程用协程
             if (COROUTINE_SCOPE != null) {
                 BuildersKt.launch(COROUTINE_SCOPE, EmptyCoroutineContext.INSTANCE, CoroutineStart.DEFAULT, (CoroutineScope scope, Continuation<? super Unit> continuation) -> {
-                    runnable.run();
+                    try {
+                        runnable.run();
+                    } catch (Throwable e) {
+                        // 协程体内未捕获异常没有 CoroutineExceptionHandler 兜底，
+                        // 会冒泡到 Thread.setDefaultUncaughtExceptionHandler（ErrorCatch），直接杀掉整个应用。
+                        // 后台任务失败不应该拖垮 App，这里兜住并只记日志。
+                        MsgUtil.err(e);
+                    }
                     return Unit.INSTANCE;
                 });
                 //协程不可用时尝试以原生线程池运行

@@ -56,6 +56,37 @@ public class FileUtil {
         folder.delete();
     }
 
+    /**
+     * 只清理下载过程中的临时产物，绝不删除已下好的成品。
+     *
+     * 背景：下载服务退出且批次非正常结束时，此前调用 deleteFolder(整个任务目录)，
+     * 而单 P 任务的目录就是 &lt;下载根&gt;/&lt;标题&gt; 本身，会把上一次成功下载好的
+     * video.mp4 / audio.m4a / 封面 / 弹幕一起删掉 —— 真实数据丢失。
+     *
+     * 因此这里语义收紧为"只删本次下载自己产生的中间文件"：
+     * - video_new.mp4 / audio_new.m4a：safeReplaceTemp 的下载临时文件；
+     * - *.bak：safeReplaceTemp 替换正式文件前的备份（替换成功时已自行删除，残留说明替换被打断）；
+     * - .DOWNLOADING：本任务的"下载中"标记，任务已确认为非正常结束，必须摘掉，
+     *   否则本地列表会把残留的旧成品误判为"正在下载"，用户也就看不到本地缓存的视频。
+     * 一旦任务目录中的上述文件都不存在（下载尚未进入写临时文件阶段就失败/退出），本方法不会留任何痕迹。
+     *
+     * @param folder 任务目录（即 DownloadSection.getPath() 的返回值）
+     */
+    public static void cleanDownloadTempFiles(File folder) {
+        if (folder == null || !folder.exists()) return;
+        File[] children = folder.listFiles();
+        if (children == null) return;
+        for (File file : children) {
+            String name = file.getName();
+            // 临时文件与备份文件：只删文件，不递归，避免误伤同名子目录
+            if (file.isFile() && (name.endsWith("_new.mp4") || name.endsWith("_new.m4a") || name.endsWith(".bak"))) {
+                file.delete();
+            }
+        }
+        File downloadingMark = new File(folder, ".DOWNLOADING");
+        if (downloadingMark.exists()) downloadingMark.delete();
+    }
+
     public static String readString(File file) {
         if (file == null || !file.exists() || !file.canRead() || !file.isFile()) return null;
         try {
