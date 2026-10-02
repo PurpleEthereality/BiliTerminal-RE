@@ -21,6 +21,7 @@ object UpdateManager {
 
     private const val CONFIG_URL = "https://1816240476.v.123pan.cn/1816240476/%E7%9B%B4%E9%93%BE%E4%BC%A0%E8%BE%93/%E5%93%94%E5%93%A9%E7%BB%88%E7%AB%AF%E6%9B%B4%E6%96%B0/config.json"
     private const val APK_FILE_NAME = "bili_terminal_update.apk"
+    private const val TAG = "更新检查"
 
     @Volatile
     private var downloadCanceled = false
@@ -106,11 +107,16 @@ object UpdateManager {
     private fun parseConfig(jsonStr: String): UpdateConfig {
         val json = JSONObject(jsonStr)
 
-        val versionCode = json.optInt("versionCode", 0)
+        // config.json 由发布方单独部署（被 .gitignore 排除），字段值目前都写成字符串。
+        // 之前直接用 optInt / optBoolean：字段类型写错也会被悄悄容错成默认值，
+        // 结果是「明明发布了新版本、客户端却查不到更新」这类查不出的问题
+        // （现有 config.json 的 "forceUpdate": "false" 就是靠 optBoolean 的字符串容错才恰好正确）。
+        // 这里显式解析并在解析失败时打日志；格式正确时的行为与之前完全一致。
+        val versionCode = readIntField(json, "versionCode")
         val versionName = json.optString("versionName", "")
         val description = json.optString("description", "")
         val downloadUrl = json.optString("downloadUrl", "")
-        val forceUpdate = json.optBoolean("forceUpdate", false)
+        val forceUpdate = readBooleanField(json, "forceUpdate", false)
 
         if (versionCode == 0 || downloadUrl.isEmpty()) {
             throw IOException("配置文件格式错误：缺少必要字段")
@@ -119,6 +125,28 @@ object UpdateManager {
         val config = UpdateConfig(versionCode, versionName, description, downloadUrl, forceUpdate)
         cachedConfig = config
         return config
+    }
+
+    /** 兼容字符串（"2609240"）与数字（2609240）两种写法；无法解析时记日志并返回 0。 */
+    private fun readIntField(json: JSONObject, key: String): Int {
+        val raw = json.opt(key) ?: return 0
+        if (raw is Number) return raw.toInt()
+        if (raw is String) {
+            raw.trim().toIntOrNull()?.let { return it }
+        }
+        Logu.e(TAG, "config.json 的 $key 取值「$raw」无法解析为整数（类型 ${raw.javaClass.simpleName}）")
+        return 0
+    }
+
+    /** 兼容布尔（false）与字符串（"false"）两种写法；无法解析时记日志并返回默认值。 */
+    private fun readBooleanField(json: JSONObject, key: String, def: Boolean): Boolean {
+        val raw = json.opt(key) ?: return def
+        if (raw is Boolean) return raw
+        if (raw is String) {
+            raw.trim().lowercase().toBooleanStrictOrNull()?.let { return it }
+        }
+        Logu.e(TAG, "config.json 的 $key 取值「$raw」无法解析为布尔值（类型 ${raw.javaClass.simpleName}），按 $def 处理")
+        return def
     }
 
     fun downloadApk(
