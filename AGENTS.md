@@ -62,6 +62,8 @@
 
 多模块 `:app` / `:ijkplayer-java` / `:DanmakuFlameMaster` / `:brotlij`（后三个别乱动）。Gradle 8.11.1、AGP 8.5.2、Kotlin 2.0.0、JDK 17、minSdk 24 / compileSdk 34、`resConfigs 'zh'`。
 
+**发版与更新检查**：推 tag 或手工触发 `.github/workflows/build-release.yml` —— 构建签名 APK → 把**发行版**（只同步发行版，不推代码）同步到 Gitee `zisekongling/bili-terminal-re`（Secrets 需 `GITEE_TOKEN`，仓库级令牌）→ 产出 `release-links.txt` 直链清单并挂到 Release。版本号与是否强制更新由工作流从 `app/build.gradle` 读出、写进 Release 说明的机器可读元数据。客户端更新检查按「Gitee → GitHub」读两边的 `releases/latest`（见 `util/UpdateRelease.kt`），**没有 config.json 了**。发版细则见 `.dsh/skills/rebili-version-release/SKILL.md`。
+
 坑：`gradle.properties` 第 9 行硬编码 `org.gradle.java.home`（Windows 路径），代理配置在第 88-92 行**是注释状态**；release 签名读 gitignore 的 `local.properties`；`copyApkToDesktop` 未挂在 `assembleRelease` 上，需手动跑。
 
 **更容易踩的坑（build cache 回放陈旧资源）**：`gradle.properties` 开着 `org.gradle.configuration-cache` 与 build cache。只要你改动 `res/` 的**文件集合**（新增/删除/移动资源文件），`:app:mergeDebugResources` 可能 `FROM-CACHE` 回放一份旧结果，症状是编译报莫名其妙的 `Unresolved reference 'R.layout.xxx'` 或新的 string/color 找不到，而源文件明明存在。此时必须：

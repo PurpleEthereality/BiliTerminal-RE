@@ -19,7 +19,6 @@ import java.util.concurrent.TimeUnit
 
 object UpdateManager {
 
-    private const val CONFIG_URL = "https://1816240476.v.123pan.cn/1816240476/%E7%9B%B4%E9%93%BE%E4%BC%A0%E8%BE%93/%E5%93%94%E5%93%A9%E7%BB%88%E7%AB%AF%E6%9B%B4%E6%96%B0/config.json"
     private const val APK_FILE_NAME = "bili_terminal_update.apk"
     private const val TAG = "更新检查"
 
@@ -90,63 +89,86 @@ object UpdateManager {
         }
     }
 
+    /**
+     * 更新检查的来源，按顺序尝试，**前一个失败才用后一个**：
+     * 1. Gitee 发行版（首发渠道，国内直连快）；
+     * 2. GitHub 发行版（兜底）。
+     *
+     * 两者都是公开仓库，读 release **不需要 token**。
+     * 注意：这里不再读 123pan 上单独部署的 config.json —— 版本信息以发行版本身为准，
+     * 少一处要人工同步的远端文件（历史上它就漂移过）。
+     */
+    private val releaseSources = listOf(
+        "Gitee" to "https://gitee.com/api/v5/repos/zisekongling/bili-terminal-re/releases/latest",
+        "GitHub" to "https://api.github.com/repos/zisekongling/BiliTerminal-RE/releases/latest"
+    )
+
     private fun doFetchUpdateConfig(): UpdateConfig {
-        val request = Request.Builder().url(CONFIG_URL).get().build()
+        val errors = ArrayList<String>()
+        for ((name, url) in releaseSources) {
+            try {
+                return fetchRelease(url)
+            } catch (e: Exception) {
+                Logu.e(TAG, "从 $name 取发行版信息失败：${e.message}")
+                errors.add("$name：${e.message}")
+            }
+        }
+        throw IOException("所有更新源都失败（${errors.joinToString("；")}）")
+    }
+
+    private fun fetchRelease(url: String): UpdateConfig {
+        val request = Request.Builder().url(url).get().build()
         // use{} 保证失败分支抛异常时连接也归还（OkHttp 只在 body 读到 EOF 时才自动归还）
         return okHttpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw IOException("服务器响应错误: ${response.code}")
             }
-
             val body = response.body?.string() ?: throw IOException("响应体为空")
-
-            parseConfig(body)
+            parseRelease(body)
         }
     }
 
-    private fun parseConfig(jsonStr: String): UpdateConfig {
+    /**
+     * 解析发行版 JSON（Gitee / GitHub 字段形状一致）→ [UpdateConfig]。
+     *
+     * 版本号优先取 CI 写进 Release 说明的机器可读元数据，缺失时按 tag 推算；
+     * 下载直链按设备 ABI 从附件里挑（Gitee 还会自动带 `{tag}.zip` 源码归档，必须按精确文件名匹配）。
+     */
+    private fun parseRelease(jsonStr: String): UpdateConfig {
         val json = JSONObject(jsonStr)
+        val tag = json.optString("tag_name", "")
+        val body = json.optString("body", "")
+        val meta = UpdateRelease.parseMeta(body, tag)
 
-        // config.json 由发布方单独部署（被 .gitignore 排除），字段值目前都写成字符串。
-        // 之前直接用 optInt / optBoolean：字段类型写错也会被悄悄容错成默认值，
-        // 结果是「明明发布了新版本、客户端却查不到更新」这类查不出的问题
-        // （现有 config.json 的 "forceUpdate": "false" 就是靠 optBoolean 的字符串容错才恰好正确）。
-        // 这里显式解析并在解析失败时打日志；格式正确时的行为与之前完全一致。
-        val versionCode = readIntField(json, "versionCode")
-        val versionName = json.optString("versionName", "")
-        val description = json.optString("description", "")
-        val downloadUrl = json.optString("downloadUrl", "")
-        val forceUpdate = readBooleanField(json, "forceUpdate", false)
-
-        if (versionCode == 0 || downloadUrl.isEmpty()) {
-            throw IOException("配置文件格式错误：缺少必要字段")
+        if (meta.versionCode <= 0) {
+            // 宁可报错也不要把 0 当成版本号：否则客户端会「永远收不到更新」且毫无提示
+            throw IOException("无法确定发行版版本号（tag=「$tag」，且 Release 说明里没有元数据）")
         }
 
-        val config = UpdateConfig(versionCode, versionName, description, downloadUrl, forceUpdate)
+        val assetsJson = json.optJSONArray("assets")
+        val assets = ArrayList<UpdateRelease.ReleaseAsset>()
+        if (assetsJson != null) {
+            for (i in 0 until assetsJson.length()) {
+                val a = assetsJson.optJSONObject(i) ?: continue
+                val name = a.optString("name", "")
+                val downloadUrl = a.optString("browser_download_url", "")
+                if (name.isNotEmpty() && downloadUrl.isNotEmpty()) {
+                    assets.add(UpdateRelease.ReleaseAsset(name, downloadUrl))
+                }
+            }
+        }
+        val downloadUrl = UpdateRelease.pickApkUrl(assets, Build.SUPPORTED_ABIS.toList())
+            ?: throw IOException("发行版里找不到可用的 APK 附件（共 ${assets.size} 个附件）")
+
+        val config = UpdateConfig(
+            meta.versionCode,
+            meta.versionName,
+            UpdateRelease.stripMeta(body),
+            downloadUrl,
+            meta.forceUpdate
+        )
         cachedConfig = config
         return config
-    }
-
-    /** 兼容字符串（"2609240"）与数字（2609240）两种写法；无法解析时记日志并返回 0。 */
-    private fun readIntField(json: JSONObject, key: String): Int {
-        val raw = json.opt(key) ?: return 0
-        if (raw is Number) return raw.toInt()
-        if (raw is String) {
-            raw.trim().toIntOrNull()?.let { return it }
-        }
-        Logu.e(TAG, "config.json 的 $key 取值「$raw」无法解析为整数（类型 ${raw.javaClass.simpleName}）")
-        return 0
-    }
-
-    /** 兼容布尔（false）与字符串（"false"）两种写法；无法解析时记日志并返回默认值。 */
-    private fun readBooleanField(json: JSONObject, key: String, def: Boolean): Boolean {
-        val raw = json.opt(key) ?: return def
-        if (raw is Boolean) return raw
-        if (raw is String) {
-            raw.trim().lowercase().toBooleanStrictOrNull()?.let { return it }
-        }
-        Logu.e(TAG, "config.json 的 $key 取值「$raw」无法解析为布尔值（类型 ${raw.javaClass.simpleName}），按 $def 处理")
-        return def
     }
 
     fun downloadApk(

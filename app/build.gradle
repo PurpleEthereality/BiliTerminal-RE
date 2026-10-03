@@ -269,26 +269,25 @@ dependencies {
 //（readme badge 停在 26.09.07、docs/FEATURES.md 停在 26.08.14）：
 //   1. 本文件 defaultConfig —— 唯一真正决定安装包版本的地方
 //   2. app/src/main/res/values/strings.xml 的更新日志锚点「【<versionName> 本次更新】」—— 用户可见
-//   3. 根目录 config.json —— 被 .gitignore 排除，随 APK 单独部署给更新检查接口
+//
+// 注：更新检查已改为直接读 Gitee / GitHub 的发行版（见 util/UpdateManager.kt 与
+// 发版工作流 .github/workflows/build-release.yml），版本号由发版工作流从本文件读出来、
+// 写进 Release 说明的机器可读元数据里，因此不再有需要单独部署并人工同步的 config.json。
 //
 // 刻意不挂在 assemble 上：本地改完 build.gradle、还没同步文档时不该连编译都被挡住。
 // 挂在 check 上，并由 CI 显式调用一次以便尽早失败。
 tasks.register('verifyVersionConsistency') {
     group = 'verification'
-    description = '校验 build.gradle / strings.xml / config.json 三处版本号是否一致'
+    description = '校验 build.gradle 与 strings.xml 两处版本号是否一致'
 
     def expectName = android.defaultConfig.versionName
     def expectCode = android.defaultConfig.versionCode
     def stringsFile = file('src/main/res/values/strings.xml')
-    def configFile = rootProject.file('config.json')
 
     // 显式声明输入，保证配置缓存命中时不会拿旧值
     inputs.property('versionName', expectName)
     inputs.property('versionCode', expectCode)
     inputs.file(stringsFile)
-    if (configFile.exists()) {
-        inputs.file(configFile)
-    }
 
     doLast {
         def problems = []
@@ -297,24 +296,6 @@ tasks.register('verifyVersionConsistency') {
         // 2) 更新日志锚点：关于页的「本次更新」标题必须跟着版本号走
         if (!stringsFile.getText('UTF-8').contains(anchor)) {
             problems << "src/main/res/values/strings.xml 里找不到更新日志锚点「${anchor}」，请把当版更新说明的标题改成该字符串"
-        }
-
-        // 3) config.json：不存在时跳过（该文件被 .gitignore 排除，CI 上就没有）
-        if (!configFile.exists()) {
-            logger.lifecycle('verifyVersionConsistency：未找到 config.json（被 .gitignore 排除），跳过该项校验')
-        } else {
-            def cfg = new groovy.json.JsonSlurper().parse(configFile, 'UTF-8')
-            if (cfg.versionCode?.toString() != expectCode.toString()) {
-                problems << "config.json 的 versionCode=${cfg.versionCode} 与 build.gradle 的 ${expectCode} 不一致 —— 会把用户的更新提示指向错误的版本"
-            }
-            if (cfg.versionName?.toString() != expectName) {
-                problems << "config.json 的 versionName=${cfg.versionName} 与 build.gradle 的 ${expectName} 不一致"
-            }
-            // forceUpdate 目前写成字符串 "false"。UpdateManager 已显式兼容字符串与布尔两种写法，
-            // 这里只提示不报错，避免 CI 因一个不影响功能的写法整体变红。
-            if (!(cfg.forceUpdate instanceof Boolean)) {
-                logger.warn("verifyVersionConsistency：config.json 的 forceUpdate 应写成 JSON 布尔值（当前是 ${cfg.forceUpdate?.getClass()?.simpleName}）；UpdateManager 已兼容，建议后续纠正")
-            }
         }
 
         if (!problems.isEmpty()) {

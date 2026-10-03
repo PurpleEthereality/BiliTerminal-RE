@@ -63,7 +63,7 @@ BiliTerminal.onCreate()
    │    onActivityPreCreated 里把任何 Activity 换成 UpdateActivity 并 finish
    ├─ ErrorCatch.init / Logu 开关
    ├─ 后台异步：动态更新数、消息未读数（仅已登录 mid != 0）
-   └─ checkAppUpdate()                          ← 读远端 config.json
+   └─ checkAppUpdate()                          ← 读 Gitee（失败回落 GitHub）的 releases/latest
         ↓
 SplashActivity（LAUNCHER，typewriter 动画）
    ├─ Debug 包先要悬浮窗权限（UETool）
