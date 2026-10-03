@@ -71,7 +71,8 @@ object UpdateRelease {
      * 发版产物是 `splits.abi` 打出来的分包 + universal：
      * `app-arm64-v8a-release.apk` / `app-armeabi-v7a-release.apk` / `app-x86-release.apk` /
      * `app-universal-release.apk`。按 [supportedAbis] 的**设备优先顺序**取第一个命中的分包，
-     * 都没有再用 universal，最后兜底取任意 `*-release.apk`。
+     * 都没有再用 universal；**连 universal 都没有就返回 null**，让调用方去用另一个更新源
+     * （Gitee 传不上去时可能只剩部分分包，那时必须回落到 GitHub，而不是随便抓一个包装上去）。
      *
      * 注意 Gitee 会往发行版里塞 `{tag}.zip` / `{tag}.tar.gz` 两个**源码归档**（不是我们上传的），
      * 所以这里一律按精确文件名匹配，绝不能用"第一个附件"这种写法。
@@ -89,7 +90,6 @@ object UpdateRelease {
             } ?: continue
             byName[candidate]?.let { return it }
         }
-        byName["app-universal-release.apk"]?.let { return it }
-        return assets.firstOrNull { it.name.endsWith("-release.apk") }?.url
+        return byName["app-universal-release.apk"]
     }
 }

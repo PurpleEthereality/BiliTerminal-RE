@@ -142,6 +142,20 @@ class UpdateReleaseTest {
     }
 
     @Test
+    fun pickApkUrl_partialAssets_returnsNullSoCallerFallsBackToAnotherSource() {
+        // Gitee 上传很慢，可能只传成功了一部分（例如只有 arm64）。
+        // 32 位设备此时必须拿到 null，好让调用方去用 GitHub 源 ——
+        // 绝不能把 arm64 的包当成"随便一个 -release.apk"下下来：装了也起不来。
+        val onlyArm64 = assets("app-arm64-v8a-release.apk", "26.10.03.zip")
+        assertNull(UpdateRelease.pickApkUrl(onlyArm64, listOf("armeabi-v7a")))
+        assertNull(UpdateRelease.pickApkUrl(onlyArm64, listOf("x86")))
+        // 而 arm64 设备本来就该拿到它
+        assertTrue(
+            UpdateRelease.pickApkUrl(onlyArm64, listOf("arm64-v8a"))!!.endsWith("app-arm64-v8a-release.apk")
+        )
+    }
+
+    @Test
     fun pickApkUrl_neverPicksGiteeSourceArchive() {
         // Gitee 会自动附加这两个源码归档；它们既不是 APK，也绝不能被当成安装包
         val list = assets(
