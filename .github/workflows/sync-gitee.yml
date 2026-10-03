@@ -1,0 +1,90 @@
+name: 补传发行版到 Gitee（不重新构建）
+
+# 用途：某次发版的 Gitee 同步失败（例如上传超时），事后把**已经发布在 GitHub 上的附件**
+# 补传到 Gitee，并把重新生成的 release-links.txt 覆盖回 GitHub Release。
+# 正常发版不需要这个工作流 —— 它是"修复工具"，避免为一个附件再跑一遍十几分钟的构建。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '已存在的 GitHub Release tag（例如 26.10.03）'
+        required: true
+
+# 需要往 GitHub Release 覆盖附件
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-gitee-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载该 Release 的发行附件
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          mkdir -p assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.apk' --pattern 'md5sums.txt' --dir assets
+          ls -la assets
+          if ! ls assets/*.apk >/dev/null 2>&1; then
+            echo "::error::没能从 GitHub Release 下载到任何 APK，检查 tag 是否正确"
+            exit 1
+          fi
+
+      # 与发版工作流共用同一个脚本：配了 Secrets.VLESS_PROXY_LINK 就起本地 socks5 走代理
+      - name: 准备 Gitee 上传代理（可选）
+        id: proxy
+        shell: bash
+        env:
+          VLESS_LINK: ${{ secrets.VLESS_PROXY_LINK }}
+        run: bash .github/scripts/start_xray_proxy.sh
+
+      - name: 同步附件到 Gitee 发行版
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          PROXY_URL: ${{ steps.proxy.outputs.proxy_url }}
+          TAG: ${{ inputs.tag }}
+          ASSET_DIR: assets
+          LINKS_OUT: assets/release-links.txt
+          KEEP: '3'
+          TARGET_COMMITISH: master
+          GITEE_OWNER: zisekongling
+          GITEE_REPO: bili-terminal-re
+          GITHUB_OWNER: zisekongling
+          GITHUB_REPO: BiliTerminal-RE
+        run: |
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "::error::未配置 Secrets.GITEE_TOKEN"
+            exit 1
+          fi
+          if [ -n "${PROXY_URL:-}" ]; then
+            export https_proxy="$PROXY_URL" http_proxy="$PROXY_URL"
+            echo "Gitee 上传走代理：$PROXY_URL"
+          else
+            echo "Gitee 上传直连"
+          fi
+          python3 .github/scripts/sync_gitee_release.py
+
+      # 重新生成的直链清单覆盖回 GitHub Release：
+      # 发版那次若 Gitee 同步失败，这里挂的是"只有 GitHub 直链"的兜底版，需要刷新。
+      - name: 覆盖 GitHub Release 上的 release-links.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [ -f assets/release-links.txt ]; then
+            gh release upload "$TAG" assets/release-links.txt --repo "$GITHUB_REPOSITORY" --clobber
+            echo "已把新的 release-links.txt 覆盖到 GitHub Release"
+          else
+            echo "::warning::没有生成 release-links.txt，跳过"
+          fi

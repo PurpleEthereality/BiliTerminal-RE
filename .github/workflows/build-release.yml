@@ -247,12 +247,24 @@ jobs:
       # 同步发行版到 Gitee（**只同步发行版，不推代码**）：建 Release + 上传 APK/校验文件 +
       # 生成 release-links.txt 直链清单 + 只保留最近 3 个发行版。
       # Gitee 是首发渠道、GitHub Release 是兜底，所以这一步失败**不阻断**后面的 GitHub Release。
+      # Gitee 上传实测很慢：10MB 的包传 180s 都没完（发版 run 37117070245 就卡在这里超时）。
+      # 配了 Secrets.VLESS_PROXY_LINK 就临时起一个本地 socks5 走代理，**只给 Gitee 上传用**；
+      # 没配 / 起不来 / 连不通都退回直连，不阻断后面的步骤。
+      - name: 准备 Gitee 上传代理（可选）
+        id: proxy
+        if: steps.tag.outputs.tag != ''
+        shell: bash
+        env:
+          VLESS_LINK: ${{ secrets.VLESS_PROXY_LINK }}
+        run: bash .github/scripts/start_xray_proxy.sh
+
       - name: 同步发行版到 Gitee
         id: gitee
         if: steps.tag.outputs.tag != ''
         continue-on-error: true
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          PROXY_URL: ${{ steps.proxy.outputs.proxy_url }}
           TAG: ${{ steps.tag.outputs.tag }}
           RELEASE_NAME: ${{ steps.tag.outputs.name }}
           BODY_FILE: ${{ steps.tag.outputs.body_file }}
@@ -269,7 +281,21 @@ jobs:
             echo "::warning::未配置 Secrets.GITEE_TOKEN，跳过 Gitee 发行版同步（将由下一步兜底生成直链清单）"
             exit 0
           fi
+          # 只给这一步（以及它派生的 python 进程）套代理，不影响其它步骤访问 GitHub
+          if [ -n "${PROXY_URL:-}" ]; then
+            export https_proxy="$PROXY_URL" http_proxy="$PROXY_URL"
+            echo "Gitee 上传走代理：$PROXY_URL"
+          else
+            echo "Gitee 上传直连"
+          fi
           python3 .github/scripts/sync_gitee_release.py
+
+      # Gitee 同步是 continue-on-error（失败不该阻断 GitHub Release），但它会显示成绿色，
+      # 容易让人以为同步成功了。这里显式报警，避免"看着成功、其实一个附件没传上去"。
+      - name: Gitee 同步失败告警
+        if: steps.tag.outputs.tag != '' && steps.gitee.outcome != 'success'
+        run: |
+          echo "::warning::Gitee 发行版同步失败（outcome=${{ steps.gitee.outcome }}）：本次只有 GitHub Release 可用，客户端会走 GitHub 兜底。请查看上一步日志。"
 
       # Gitee 同步失败 / 未配 token 时，仍要保证 release-links.txt 存在：
       # 兜底版本只列 GitHub 直链，让"发行版直链"这个产物在任何情况下都有。
@@ -326,8 +352,9 @@ jobs:
             base="https://github.com/zisekongling/BiliTerminal-RE/releases/download/${TAG}"
             echo "::warning::Gitee 同步未成功（outcome=${GITEE_OUTCOME}），config.json 改用 GitHub 直链兜底"
           fi
-          # 老客户端可能是不分 ABI 的时代装上的，统一给 universal 包最稳
-          export DOWNLOAD_URL="${base}/app-universal-release.apk"
+          # 迁移用包固定给 32 位（armeabi-v7a）：老客户端多装在 32 位手表上，
+          # 且 arm64 设备通常也能装 32 位包，比 universal 小得多、下载更快。
+          export DOWNLOAD_URL="${base}/app-armeabi-v7a-release.apk"
           export OUT="$out"
           python3 .github/scripts/make_config_json.py
 

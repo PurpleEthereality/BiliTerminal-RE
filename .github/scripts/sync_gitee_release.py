@@ -21,6 +21,7 @@ Gitee 与 GitHub 两侧的直链，一并作为附件传上去。
 import json
 import os
 import sys
+import time
 import uuid
 import urllib.error
 import urllib.parse
@@ -28,12 +29,20 @@ import urllib.request
 
 API = "https://gitee.com/api/v5"
 
+# 普通 JSON 请求的超时（秒）
+HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "120"))
+# 附件上传的超时（秒）。Gitee 的 attach_files 很慢：实测 10MB 的包传 180s 都没完，
+# 原来写死 180s 直接超时失败（发版 run 37117070245 就是这么挂的），这里放到 15 分钟。
+UPLOAD_TIMEOUT = int(os.environ.get("UPLOAD_TIMEOUT", "900"))
+# 单个附件上传的重试次数
+UPLOAD_RETRIES = int(os.environ.get("UPLOAD_RETRIES", "3"))
+
 
 def log(msg):
     print(msg, flush=True)
 
 
-def call(method, path, token, *, params=None, json_body=None, raw=None, content_type=None):
+def call(method, path, token, *, params=None, json_body=None, raw=None, content_type=None, timeout=None):
     """发一个 Gitee API 请求，返回 (status, 解码后的 body 或原始文本)。"""
     query = {"access_token": token}
     if params:
@@ -49,11 +58,14 @@ def call(method, path, token, *, params=None, json_body=None, raw=None, content_
         headers["Content-Type"] = content_type
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with urllib.request.urlopen(req, timeout=timeout or HTTP_TIMEOUT) as resp:
             body = resp.read().decode("utf-8", "replace")
             return resp.status, body
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode("utf-8", "replace")
+    except Exception as e:
+        # 超时 / 连接中断等：返回一个不可能被当成成功的状态码，交由调用方重试
+        return -1, f"{e.__class__.__name__}: {e}"
 
 
 def as_json(text):
@@ -161,18 +173,36 @@ def main():
             log(f"跳过已存在的附件：{entry}")
             uploaded.append(entry)
             continue
-        with open(path, "rb") as f:
-            content = f.read()
-        boundary, payload = build_multipart("file", entry, content)
-        status, text = call(
-            "POST", f"{base}/releases/{release_id}/attach_files", token,
-            raw=payload, content_type=f"multipart/form-data; boundary={boundary}",
-        )
-        if status == 201:
-            log(f"已上传 {entry}（{len(content)} 字节）")
-            uploaded.append(entry)
-        else:
-            log(f"::error::上传 {entry} 失败：HTTP {status} {text[:300]}")
+        size = os.path.getsize(path)
+        ok = False
+        for attempt in range(1, UPLOAD_RETRIES + 1):
+            with open(path, "rb") as f:
+                content = f.read()
+            boundary, payload = build_multipart("file", entry, content)
+            started = time.time()
+            log(f"上传 {entry}（{size} 字节）第 {attempt}/{UPLOAD_RETRIES} 次，超时上限 {UPLOAD_TIMEOUT}s …")
+            status, text = call(
+                "POST", f"{base}/releases/{release_id}/attach_files", token,
+                raw=payload, content_type=f"multipart/form-data; boundary={boundary}",
+                timeout=UPLOAD_TIMEOUT,
+            )
+            elapsed = time.time() - started
+            if status == 201:
+                log(f"已上传 {entry}（{size} 字节，耗时 {elapsed:.0f}s）")
+                uploaded.append(entry)
+                ok = True
+                break
+            # 附件已存在（重跑时可能已被前一次传上去）也算成功
+            if status in (400, 409) and "已存在" in text:
+                log(f"附件 {entry} 已存在于 Gitee，视为成功（HTTP {status}）")
+                uploaded.append(entry)
+                ok = True
+                break
+            log(f"::warning::上传 {entry} 失败（第 {attempt} 次，耗时 {elapsed:.0f}s）：HTTP {status} {text[:200]}")
+            if attempt < UPLOAD_RETRIES:
+                time.sleep(10 * attempt)
+        if not ok:
+            log(f"::error::{entry} 连续 {UPLOAD_RETRIES} 次上传失败")
             return 1
 
     # ---- 3) 生成发行版直链清单 ----
