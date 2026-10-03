@@ -938,3 +938,12 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - **未动正常视频**：`PlayerActivity`（普通播放器，非 `InstanceActivity`）的 `layout_top.setOnClickListener { finish() }` 保持原样。
 - **说明**：`MenuActivity` 是 `launchMode="singleTask"`，若任务栈里已有菜单实例，`menuClick` 会回到那个实例并清掉其上的短视频页（与其它入口页行为一致）；短视频作为启动页（栈里无菜单）时，菜单叠在其上、短视频暂停，返回后按 `wasPlayingWhenPaused` 恢复播放。
 
+### 弹幕"一跳一跳"（滚动弹幕每 0.25 秒一顿）（已修）
+
+- **现象**（用户实测）：普通视频与短视频**两个页面都有**，从开始播放就一直如此，只有**滚动弹幕**看得出来（顶部/底部固定弹幕不横向移动，所以看不出来），有节奏地每隔约 0.25 秒顿/跳一下。
+- **根因**：`DanmakuManager.updateTimer` 原来写的是「位置一变就 `timer.update(pos)`」，而 `timer.update` 是**把 DFM 的时钟强行拨到该值**。位置来自主线程定时器 `progressChange` 每 **250ms** 采样一次的 `video_now`（`PlayerActivity`）/ `videoNow`（短视频），**天然滞后 0~250ms**；DFM 本来在 `syncTimer` 里每帧 `timer.add(d)`（`DrawHandler.java:466`）平滑自走。于是每 250ms 就把已走到的时钟往回拽约 125ms，一秒 4 次 → 滚动弹幕"一跳一跳"。这是一次回归：更早的 `updateTimer` 是每帧直接读 `ijkPlayer.currentPosition`（新鲜值），后来为了不让渲染线程取 native 锁，改成了读 250ms 的 `video_now` 内存值，采样滞后随之被带进了时钟。
+- **修复**：改为「DFM 自走 + 跑偏才拉回」——偏差在容差内一律不动，只有真正的 seek / 缓冲卡停 / 解码漂移才一次性拉回。判定抽成无 Android 依赖的纯函数 `DanmakuSync.shouldResync(pos, timerMs)`，容差 `TOLERANCE_MS = 400ms`（必须 > 250ms 采样间隔，另留 ~150ms 给主线程卡顿）；`DanmakuManager.updateTimer` 调用它，原 `lastTimerPos` 去重字段随之删除。新增 JVM 单测 `DanmakuSyncTest`（5 例）钉住"稳态滞后 0~250ms 不得触发校正"这条回归。
+- **未动**：`onCurrentPositionMs` 的调用契约（负数=不可信）不变；两个播放器喂给弹幕的位置来源不变。
+- **遗留观察（本次未改，待确认是否也要修）**：短视频 `cycleSpeed()` 只调了 `playerBridge.setSpeed`，没有同步 DFM 的倍速（`DanmakuManager` 也没有 `setSpeed` 入口），所以短视频在 1.25x/1.5x/2x 下弹幕会持续落后于视频并被容差逻辑周期性拉回，表现为更大、更频繁的跳。普通视频那边是同步调了 `mDanmakuView.setSpeed` 的。
+
+
