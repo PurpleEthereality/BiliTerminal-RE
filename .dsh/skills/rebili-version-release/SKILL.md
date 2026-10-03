@@ -75,6 +75,11 @@ description: >-
 - 客户端更新源：Gitee 发行版优先，失败回落 GitHub 发行版；两处都是公开仓库，读 release 不需要 token。
 - Gitee 直链格式：`https://gitee.com/zisekongling/bili-terminal-re/releases/download/<tag>/<文件名>`。
 - 漏同步 / 想重跑同步：触发 `.github/workflows/relay-notify.yml` 并填 tag（只重发通知，不重新构建）。
+- ⚠️ **本仓库开着 release immutability**：一个 tag 只要被不可变 release 用过，**就永久不能再建**，
+  即使把 release 和 tag 都删掉也一样（报 `tag_name was used by an immutable release` +
+  `Cannot create ref due to creations being restricted`）。所以**重发同一个版本必须换 tag**
+  （例如 `26.10.03` 用掉了就用 `26.10.03.1`）；另注意不可变 release 的**附件也不能增删改**，
+  发完就没法补传，只能靠 `relay-notify.yml` 重发通知让中转去补。
 - 若需本地出包（不开 CI）：按 §3 构建后手工触发工作流上传；**不要**在本地直接调 Gitee API。
 
 ### 5. 校验

@@ -1024,3 +1024,17 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
   新增 `workflows/relay-notify.yml`（只重发通知，不重新构建），用于漏同步时补救与验收复测。
 - **受影响的 Secrets**：`GITEE_TOKEN`、`VLESS_PROXY_LINK` 已不再被任何工作流引用，可自行删除；
   新增 `RELAY_URL`（已写入）与 `RELAY_SECRET`（待人工填写）。
+
+### 发版实操踩坑记录（2026-10-03）
+
+- **tag 复用被永久封禁**：重发同一版本时原样用旧 tag 会失败：
+  `tag_name was used by an immutable release` + `pre_receive ... Cannot create ref due to creations being restricted`
+  （仓库没有 ruleset，是 release immutability 特性本身）。删掉 release 和 tag 也没用，**必须换 tag**。
+  本次因此把重发的第一版发成 `26.10.03.1`、第二版发成 `26.10.03.2`。
+- **不可变 release 的附件不能增删改**：发完就冻结（`Cannot upload assets to an immutable release`），
+  所以 `config.json` 这类要事后替换的东西没法补；漏同步只能靠 `relay-notify.yml` 重发通知。
+- **中转服务验证通过**：通知返回 `202 {"ok": true, "queued": true, "tag": "..."}`，
+  约 1 分钟内 Gitee 就出现 4 个 APK + `md5sums.txt`；从 Gitee 匿名下载的包 MD5 与 `md5sums.txt` 一致
+  （实测 ~1.5 MB/s，对比本机直连 GitHub ~35KB/s）。
+- Gitee 上两个 tag（`26.10.03.1` / `26.10.03.2`）目前都完整保留；若中转以后开启"只留最近 N 个"的清理，
+  注意第一版 `config.json` 指向的是 `26.10.03.1` 的直链，会被连带清掉。
