@@ -304,7 +304,10 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     private var subtitle_selected = -1
 
     override fun onBackPressed() {
-        if (!SharedPreferencesUtil.getBoolean("back_disable", false)) {
+        // 开启「左右滑动控制进度」时视频页屏蔽返回键：否则系统返回 / 手表自带右滑返回会在滑动调进度时
+        // 直接退出播放器（issue #1）。蓝牙/表冠的返回键、系统级返回都走这里。
+        if (swipeSeekEnabled) return
+        if (!SharedPreferencesUtil.getBoolean(SettingsKeys.BACK_DISABLE, false)) {
             super.onBackPressed()
         }
     }
@@ -378,7 +381,14 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         Logu.v("加载", "加载")
         val theme = SharedPreferencesUtil.getString(ColorScheme.PREF_KEY_THEME, ColorScheme.THEME_DEFAULT)
         // 主题映射统一在 ColorScheme.themeResId（此前这里复制了一份与 BaseActivity 相同的 when）
-        setTheme(ColorScheme.themeResId(theme))
+        //
+        // 「左右滑动控制进度」开启时必须同时关掉系统右滑返回（windowSwipeToDismiss）：
+        // 手表自带的右滑返回是在窗口层直接 finish 的，不走 onBackPressed，只靠 onBackPressed 拦不住，
+        // 会把手势抢走、表现为「滑动调进度变成退出播放器」（issue #1）。
+        // 「禁用返回键」开关同理（那正是它对手表右滑返回失效的原因）。
+        swipeSeekEnabled = SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SWIPE_SEEK, false)
+        val noSwipe = swipeSeekEnabled || SharedPreferencesUtil.getBoolean(SettingsKeys.BACK_DISABLE, false)
+        setTheme(ColorScheme.themeResId(theme, noSwipe))
         super.onCreate(savedInstanceState)
 
         screen_landscape = SharedPreferencesUtil.getBoolean("player_autolandscape", false)
