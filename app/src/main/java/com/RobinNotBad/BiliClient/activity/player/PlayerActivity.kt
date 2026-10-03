@@ -262,6 +262,13 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
      */
     private var autoOrientationApplied: Boolean = false
 
+    /**
+     * 首次 prepare 时是否已把「播放默认值 → 倍速」设到滑条上。
+     *
+     * 重建播放器会再次走 `onPrepared`，只有第一次才该套用默认值，之后要沿用用户本次会话的选择。
+     */
+    private var speedDefaultApplied: Boolean = false
+
     @JvmField var online_number: String = "0"
 
     private var aid: Long = 0
@@ -1067,7 +1074,7 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     }
 
     /**
-     * 「播放默认值 → 倍速」：把解析出的倍速设到滑条上，并同步给播放器与弹幕。
+     * 「播放默认值 → 倍速」：把解析出的倍速设到滑条上，再同步给播放器与弹幕。
      *
      * 用 `seekbar_speed.progress =` 而不是模拟拖动：这样 `onProgressChanged` 的 `fromUser` 为 false，
      * 不会把"默认值"误写成「沿用上次」的记录位。
@@ -1077,8 +1084,18 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
             SharedPreferencesUtil.getString(SettingsKeys.PLAYER_DEFAULT_SPEED, "1.0"),
             SharedPreferencesUtil.getFloat(SettingsKeys.PLAYER_LAST_SPEED, 1.0f)
         )
-        val index = speed_values.indexOfFirst { abs(it - speed) < 0.001f }.takeIf { it >= 0 } ?: 2
-        seekbar_speed.progress = index
+        seekbar_speed.progress = speed_values.indexOfFirst { abs(it - speed) < 0.001f }.takeIf { it >= 0 } ?: 2
+        applySpeedFromSeekbar()
+    }
+
+    /**
+     * 按滑条当前档位重新应用到播放器与弹幕。
+     *
+     * 重建播放器（切清晰度 / 切听视频 / 重试）后会再次走 `onPrepared`，此时必须沿用本次会话里
+     * 用户选的倍速，否则会掉回 1x —— 原实现就是这样（滑条还显示着别的值，属于隐性不一致）。
+     */
+    private fun applySpeedFromSeekbar() {
+        val index = seekbar_speed.progress.coerceIn(0, speed_values.size - 1)
         text_speed.text = speed_strs[index]
         text_newspeed.text = speed_strs[index]
         ijkPlayer?.setSpeed(speed_values[index])
@@ -3349,8 +3366,14 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
             }
             btn_loop.visibility = View.VISIBLE
 
-            // 「播放默认值 → 倍速」：放到滑条上并同步给播放器/弹幕
-            applyDefaultSpeed()
+            // 「播放默认值 → 倍速」：首播套用默认值；之后（切清晰度/切听视频/重试的重建）
+            // 沿用本次会话里滑条上的选择，别掉回 1x。
+            if (!speedDefaultApplied) {
+                speedDefaultApplied = true
+                applyDefaultSpeed()
+            } else {
+                applySpeedFromSeekbar()
+            }
 
             if (isLocalAudioFile) {
                 btn_audio_only.visibility = View.GONE
