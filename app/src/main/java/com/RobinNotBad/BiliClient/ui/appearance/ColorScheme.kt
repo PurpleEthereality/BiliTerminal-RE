@@ -516,15 +516,39 @@ object ColorScheme {
      *
      * `BaseActivity` / `PlayerActivity` / `BiliTerminalApp` 此前各自复制了一份相同的 `when`，
      * 改主题时容易漏改；这里收敛成唯一映射。
+     *
+     * [noSwipe] = true 时返回同套主题的 `*.NoSwipe.AppCompat` 变体，它只比主主题多一项
+     * `android:windowSwipeToDismiss=false`，用于关掉手表系统自带的「右滑返回」。
+     *
+     * **为什么必须在运行时再指定一次**：清单上的 `Theme.NoSwipe*` 会被 `onCreate` 里紧随其后的
+     * `setTheme(...)` 覆盖回带右滑返回的主主题，于是「禁用返回键」开关对手表右滑返回失效，
+     * 视频播放页的滑动调进度也会被系统的右滑返回抢走（issue #1）。
      */
-    fun themeResId(theme: String = getCurrentThemeName()): Int = when (theme) {
-        THEME_ZHIHU_BLUE -> R.style.Theme_ZhihuBlue
-        THEME_IQIYI_GREEN -> R.style.Theme_IQIYIGreen
-        THEME_PURPLE_FANTASY -> R.style.Theme_PurpleFantasy
-        THEME_RAINBOW_FANTASY -> R.style.Theme_RainbowFantasy
-        THEME_CLASSIC_GRAY -> R.style.Theme_ClassicGray
-        THEME_CLASSIC_TERMINAL -> R.style.Theme_ClassicTerminal
-        else -> R.style.Theme_BiliClient
+    fun themeResId(theme: String = getCurrentThemeName(), noSwipe: Boolean = false): Int =
+        if (noSwipe) noSwipeThemeResId(theme) else when (theme) {
+            THEME_ZHIHU_BLUE -> R.style.Theme_ZhihuBlue
+            THEME_IQIYI_GREEN -> R.style.Theme_IQIYIGreen
+            THEME_PURPLE_FANTASY -> R.style.Theme_PurpleFantasy
+            THEME_RAINBOW_FANTASY -> R.style.Theme_RainbowFantasy
+            THEME_CLASSIC_GRAY -> R.style.Theme_ClassicGray
+            THEME_CLASSIC_TERMINAL -> R.style.Theme_ClassicTerminal
+            else -> R.style.Theme_BiliClient
+        }
+
+    /**
+     * [themeResId] 的「关闭系统右滑返回」变体。
+     *
+     * 7 套主题各有一份 `*.NoSwipe.AppCompat`（父主题就是对应的主主题，只多关一项
+     * `windowSwipeToDismiss`），因此配色/圆角/字体完全一致，只是不接受系统右滑返回。
+     */
+    private fun noSwipeThemeResId(theme: String): Int = when (theme) {
+        THEME_ZHIHU_BLUE -> R.style.Theme_ZhihuBlue_NoSwipe_AppCompat
+        THEME_IQIYI_GREEN -> R.style.Theme_IQIYIGreen_NoSwipe_AppCompat
+        THEME_PURPLE_FANTASY -> R.style.Theme_PurpleFantasy_NoSwipe_AppCompat
+        THEME_RAINBOW_FANTASY -> R.style.Theme_RainbowFantasy_NoSwipe_AppCompat
+        THEME_CLASSIC_GRAY -> R.style.Theme_ClassicGray_NoSwipe_AppCompat
+        THEME_CLASSIC_TERMINAL -> R.style.Theme_ClassicTerminal_NoSwipe_AppCompat
+        else -> R.style.Theme_NoSwipe_AppCompat
     }
 
     /** 当前主题主色 + 指定不透明度（0～255），用于"进行中/待定"这类淡色描边。 */

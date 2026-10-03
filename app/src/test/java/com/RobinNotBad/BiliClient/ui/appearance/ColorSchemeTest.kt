@@ -117,6 +117,59 @@ class ColorSchemeTest {
         assertEquals(R.style.Theme_BiliClient, ColorScheme.themeResId(""))
     }
 
+    // ==================== noSwipe（关闭系统右滑返回）变体 ====================
+
+    @Test
+    fun themeResId_noSwipe_mapsEachThemeToItsNoSwipeVariant() {
+        // 7 套主题各有一份 *.NoSwipe.AppCompat；这里手写期望值，防「改一处漏一处」。
+        assertEquals(
+            R.style.Theme_NoSwipe_AppCompat,
+            ColorScheme.themeResId(ColorScheme.THEME_BILIBILI_PINK, noSwipe = true)
+        )
+        assertEquals(
+            R.style.Theme_ZhihuBlue_NoSwipe_AppCompat,
+            ColorScheme.themeResId(ColorScheme.THEME_ZHIHU_BLUE, noSwipe = true)
+        )
+        assertEquals(
+            R.style.Theme_IQIYIGreen_NoSwipe_AppCompat,
+            ColorScheme.themeResId(ColorScheme.THEME_IQIYI_GREEN, noSwipe = true)
+        )
+        assertEquals(
+            R.style.Theme_PurpleFantasy_NoSwipe_AppCompat,
+            ColorScheme.themeResId(ColorScheme.THEME_PURPLE_FANTASY, noSwipe = true)
+        )
+        assertEquals(
+            R.style.Theme_RainbowFantasy_NoSwipe_AppCompat,
+            ColorScheme.themeResId(ColorScheme.THEME_RAINBOW_FANTASY, noSwipe = true)
+        )
+        assertEquals(
+            R.style.Theme_ClassicGray_NoSwipe_AppCompat,
+            ColorScheme.themeResId(ColorScheme.THEME_CLASSIC_GRAY, noSwipe = true)
+        )
+        assertEquals(
+            R.style.Theme_ClassicTerminal_NoSwipe_AppCompat,
+            ColorScheme.themeResId(ColorScheme.THEME_CLASSIC_TERMINAL, noSwipe = true)
+        )
+    }
+
+    @Test
+    fun themeResId_noSwipe_differsFromSwipeVariant() {
+        // 每个主题的 noSwipe 变体都必须与主主题不同，否则开关形同虚设。
+        for (key in allThemeKeys) {
+            assertNotEquals(
+                "主题 $key 的 NoSwipe 变体与主主题相同，右滑返回关不掉",
+                ColorScheme.themeResId(key),
+                ColorScheme.themeResId(key, noSwipe = true)
+            )
+        }
+    }
+
+    @Test
+    fun themeResId_noSwipe_unknownKey_fallsBackToNoSwipeAppCompat() {
+        assertEquals(R.style.Theme_NoSwipe_AppCompat, ColorScheme.themeResId("no_such_theme", noSwipe = true))
+        assertEquals(R.style.Theme_NoSwipe_AppCompat, ColorScheme.themeResId("", noSwipe = true))
+    }
+
     // ==================== 中文显示名 ====================
 
     @Test
