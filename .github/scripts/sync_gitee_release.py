@@ -94,6 +94,9 @@ def main():
     if body_file and os.path.isfile(body_file):
         with open(body_file, encoding="utf-8") as f:
             body = f.read()
+    # Gitee 会以 HTTP 400「发行版的描述不能为空」拒绝空描述，这里兜个底
+    if not body.strip():
+        body = f"## {name}\n"
     asset_dir = os.environ.get("ASSET_DIR", "app/build/outputs/apk/release")
     keep = int(os.environ.get("KEEP", "3"))
     target = os.environ.get("TARGET_COMMITISH", "master").strip() or "master"
@@ -141,6 +144,10 @@ def main():
         path = os.path.join(asset_dir, entry)
         # release-links.txt 要等直链算出来再传，这里先跳过
         if entry == os.path.basename(links_out):
+            continue
+        # 只传真正的发行产物：APK 与校验文件。
+        # 该目录里还有 AGP 生成的 output-metadata.json，别把它当附件传上去。
+        if not (entry.endswith(".apk") or entry == "md5sums.txt"):
             continue
         if os.path.isfile(path):
             files.append((entry, path))
