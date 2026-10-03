@@ -462,13 +462,16 @@ class ShortVideoPagerAdapter(
             }
 
             top.setOnClickListener {
-                // 返回时暂停视频和弹幕，增加异常捕获防止闪退
+                // 短视频是 InstanceActivity 的「菜单入口页」：顶栏点击的语义是「展开主菜单」，
+                // 而不是 finish 掉本页。原来直接 finish() 会把整个页面关掉——短视频作为启动页时
+                // 更是直接退出应用。改用基类统一的 menuClick（与推荐/热门/排行榜等页面一致）。
+                // 展开菜单前先暂停当前短视频与弹幕，避免菜单在前台时视频仍在后台播放。
                 try {
                     pause()
                 } catch (e: Exception) {
-                    Logu.e("ShortVideo", "顶栏返回暂停异常: ${e.message}")
+                    Logu.e("ShortVideo", "顶栏回菜单暂停异常: ${e.message}")
                 }
-                activity.finish()
+                activity.menuClick.run()
             }
 
             initBottomButtons()

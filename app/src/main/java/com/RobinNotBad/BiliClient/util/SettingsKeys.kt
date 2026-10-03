@@ -78,11 +78,14 @@ object SettingsKeys {
     const val PLAYER_SWIPE_SEEK = "player_swipe_seek"
     const val PLAYER_DOUBLETAP_RESTORE_SCREEN = "player_doubletap_restore_screen"
     const val PLAYER_DOUBLETAP_SEEK_SECONDS = "player_doubletap_seek_seconds"
+    /** 旧「洗脑循环」开关；已被 [PLAYER_DEFAULT_LOOP] 取代，仅用于迁移默认模式。 */
     const val PLAYER_LOOP = "player_loop"
     const val PLAYER_BACKGROUND = "player_background"
+    /** 旧「默认横屏」开关；已被 [PLAYER_DEFAULT_ORIENTATION] 取代，仅用于迁移默认方向。 */
     const val PLAYER_AUTOLANDSCAPE = "player_autolandscape"
     const val PLAYER_FROM_LAST = "player_from_last"
     const val PLAYER_SHOW_ONLINE = "player_show_online"
+    /** 旧「听视频模式」开关；已被 [PLAYER_DEFAULT_AUDIO_ONLY] 取代，仅用于迁移默认模式。 */
     const val PLAYER_AUDIO_ONLY = "player_audio_only"
     const val PLAYER_SCALE = "player_scale"
     const val PLAYER_DOUBLEMOVE = "player_doublemove"
@@ -106,6 +109,44 @@ object SettingsKeys {
     const val PLAYER_UI_SHOW_QUALITY_BTN = "player_ui_showQualityBtn"
     const val PLAYER_UI_SHOW_PAGE_BTN = "player_ui_showPageBtn"
     const val PLAYER_INTERACTION_CHOICE_SIZE = "player_interaction_choice_size"
+
+    // ==================== 播放默认值（开播时自动应用，解析逻辑见 player/PlayerDefaults.kt） ====================
+    // 设置页「播放默认值」分组；每项存「模式」，「沿用上次」时再读对应的 PLAYER_LAST_* 记录。
+    /** 三态模式取值：开。 */
+    const val PLAYER_DEFAULT_MODE_ON = "on"
+    /** 三态模式取值：关。 */
+    const val PLAYER_DEFAULT_MODE_OFF = "off"
+    /** 三态模式取值：沿用上次。 */
+    const val PLAYER_DEFAULT_MODE_LAST = "last"
+
+    const val PLAYER_DEFAULT_DANMAKU = "player_default_danmaku"
+    const val PLAYER_DEFAULT_AUDIO_ONLY = "player_default_audio_only"
+    const val PLAYER_DEFAULT_LOOP = "player_default_loop"
+    const val PLAYER_DEFAULT_AUTONEXT = "player_default_autonext"
+    /** 倍速：存 "0.5"~"3.0" 或 [PLAYER_DEFAULT_MODE_LAST]。 */
+    const val PLAYER_DEFAULT_SPEED = "player_default_speed"
+    const val PLAYER_DEFAULT_SUBTITLE = "player_default_subtitle"
+    const val PLAYER_DEFAULT_ORIENTATION = "player_default_orientation"
+
+    /** 字幕默认值：开播自动选中文（优先人工，其次 AI）。 */
+    const val PLAYER_DEFAULT_SUBTITLE_ZH = "zh"
+    /** 字幕默认值：自行选择（是否弹选择框交给 [PLAYER_SUBTITLE_AUTOSHOW]）。 */
+    const val PLAYER_DEFAULT_SUBTITLE_MANUAL = "manual"
+
+    /** 屏幕方向：总是横屏。 */
+    const val PLAYER_DEFAULT_ORIENTATION_LANDSCAPE = "landscape"
+    /** 屏幕方向：总是竖屏。 */
+    const val PLAYER_DEFAULT_ORIENTATION_PORTRAIT = "portrait"
+    /** 屏幕方向：按视频分辨率（宽>高则横屏）。 */
+    const val PLAYER_DEFAULT_ORIENTATION_AUTO = "auto"
+
+    // ---- 「沿用上次」的记录位：播放中实际用过的值，跨重启保存 ----
+    /** 上一次弹幕的实际可见状态；沿用既有键（播放中切换弹幕时写入）。 */
+    const val PLAYER_LAST_DANMAKU = "pref_switch_danmaku"
+    const val PLAYER_LAST_AUDIO_ONLY = "player_last_audio_only"
+    const val PLAYER_LAST_LOOP = "player_last_loop"
+    const val PLAYER_LAST_AUTONEXT = "player_last_autonext"
+    const val PLAYER_LAST_SPEED = "player_last_speed"
 
     // ==================== 调试 ====================
     const val DEV_LOGV = "dev_logv"

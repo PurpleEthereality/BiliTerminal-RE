@@ -907,7 +907,64 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 
 ---
 
-## 七、发版链路改造：Gitee 发行版同步 + 更新检查改读发行版（2026-10-03）
+## 七、GitHub issue 修复轮次（2026-10-03）
+
+### issue #1 视频播放器左右滑动调进度与右滑返回冲突（已修）
+
+- **根因**：手表系统自带的右滑返回由 `android:windowSwipeToDismiss` 控制，它在**窗口层直接 `finish()`，不经过 `onBackPressed`**；而 `onCreate` 里的 `setTheme(ColorScheme.themeResId(theme))` 无条件使用带 `windowSwipeToDismiss=true` 的主主题，把清单上声明的 `Theme.NoSwipe*` 覆盖掉了（7 套 `Theme.*.NoSwipe.AppCompat` 因此长期零引用）。后果有两个：
+  - 「禁用返回键」只拦了 `onBackPressed`，对手表右滑返回无效 —— 即 issue 里说的「全局屏蔽右滑返回失效」；
+  - 开启「左右滑动控制进度」后，横向滑动被系统右滑返回抢走，表现为「一滑就退出播放器」。
+- **修复**：
+  - `ui/appearance/ColorScheme.kt`：`themeResId(theme, noSwipe)` 新增 `noSwipe` 参数，映射到 7 套 `Theme.*.NoSwipe.AppCompat`（只多关 `windowSwipeToDismiss`，配色/圆角/字体不变）；`ColorSchemeTest` 新增 3 个用例钉住映射与「变体必须不同于主主题」。
+  - `activity/player/PlayerActivity.kt`：`onCreate` 中当「左右滑动控制进度」或「禁用返回键」开启时改用 noSwipe 主题；`onBackPressed` 在开启滑动进度时直接屏蔽返回键。
+  - `activity/base/BaseActivity.kt`：「禁用返回键」开启时全局改用 noSwipe 主题，覆盖全部继承页（含弹窗类页），修复全局屏蔽右滑返回失效。
+- **行为边界**：未开启「左右滑动控制进度」时播放页保持原逻辑，仅受「禁用返回键」控制；开启后播放页不再接受返回键与右滑返回（与 issue 作者所述原版终端一致，可用顶栏/菜单退出）。
+
+### issue #2 稍后再看 / 历史记录长按无法删除（核实：已在 main 修复）
+
+- 维护者已把修复合入 `main`：`adapter/video/VideoCardAdapter.kt`、`HistoryVideoCardAdapter.kt` 的长按回调改为**「页面显式注册的长按优先，无自定义长按才回落到快速缓存」**。
+- 本轮逐页复核（确认无需再改）：
+  - 有自定义长按 → 走删除：`WatchLaterActivity`、`FavoriteVideoListActivity`、`FavoriteFolderListActivity`、`HistoryActivity`；
+  - 无自定义长按 → 保持快速缓存：`UserVideoAdapter`（用户主页视频列表）、推荐 / 排行 / 搜索等浏览类列表。
+- 待版本发布后由 issue 作者真机确认删除交互（第一次长按提示「再次长按删除」，4 秒内第二次长按执行删除）。
+
+> 验证：本轮改动为 Kotlin / 资源引用级修改，且**未增删 `res/` 文件集合**（只引用既有的 `Theme.*.NoSwipe.AppCompat`），可避开 AGENTS.md 记录的资源 build-cache 坑。本机无 JDK / Android SDK，改由 GitHub Actions（`.github/workflows/ci.yml`：`:app:assembleDebug` + `:app:testDebugUnitTest`）验证，结果以 CI 为准。
+
+### 短视频页点顶栏直接退出（已修）
+
+- **现象**：短视频页点击顶栏（标题栏 / 返回箭头）会直接把页面 `finish()` 掉；短视频作为启动页时等于直接退出应用。
+- **根因**：`ShortVideoPlayerActivity : InstanceActivity()`，属于「菜单入口页」。基类已为这类页面统一提供 `menuClick`（跳 `MenuActivity` 主菜单），其余兄弟页（推荐 / 热门 / 入榜必刷 / 排行榜 / 热搜 / 直播 / 时间线 / 动态）都在 `onCreate` 里 `setMenuClick()`。短视频页没走这条链，反而在 `PageHolder` 里把 `top.setOnClickListener` 覆盖成了 `pause(); activity.finish()`（`MenuActivity` 的 import 随之变成死代码，说明历史上曾是回菜单）。
+- **修复**：`PageHolder` 的顶栏点击改为「先 `pause()` 暂停当前短视频与弹幕，再 `activity.menuClick.run()` 展开主菜单」，与其它菜单入口页一致。
+- **未动正常视频**：`PlayerActivity`（普通播放器，非 `InstanceActivity`）的 `layout_top.setOnClickListener { finish() }` 保持原样。
+- **说明**：`MenuActivity` 是 `launchMode="singleTask"`，若任务栈里已有菜单实例，`menuClick` 会回到那个实例并清掉其上的短视频页（与其它入口页行为一致）；短视频作为启动页（栈里无菜单）时，菜单叠在其上、短视频暂停，返回后按 `wasPlayingWhenPaused` 恢复播放。
+
+### 弹幕"一跳一跳"（滚动弹幕每 0.25 秒一顿）（已修）
+
+- **现象**（用户实测）：普通视频与短视频**两个页面都有**，从开始播放就一直如此，只有**滚动弹幕**看得出来（顶部/底部固定弹幕不横向移动，所以看不出来），有节奏地每隔约 0.25 秒顿/跳一下。
+- **根因**：`DanmakuManager.updateTimer` 原来写的是「位置一变就 `timer.update(pos)`」，而 `timer.update` 是**把 DFM 的时钟强行拨到该值**。位置来自主线程定时器 `progressChange` 每 **250ms** 采样一次的 `video_now`（`PlayerActivity`）/ `videoNow`（短视频），**天然滞后 0~250ms**；DFM 本来在 `syncTimer` 里每帧 `timer.add(d)`（`DrawHandler.java:466`）平滑自走。于是每 250ms 就把已走到的时钟往回拽约 125ms，一秒 4 次 → 滚动弹幕"一跳一跳"。这是一次回归：更早的 `updateTimer` 是每帧直接读 `ijkPlayer.currentPosition`（新鲜值），后来为了不让渲染线程取 native 锁，改成了读 250ms 的 `video_now` 内存值，采样滞后随之被带进了时钟。
+- **修复**：改为「DFM 自走 + 跑偏才拉回」——偏差在容差内一律不动，只有真正的 seek / 缓冲卡停 / 解码漂移才一次性拉回。判定抽成无 Android 依赖的纯函数 `DanmakuSync.shouldResync(pos, timerMs)`，容差 `TOLERANCE_MS = 400ms`（必须 > 250ms 采样间隔，另留 ~150ms 给主线程卡顿）；`DanmakuManager.updateTimer` 调用它，原 `lastTimerPos` 去重字段随之删除。新增 JVM 单测 `DanmakuSyncTest`（5 例）钉住"稳态滞后 0~250ms 不得触发校正"这条回归。
+- **未动**：`onCurrentPositionMs` 的调用契约（负数=不可信）不变；两个播放器喂给弹幕的位置来源不变。
+- **遗留观察（本次未改，待确认是否也要修）**：短视频 `cycleSpeed()` 只调了 `playerBridge.setSpeed`，没有同步 DFM 的倍速（`DanmakuManager` 也没有 `setSpeed` 入口），所以短视频在 1.25x/1.5x/2x 下弹幕会持续落后于视频并被容差逻辑周期性拉回，表现为更大、更频繁的跳。普通视频那边是同步调了 `mDanmakuView.setSpeed` 的。
+
+### 新功能：「播放默认值」分组（26.10.03）
+
+- **需求**：在「内置播放器设置」页原「默认横屏」那一带加一个分组，把"开播时想自动生效"的设置集中起来，免得每次进播放器再手动调一遍。
+- **分组内容**（标题「播放默认值」）：
+  - 弹幕 / 听视频模式 / 循环播放 / 自动连播 —— 三态：开、关、**沿用上次**；
+  - 倍速 —— `0.5x~3.0x` 固定值，外带一档「沿用上次」；
+  - 字幕 —— 中文 / 自行选择（两档，不是三态）；
+  - 屏幕方向 —— 默认横屏 / 竖屏 / 按视频分辨率选择（替换原「默认横屏」开关）。
+- **实现**：
+  - `SettingsKeys` 新增 `PLAYER_DEFAULT_*`（模式：`on`/`off`/`last`）与 `PLAYER_LAST_*`（「沿用上次」的记录位）。
+  - 纯逻辑抽到 `player/PlayerDefaults.kt`（三态解析、倍速解析、屏幕方向解析、中文字幕挑选），配 `PlayerDefaultsTest` JVM 单测。
+  - `SettingTerminalPlayerActivity` 改用 `list_choose`：现有 `choose` 是**两选一的 RadioButton、存 Boolean**，装不下三态/九档，也存不了字符串值。同时补上 `onActivityResult(1001)` —— 该回调此前**只有 `SettingGroupActivity` 处理**，不补就是"点了没反应"。
+  - `PlayerActivity`：`onCreate`/`onPrepared` 里解析并应用；播放中用户切换时写 `PLAYER_LAST_*`（听视频切换失败会回滚记录，避免污染「沿用上次」）。字幕新增 `maybeAutoSubtitle()`，`downSubtitle()` 增加 `autoChinese` 参数（中文时自动选、不弹框）。屏幕方向的「按视频分辨率选择」在 `changeVideoSize()` 拿到真实宽高后**只判一次**（`autoOrientationApplied`，否则 `onConfigurationChanged` 会来回抖）。
+- **兼容与迁移（默认行为不变）**：旧 `player_loop` / `player_audio_only` / `player_autolandscape` 只作为新设置的**默认值来源**（true → 开/横屏），键保留并标注 legacy；弹幕沿用既有 `pref_switch_danmaku` 作为"上次值"（默认开）；自动连播/倍速原本不持久化，新默认分别是「关」「1.0x」。
+- **行为变化（已与用户确认）**：全局「界面横屏」(`ui_landscape`) **不再强制覆盖播放器方向**，播放器方向改由「播放默认值 → 屏幕方向」决定。
+- **顺带发现（本次未处理）**：`SettingsAdapter.listChooseLauncher` 是死代码（从未被 set/read）；真正生效的是 `startActivityForResult(..., 1001)` + 宿主 `onActivityResult`。
+
+
+## 八、发版链路改造：Gitee 发行版同步 + 更新检查改读发行版（2026-10-03）
 
 ### 背景
 

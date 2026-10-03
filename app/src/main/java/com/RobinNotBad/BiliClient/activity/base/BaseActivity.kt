@@ -42,6 +42,7 @@ import com.RobinNotBad.BiliClient.ui.appearance.ColorScheme
 import com.RobinNotBad.BiliClient.util.AsyncLayoutInflaterX
 import com.RobinNotBad.BiliClient.util.Logu
 import com.RobinNotBad.BiliClient.util.MsgUtil
+import com.RobinNotBad.BiliClient.util.SettingsKeys
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.RobinNotBad.BiliClient.util.ToolsUtil
 import com.RobinNotBad.BiliClient.util.ViewCapabilityProbe
@@ -75,7 +76,10 @@ open class BaseActivity : AppCompatActivity() {
 
     override fun onCreate(@Nullable savedInstanceState: Bundle?) {
         val theme = SharedPreferencesUtil.getString(ColorScheme.PREF_KEY_THEME, ColorScheme.THEME_DEFAULT)
-        setTheme(ColorScheme.themeResId(theme))
+        // 「禁用返回键」为的是拦住手表自带的右滑返回；那只手势在窗口层直接 finish，不走 onBackPressed，
+        // 所以这里必须同时换到带 windowSwipeToDismiss=false 的 NoSwipe 主题。
+        // 此前只改了 onBackPressed，右滑返回照旧生效——这就是 issue #1 里「全局屏蔽右滑返回失效」。
+        setTheme(ColorScheme.themeResId(theme, noSwipe = SharedPreferencesUtil.getBoolean(SettingsKeys.BACK_DISABLE, false)))
 
         setRequestedOrientation(
             if (SharedPreferencesUtil.getBoolean("ui_landscape", false))

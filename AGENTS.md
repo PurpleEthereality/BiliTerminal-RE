@@ -94,6 +94,7 @@
 - `SettingsKeys.PLAYER` / `PLAY_QN` 是**死常量**：实际代码用字面量 `"player"` / `"play_qn"`（14 处），`SharedPreferencesUtil` 里还有第三处定义，收敛未完成。
 - `AsyncLayoutInflaterX.cancel()` 从未被调用，`BaseActivity.asyncInflate` 无生命周期保护（20 个页面在用）。
 - `DownloadService.start()` 无同步，可并发写同一文件。
+- **手表右滑返回由 `android:windowSwipeToDismiss` 控制**，它在窗口层直接 `finish()`，**不走 `onBackPressed`**，所以只 override `onBackPressed` 拦不住。且 `onCreate` 里的 `setTheme(ColorScheme.themeResId(theme))` 会覆盖清单上声明的 `Theme.NoSwipe*` —— 要真正禁用它，必须调 `ColorScheme.themeResId(theme, noSwipe = true)` 换用 `Theme.*.NoSwipe.AppCompat`（issue #1 的根因）。
 - `docs/review/00-summary.md` 基于 26.08.27 快照（已过时），动手前先 grep 现状。
 
 ## 原生库

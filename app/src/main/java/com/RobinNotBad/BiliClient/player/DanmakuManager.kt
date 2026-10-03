@@ -53,16 +53,6 @@ class DanmakuManager(
     private var danmakuContext: DanmakuContext? = null
     private var danmakuParser: BaseDanmakuParser? = null
 
-    /**
-     * 上一次喂给 DanmakuTimer 的播放位置，用于去重。
-     * 必须 volatile：updateTimer 正常由 DFM 的 "DFM Update" 线程回调
-     * （DrawHandler.java:140 `mUpdateInNewThread = availableProcessors() > 3`，否则走 DrawHandler 的
-     * HandlerThread），但 `DanmakuView.pause()`（主线程）与 QUIT 流程里的
-     * `syncTimerIfNeeded()` 也可能在别的线程上触发同一次回调，Long 在 32 位设备上会撕裂读。
-     */
-    @Volatile
-    private var lastTimerPos = -1L
-
     private val _state = MutableStateFlow(DanmakuState())
     val state: StateFlow<DanmakuState> = _state.asStateFlow()
 
@@ -200,13 +190,17 @@ class DanmakuManager(
                 // 不再在这个渲染线程上直接调 ijkPlayer.currentPosition（那会取 native 锁）。
                 val pos = onCurrentPositionMs()
                 if (pos < 0) return
-                // 位置没变就不要喂给 timer。timer.update(pos) 是"把时钟强行设成 pos"，
-                // 而 DFM 在 syncTimer 里每帧用 timer.add(d)（DrawHandler.java:462）自己推进时钟；
-                // 若每帧都用同一个（最多 250ms 前的）位置回灌，DFM 的自走时钟会被钉死，
-                // 弹幕变成 4Hz 一跳的卡顿。所以只在位置真的变化时校正一次：
-                // DFM 自走 + 定时器周期性纠偏，既避开 JNI 又保留原有跟随精度。
-                if (pos == lastTimerPos) return
-                lastTimerPos = pos
+                // 只在偏差超过容差时校正，**不能**每次采样都 timer.update(pos)。
+                //
+                // 坑（issue 反馈的"弹幕一跳一跳"）：timer.update(pos) 是"把 DFM 的时钟强行拨到 pos"，
+                // 而 pos 由主线程定时器每 250ms 采样一次（见 onCurrentPositionMs 注释），**天然滞后
+                // 0~250ms**；DFM 本来在 syncTimer 里每帧 timer.add(d)（DrawHandler.java:466）平滑自走。
+                // 旧的"位置一变就硬校"于是每 250ms 把已经走到的时钟往回拽约 125ms，一秒 4 次 ——
+                // 固定弹幕不横向移动看不出来，滚动弹幕就是有节奏的"每 0.25 秒一跳"。
+                //
+                // 改为"DFM 自走 + 跑偏才拉回"：容差内一律不动，只有真正的 seek / 缓冲卡停 /
+                // 解码漂移才会被一次性拉回。判定逻辑抽在 [DanmakuSync]（纯函数，有 JVM 单测）。
+                if (!DanmakuSync.shouldResync(pos, timer.currMillisecond)) return
                 timer.update(pos)
             }
 

@@ -1,5 +1,6 @@
 package com.RobinNotBad.BiliClient.activity.settings
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import com.RobinNotBad.BiliClient.R
@@ -7,31 +8,103 @@ import com.RobinNotBad.BiliClient.activity.base.RefreshListActivity
 import com.RobinNotBad.BiliClient.adapter.SettingsAdapter
 import com.RobinNotBad.BiliClient.model.SettingSection
 import com.RobinNotBad.BiliClient.util.SettingsKeys
+import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 
 class SettingTerminalPlayerActivity : RefreshListActivity() {
+
+    /** 设置项全表。`list_choose` 的选择结果要靠它按 position 反查回写（见 [onActivityResult]）。 */
+    private var sections: List<SettingSection> = emptyList()
+    private var settingsAdapter: SettingsAdapter? = null
+
+    /** 三态项的显示名与取值，顺序一一对应。 */
+    private val triStateNames = listOf("开", "关", "沿用上次")
+    private val triStateValues = listOf(
+        SettingsKeys.PLAYER_DEFAULT_MODE_ON,
+        SettingsKeys.PLAYER_DEFAULT_MODE_OFF,
+        SettingsKeys.PLAYER_DEFAULT_MODE_LAST
+    )
+
+    /**
+     * 造一个「点进去选一项」的设置行。
+     *
+     * 用 `list_choose` 而不是 `choose`：后者是**两选一的 RadioButton、存 Boolean**，
+     * 承载不了三态/九档，也存不了字符串值。
+     */
+    private fun listChoose(
+        name: String,
+        key: String,
+        desc: String,
+        default: String,
+        displayNames: List<String>,
+        actualValues: List<String>
+    ) = SettingSection(
+        "list_choose", name, key, desc, default,
+        SettingsAdapter.ListChooseHolder.ListChooseExtra(displayNames, actualValues)
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setPageName("内置播放器设置")
 
-        val sectionList: List<SettingSection> = ArrayList<SettingSection>().apply {
+        // 「播放默认值」各项的默认模式统一由**旧开关**迁移而来，保证升级后行为不变：
+        // 旧开关为 true → 默认「开」，否则「关」。（旧键仍在 SettingsKeys 里，标了 legacy）
+        val loopDefault = if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_LOOP, false))
+            SettingsKeys.PLAYER_DEFAULT_MODE_ON else SettingsKeys.PLAYER_DEFAULT_MODE_OFF
+        val audioOnlyDefault = if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_AUDIO_ONLY, false))
+            SettingsKeys.PLAYER_DEFAULT_MODE_ON else SettingsKeys.PLAYER_DEFAULT_MODE_OFF
+        val orientationDefault = if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_AUTOLANDSCAPE, false))
+            SettingsKeys.PLAYER_DEFAULT_ORIENTATION_LANDSCAPE else SettingsKeys.PLAYER_DEFAULT_ORIENTATION_PORTRAIT
+
+        sections = ArrayList<SettingSection>().apply {
             add(SettingSection("switch", "长按倍速", SettingsKeys.PLAYER_LONGCLICK, "", "true"))
             add(SettingSection("switch", "双击快进快退", SettingsKeys.PLAYER_DOUBLETAP_SEEK, "", "false"))
             add(SettingSection("switch", "左右滑动控制进度", SettingsKeys.PLAYER_SWIPE_SEEK, "在视频区域左右滑动快进/快退（未缩放视频时生效）", "false"))
             add(SettingSection("switch", "双击优先还原屏幕", SettingsKeys.PLAYER_DOUBLETAP_RESTORE_SCREEN, "双击时若处于横屏则优先退出全屏，而不是暂停", "false"))
             add(SettingSection("input_int", "快进快退秒数", SettingsKeys.PLAYER_DOUBLETAP_SEEK_SECONDS, "", "10"))
-            add(SettingSection("switch", "洗脑循环", SettingsKeys.PLAYER_LOOP, "", "false"))
             add(SettingSection("switch", "后台/熄屏继续播放", SettingsKeys.PLAYER_BACKGROUND,
                 "退到后台或熄屏时继续播放，并挂出通知栏遥控", "false"))
-            add(SettingSection("switch", "默认横屏", SettingsKeys.PLAYER_AUTOLANDSCAPE, "", "false"))
+
+            // ---- 播放默认值：开播时自动应用，省得每次进播放器再手动调一遍 ----
+            add(SettingSection("title", "播放默认值", "", "", ""))
+
+            add(listChoose("弹幕", SettingsKeys.PLAYER_DEFAULT_DANMAKU,
+                "开播时的弹幕开关；「沿用上次」= 上次退出播放器时的实际状态",
+                SettingsKeys.PLAYER_DEFAULT_MODE_LAST, triStateNames, triStateValues))
+            add(listChoose("听视频模式", SettingsKeys.PLAYER_DEFAULT_AUDIO_ONLY,
+                getString(R.string.desc_audio_only),
+                audioOnlyDefault, triStateNames, triStateValues))
+            add(listChoose("循环播放", SettingsKeys.PLAYER_DEFAULT_LOOP,
+                "单集播放结束后循环重播当前视频",
+                loopDefault, triStateNames, triStateValues))
+            add(listChoose("自动连播", SettingsKeys.PLAYER_DEFAULT_AUTONEXT,
+                "多分P视频播完当前分P后自动播下一个",
+                SettingsKeys.PLAYER_DEFAULT_MODE_OFF, triStateNames, triStateValues))
+            add(listChoose("倍速", SettingsKeys.PLAYER_DEFAULT_SPEED,
+                "开播时的播放速度；「沿用上次」= 上次用过的倍速",
+                "1.0",
+                listOf("0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "1.75x", "2.0x", "3.0x", "沿用上次"),
+                listOf("0.5", "0.75", "1.0", "1.25", "1.5", "1.75", "2.0", "3.0", SettingsKeys.PLAYER_DEFAULT_MODE_LAST)))
+            add(listChoose("字幕", SettingsKeys.PLAYER_DEFAULT_SUBTITLE,
+                "中文 = 开播自动选中文字幕（优先人工，其次 AI）；自行选择 = 是否弹出选择框由下方「自动弹出字幕选择」决定",
+                SettingsKeys.PLAYER_DEFAULT_SUBTITLE_MANUAL,
+                listOf("中文", "自行选择"),
+                listOf(SettingsKeys.PLAYER_DEFAULT_SUBTITLE_ZH, SettingsKeys.PLAYER_DEFAULT_SUBTITLE_MANUAL)))
+            add(listChoose("屏幕方向", SettingsKeys.PLAYER_DEFAULT_ORIENTATION,
+                "播放器的默认屏幕方向；「按视频分辨率选择」= 视频宽大于高则横屏",
+                orientationDefault,
+                listOf("默认横屏", "竖屏", "按视频分辨率选择"),
+                listOf(
+                    SettingsKeys.PLAYER_DEFAULT_ORIENTATION_LANDSCAPE,
+                    SettingsKeys.PLAYER_DEFAULT_ORIENTATION_PORTRAIT,
+                    SettingsKeys.PLAYER_DEFAULT_ORIENTATION_AUTO
+                )))
+
             add(SettingSection("switch", "从历史位置播放", SettingsKeys.PLAYER_FROM_LAST,
                 getString(R.string.desc_fromlast),
                 "true"))
             add(SettingSection("switch", "显示实时人数", SettingsKeys.PLAYER_SHOW_ONLINE,
                 getString(R.string.desc_showonline),
                 "false"))
-            add(SettingSection("switch", "听视频模式", SettingsKeys.PLAYER_AUDIO_ONLY,
-                getString(R.string.desc_audio_only), "false"))
             add(SettingSection("switch", "视频可缩放", SettingsKeys.PLAYER_SCALE,
                 getString(R.string.desc_scale), "true"))
             add(SettingSection("switch", "缩放时可移动", SettingsKeys.PLAYER_DOUBLEMOVE,
@@ -89,11 +162,32 @@ class SettingTerminalPlayerActivity : RefreshListActivity() {
 
         recyclerView.setHasFixedSize(true)
 
-        val adapter = SettingsAdapter(this, sectionList)
+        val adapter = SettingsAdapter(this, sections)
+        settingsAdapter = adapter
         setAdapter(adapter)
 
         setRefreshing(false)
 
-        scrollToHighlight(sectionList, intent.getStringExtra("highlight"))
+        scrollToHighlight(sections, intent.getStringExtra("highlight"))
+    }
+
+    /**
+     * 承接 `list_choose` 的选择结果。
+     *
+     * `SettingsAdapter` 用 `startActivityForResult(..., 1001)` 打开 [com.RobinNotBad.BiliClient.activity.ListChooseActivity]，
+     * 此前只有 `SettingGroupActivity` 处理这个回调，所以本页直接用 `list_choose` 会「点了没反应」。
+     */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 1001 && resultCode == RESULT_OK && data != null) {
+            val position = data.getIntExtra("position", -1)
+            val value = data.getStringExtra("value") ?: return
+            if (position < 0 || position >= sections.size) return
+            val section = sections[position]
+            val oldValue = SharedPreferencesUtil.getString(section.id, section.defaultValue)
+            SharedPreferencesUtil.putString(section.id, value)
+            settingsAdapter?.notifyItemChanged(position)
+            (section.extra as? SettingsAdapter.ListChooseHolder.ListChooseExtra)?.onSelect?.invoke(oldValue, value)
+        }
     }
 }
