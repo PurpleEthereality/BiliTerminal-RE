@@ -82,8 +82,9 @@ description: >-
 
 ## 约定与坑
 - 一律**中文**文案与注释；遗留页文案硬编码、不改 `strings.xml`（设置页为字符串驱动例外，用 `desc_*`）。
-- `update_log_items`、`versionCode` 尾码规律（`YYMMDD0`）、Gitee 直链这类与既有约定/外部资源强相关的内容，不确定就先确认再改。
-- **不要再引入 config.json**：更新检查已改为读发行版本身，版本元数据由发版工作流写进 Release 说明，少一处人工同步的远端文件。
+- `update_log_items`、`versionCode` 尾码规律（`YYMMDD0`；同一天发第二个包时尾位递增为 `YYMMDD1`）、Gitee 直链这类与既有约定/外部资源强相关的内容，不确定就先确认再改。
+- **新客户端不再读 config.json**：更新检查已改为读发行版本身，版本元数据由发版工作流写进 Release 说明，少一处人工同步的远端文件。
+- 例外：**渠道切换那一次**（把 26.10.02 及更早、只认 123pan config.json 的老客户端带过来）需要在触发发版时把 `emit_config_json` 打开，工作流会额外产出一份 `config.json`（`downloadUrl`=Gitee 直链、`forceUpdate` 同本次）挂到 Release —— 还需**人工把它传到 123pan**。之后不再产出。
 - `:app:verifyVersionConsistency` 只校验 build.gradle 与 strings.xml 更新日志锚点两处；改了版本号就要同步那个锚点，否则 CI 会红。
 - Gitee 会在发行版里**自动附带** `{tag}.zip` / `{tag}.tar.gz` 两个源码归档（tag 落在 `master` 上产生），
   客户端选包必须按精确文件名匹配（`app-<abi>-release.apk`），不能用"第一个附件"。

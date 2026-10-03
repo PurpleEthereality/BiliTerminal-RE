@@ -994,3 +994,14 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - Gitee 直链格式：`https://gitee.com/zisekongling/bili-terminal-re/releases/download/<tag>/<文件名>`。
 - 已知副作用：Gitee 会**自动附带** `{tag}.zip` / `{tag}.tar.gz` 两个**源码归档**（tag 落在 `master` 上产生），这不是我们上传的内容；客户端已按精确文件名规避。
 - 两处需要人工确认后才能盖章：① GitHub Release / Gitee 发行版的端到端一次真实发版（会建 tag 与 Release，未擅自执行）；② Release 说明里的元数据是否被客户端正确读到（需真机跑一次检查更新）。
+
+### 渠道迁移：给老客户端的一次性 config.json（26.10.03 发版）
+
+- **问题**：26.10.02 及更早的客户端只认单独部署在 123pan 上的 `config.json`（`UpdateManager.CONFIG_URL`）。新链路把客户端改成读发行版，但**已经装机的老客户端改不了**，不处理就会「再也收不到更新提示」。
+- **做法**：发版工作流新增 `emit_config_json` 输入（默认关，仅迁移那次打开）。打开时在 Gitee 同步之后多跑一步
+  `.github/scripts/make_config_json.py`，按**老格式**产出一份 `config.json`：
+  - `downloadUrl` = **Gitee 直链**（Gitee 同步失败则回落 GitHub 直链），老客户端从此从 Gitee 下载；
+  - `forceUpdate` = 本次发版的强制标记（迁移那次为 `true`，把老客户端强制带上新链路）；
+  - 文件随 Release 一起发布，**需人工把它传到 123pan**（CI 没有该上传通道）。
+- **兼容性**：老客户端的解析器（历史 `parseConfig`）对 `versionCode`/`forceUpdate` 同时兼容字符串与原生类型，故这里写规范 JSON 类型（number / boolean）即可。
+- **一次性**：迁移之后新客户端不再读 config.json，该文件不再产出。

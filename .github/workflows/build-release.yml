@@ -19,6 +19,10 @@ on:
         type: boolean
         description: '是否强制更新（写进 Release 说明的机器可读元数据，App 读到后不允许跳过）'
         default: false
+      emit_config_json:
+        type: boolean
+        description: '是否额外产出给老客户端的一次性 config.json（downloadUrl=Gitee 直链）。仅渠道迁移那一次需要'
+        default: false
   push:
     tags:
       - '*'
@@ -298,6 +302,35 @@ jobs:
           } > "$out"
           cat "$out"
 
+      # 给**老客户端**的一次性 config.json（渠道迁移用）：
+      # 26.10.02 及更早的客户端只认 123pan 上那份 config.json，不认识"读发行版"的新机制。
+      # 这里按老格式产出一份，downloadUrl 指向 Gitee 直链（Gitee 同步失败则回落 GitHub），
+      # forceUpdate 与本次发版一致，把老客户端强制带到新版本；之后即可永久弃用。
+      # 注意：CI 不部署它 —— 需人工把这份文件传到 123pan 的更新配置位置。
+      - name: 生成给老客户端的一次性 config.json
+        if: steps.tag.outputs.tag != '' && inputs.emit_config_json
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION_CODE: ${{ steps.tag.outputs.version_code }}
+          VERSION_NAME: ${{ steps.tag.outputs.version_name }}
+          DESCRIPTION_FILE: ${{ steps.tag.outputs.body_file }}
+          FORCE_UPDATE: ${{ inputs.force_update }}
+          GITEE_OUTCOME: ${{ steps.gitee.outcome }}
+        run: |
+          out=app/build/outputs/apk/release/config.json
+          if [ "$GITEE_OUTCOME" = "success" ]; then
+            base="https://gitee.com/zisekongling/bili-terminal-re/releases/download/${TAG}"
+            echo "使用 Gitee 直链（Gitee 同步成功）"
+          else
+            base="https://github.com/zisekongling/BiliTerminal-RE/releases/download/${TAG}"
+            echo "::warning::Gitee 同步未成功（outcome=${GITEE_OUTCOME}），config.json 改用 GitHub 直链兜底"
+          fi
+          # 老客户端可能是不分 ABI 的时代装上的，统一给 universal 包最稳
+          export DOWNLOAD_URL="${base}/app-universal-release.apk"
+          export OUT="$out"
+          python3 .github/scripts/make_config_json.py
+
       - name: 创建 GitHub Release
         if: steps.tag.outputs.tag != ''
         uses: softprops/action-gh-release@v2
@@ -313,6 +346,7 @@ jobs:
             app/build/outputs/apk/release/*.apk
             app/build/outputs/apk/release/md5sums.txt
             app/build/outputs/apk/release/release-links.txt
+            app/build/outputs/apk/release/config.json
           target_commitish: main
           draft: false
           prerelease: false
