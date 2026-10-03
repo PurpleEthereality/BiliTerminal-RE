@@ -904,3 +904,28 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 2. 继续排查剩余 Critical（私信/下载/网络）
 3. 转向 High 功能正确性修复（弹幕颜色/URL 编码收益高、改动小）
 4. 架构清理与安全加固（P1）可安排到后续迭代
+
+---
+
+## 七、GitHub issue 修复轮次（2026-10-03）
+
+### issue #1 视频播放器左右滑动调进度与右滑返回冲突（已修）
+
+- **根因**：手表系统自带的右滑返回由 `android:windowSwipeToDismiss` 控制，它在**窗口层直接 `finish()`，不经过 `onBackPressed`**；而 `onCreate` 里的 `setTheme(ColorScheme.themeResId(theme))` 无条件使用带 `windowSwipeToDismiss=true` 的主主题，把清单上声明的 `Theme.NoSwipe*` 覆盖掉了（7 套 `Theme.*.NoSwipe.AppCompat` 因此长期零引用）。后果有两个：
+  - 「禁用返回键」只拦了 `onBackPressed`，对手表右滑返回无效 —— 即 issue 里说的「全局屏蔽右滑返回失效」；
+  - 开启「左右滑动控制进度」后，横向滑动被系统右滑返回抢走，表现为「一滑就退出播放器」。
+- **修复**：
+  - `ui/appearance/ColorScheme.kt`：`themeResId(theme, noSwipe)` 新增 `noSwipe` 参数，映射到 7 套 `Theme.*.NoSwipe.AppCompat`（只多关 `windowSwipeToDismiss`，配色/圆角/字体不变）；`ColorSchemeTest` 新增 3 个用例钉住映射与「变体必须不同于主主题」。
+  - `activity/player/PlayerActivity.kt`：`onCreate` 中当「左右滑动控制进度」或「禁用返回键」开启时改用 noSwipe 主题；`onBackPressed` 在开启滑动进度时直接屏蔽返回键。
+  - `activity/base/BaseActivity.kt`：「禁用返回键」开启时全局改用 noSwipe 主题，覆盖全部继承页（含弹窗类页），修复全局屏蔽右滑返回失效。
+- **行为边界**：未开启「左右滑动控制进度」时播放页保持原逻辑，仅受「禁用返回键」控制；开启后播放页不再接受返回键与右滑返回（与 issue 作者所述原版终端一致，可用顶栏/菜单退出）。
+
+### issue #2 稍后再看 / 历史记录长按无法删除（核实：已在 main 修复）
+
+- 维护者已把修复合入 `main`：`adapter/video/VideoCardAdapter.kt`、`HistoryVideoCardAdapter.kt` 的长按回调改为**「页面显式注册的长按优先，无自定义长按才回落到快速缓存」**。
+- 本轮逐页复核（确认无需再改）：
+  - 有自定义长按 → 走删除：`WatchLaterActivity`、`FavoriteVideoListActivity`、`FavoriteFolderListActivity`、`HistoryActivity`；
+  - 无自定义长按 → 保持快速缓存：`UserVideoAdapter`（用户主页视频列表）、推荐 / 排行 / 搜索等浏览类列表。
+- 待版本发布后由 issue 作者真机确认删除交互（第一次长按提示「再次长按删除」，4 秒内第二次长按执行删除）。
+
+> 验证：本轮改动为 Kotlin / 资源引用级修改，且**未增删 `res/` 文件集合**（只引用既有的 `Theme.*.NoSwipe.AppCompat`），可避开 AGENTS.md 记录的资源 build-cache 坑。本机无 JDK / Android SDK，改由 GitHub Actions（`.github/workflows/ci.yml`：`:app:assembleDebug` + `:app:testDebugUnitTest`）验证，结果以 CI 为准。
