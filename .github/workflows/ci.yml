@@ -73,8 +73,9 @@ jobs:
           fi
           echo "gradle.properties 已清理"
 
-      # 版本号分散在 build.gradle / strings.xml / config.json 三处靠人工同步，
+      # 版本号分散在 build.gradle / strings.xml 两处靠人工同步，
       # 历史上已实际漂移过（readme badge、docs/FEATURES.md）。见审计 §五 E1。
+      # （原先第三处 config.json 已随「更新检查改读发行版」一并取消，见 build-release.yml）
       - name: 校验版本号一致性
         run: ./gradlew :app:verifyVersionConsistency --no-configuration-cache
 
