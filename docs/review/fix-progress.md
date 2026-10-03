@@ -946,4 +946,21 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - **未动**：`onCurrentPositionMs` 的调用契约（负数=不可信）不变；两个播放器喂给弹幕的位置来源不变。
 - **遗留观察（本次未改，待确认是否也要修）**：短视频 `cycleSpeed()` 只调了 `playerBridge.setSpeed`，没有同步 DFM 的倍速（`DanmakuManager` 也没有 `setSpeed` 入口），所以短视频在 1.25x/1.5x/2x 下弹幕会持续落后于视频并被容差逻辑周期性拉回，表现为更大、更频繁的跳。普通视频那边是同步调了 `mDanmakuView.setSpeed` 的。
 
+### 新功能：「播放默认值」分组（26.10.03）
+
+- **需求**：在「内置播放器设置」页原「默认横屏」那一带加一个分组，把"开播时想自动生效"的设置集中起来，免得每次进播放器再手动调一遍。
+- **分组内容**（标题「播放默认值」）：
+  - 弹幕 / 听视频模式 / 循环播放 / 自动连播 —— 三态：开、关、**沿用上次**；
+  - 倍速 —— `0.5x~3.0x` 固定值，外带一档「沿用上次」；
+  - 字幕 —— 中文 / 自行选择（两档，不是三态）；
+  - 屏幕方向 —— 默认横屏 / 竖屏 / 按视频分辨率选择（替换原「默认横屏」开关）。
+- **实现**：
+  - `SettingsKeys` 新增 `PLAYER_DEFAULT_*`（模式：`on`/`off`/`last`）与 `PLAYER_LAST_*`（「沿用上次」的记录位）。
+  - 纯逻辑抽到 `player/PlayerDefaults.kt`（三态解析、倍速解析、屏幕方向解析、中文字幕挑选），配 `PlayerDefaultsTest` JVM 单测。
+  - `SettingTerminalPlayerActivity` 改用 `list_choose`：现有 `choose` 是**两选一的 RadioButton、存 Boolean**，装不下三态/九档，也存不了字符串值。同时补上 `onActivityResult(1001)` —— 该回调此前**只有 `SettingGroupActivity` 处理**，不补就是"点了没反应"。
+  - `PlayerActivity`：`onCreate`/`onPrepared` 里解析并应用；播放中用户切换时写 `PLAYER_LAST_*`（听视频切换失败会回滚记录，避免污染「沿用上次」）。字幕新增 `maybeAutoSubtitle()`，`downSubtitle()` 增加 `autoChinese` 参数（中文时自动选、不弹框）。屏幕方向的「按视频分辨率选择」在 `changeVideoSize()` 拿到真实宽高后**只判一次**（`autoOrientationApplied`，否则 `onConfigurationChanged` 会来回抖）。
+- **兼容与迁移（默认行为不变）**：旧 `player_loop` / `player_audio_only` / `player_autolandscape` 只作为新设置的**默认值来源**（true → 开/横屏），键保留并标注 legacy；弹幕沿用既有 `pref_switch_danmaku` 作为"上次值"（默认开）；自动连播/倍速原本不持久化，新默认分别是「关」「1.0x」。
+- **行为变化（已与用户确认）**：全局「界面横屏」(`ui_landscape`) **不再强制覆盖播放器方向**，播放器方向改由「播放默认值 → 屏幕方向」决定。
+- **顺带发现（本次未处理）**：`SettingsAdapter.listChooseLauncher` 是死代码（从未被 set/read）；真正生效的是 `startActivityForResult(..., 1001)` + 宿主 `onActivityResult`。
+
 
