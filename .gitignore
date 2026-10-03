@@ -44,3 +44,6 @@ config.json
 # 注：.dsh/skills/rebili-version-release/SKILL.md 是已跟踪文件，
 # gitignore 不影响已跟踪文件，它继续留在版本控制里。
 .dsh/
+# Python 脚本产物（.github/scripts/ 下会跑 py_compile）
+__pycache__/
+*.pyc
