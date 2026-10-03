@@ -31,11 +31,14 @@ API = "https://gitee.com/api/v5"
 
 # 普通 JSON 请求的超时（秒）
 HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "120"))
-# 附件上传的超时（秒）。Gitee 的 attach_files 很慢：实测 10MB 的包传 180s 都没完，
-# 原来写死 180s 直接超时失败（发版 run 37117070245 就是这么挂的），这里放到 15 分钟。
-UPLOAD_TIMEOUT = int(os.environ.get("UPLOAD_TIMEOUT", "900"))
+# 附件上传的超时（秒）。Gitee 的 attach_files 慢得出奇：实测从 GitHub runner 直传约 13KB/s，
+# 10MB 的包要 759s。原来写死 180s 直接超时（发版 run 37117070245 就是这么挂的），这里放到 30 分钟。
+UPLOAD_TIMEOUT = int(os.environ.get("UPLOAD_TIMEOUT", "1800"))
 # 单个附件上传的重试次数
 UPLOAD_RETRIES = int(os.environ.get("UPLOAD_RETRIES", "3"))
+# 是否把 universal 包也传上 Gitee。默认不传：它 23.7MB，按上面的速度要半个多小时，
+# 而 ABI 匹配不上的设备现在会正确回落 GitHub（见 util/UpdateRelease.kt 的 pickApkUrl）。
+INCLUDE_UNIVERSAL = os.environ.get("GITEE_INCLUDE_UNIVERSAL", "false").strip().lower() == "true"
 
 
 def log(msg):
@@ -160,6 +163,10 @@ def main():
         # 只传真正的发行产物：APK 与校验文件。
         # 该目录里还有 AGP 生成的 output-metadata.json，别把它当附件传上去。
         if not (entry.endswith(".apk") or entry == "md5sums.txt"):
+            continue
+        # universal 默认不传（太大、太慢）；它缺席时客户端会按 ABI 找分包，找不到再回落 GitHub
+        if entry == "app-universal-release.apk" and not INCLUDE_UNIVERSAL:
+            log(f"按默认策略跳过 {entry}（它只在 ABI 都匹配不上时才用，客户端会回落 GitHub 取它）")
             continue
         if os.path.isfile(path):
             files.append((entry, path))

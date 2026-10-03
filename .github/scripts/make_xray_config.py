@@ -81,7 +81,8 @@ def build_config(uuid, host, port, q, socks_port):
         user["flow"] = flow
 
     return {
-        "log": {"loglevel": "warning"},
+        # warning 平时够用；诊断连通性时用 XRAY_LOGLEVEL=debug 能看到 REALITY 握手细节
+        "log": {"loglevel": os.environ.get("XRAY_LOGLEVEL", "warning")},
         "inbounds": [
             {
                 "tag": "socks-in",
