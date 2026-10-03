@@ -904,3 +904,36 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 2. 继续排查剩余 Critical（私信/下载/网络）
 3. 转向 High 功能正确性修复（弹幕颜色/URL 编码收益高、改动小）
 4. 架构清理与安全加固（P1）可安排到后续迭代
+
+---
+
+## 七、发版链路改造：Gitee 发行版同步 + 更新检查改读发行版（2026-10-03）
+
+### 背景
+
+此前客户端更新检查读的是**单独部署在 123pan 上的 `config.json`**：版本号/说明/下载直链/是否强制更新全靠人工同步三处（`build.gradle`、`strings.xml`、`config.json`），历史上已实际漂移过；发行包也只在 GitHub 上，国内下载体验差。
+
+### 改动
+
+1. **发版工作流同步发行版到 Gitee**（`.github/workflows/build-release.yml` + 新增 `.github/scripts/sync_gitee_release.py`）：
+   - 构建后把**发行版**（只同步发行版，**不推代码**）同步到 `zisekongling/bili-terminal-re`：建 Release + 上传 APK / `md5sums.txt`；
+   - 生成 `release-links.txt`（Gitee 与 GitHub 两侧直链）作为附件挂到 Release 上；
+   - 只保留最近 **3** 个 Gitee 发行版，更早的自动删除（Gitee 有配额）；
+   - 令牌走仓库 Secrets 的 `GITEE_TOKEN`（已用 Gitee OpenAPI 实测通过）；该步 `continue-on-error`，失败**不阻断** GitHub Release。
+2. **版本元数据下放到 Release 说明**：CI 从 `app/build.gradle` 读出 `versionCode`/`versionName`（外加手工触发的 `force_update` 输入），写进 Release 说明末尾的
+   `<!-- update: versionCode=… versionName=… forceUpdate=… -->`（HTML 注释，不参与渲染）。
+   版本号从此与**被发布的那个包**强一致，不再需要人工往远端文件抄一遍。
+3. **客户端更新检查改源**（`util/UpdateManager.kt`）：`Gitee releases/latest` → 失败回落 `GitHub releases/latest`，
+   **彻底不再读 config.json**；解析逻辑抽到 `util/UpdateRelease.kt`（纯函数 + 18 例 JVM 单测）：
+   - 元数据缺失时按 tag（`YY.MM.DD` → `YYMMDD0`）推算版本号；推算失败**报错**而不是把 0 当版本号（否则会"永远收不到更新"且无提示）；
+   - 下载直链按设备 ABI 从附件里选 `app-<abi>-release.apk`，回落 universal；
+   - **必须按精确文件名匹配**：Gitee 会自动往发行版里塞 `{tag}.zip` / `{tag}.tar.gz` 两个源码归档，任何"取第一个附件"的写法都会下到源码包（单测已钉住）。
+4. **连带清理**：`app/build.gradle` 的 `verifyVersionConsistency` 去掉 config.json 校验（只留 build.gradle 与 strings.xml 更新日志锚点）；
+   `docs/architecture-map.md`、`docs/FEATURES.md`、`.github/workflows/ci.yml` 注释、`.dsh/skills/rebili-version-release/SKILL.md` 同步更新。
+
+### 验证与备注
+
+- **Gitee API 全链路已实测**：用临时 tag + 假附件跑通「建 Release → 上传附件 → 生成直链 → 删旧发行版」，匿名下载正常（302 → `attach_files`），随后已删除测试发行版，Gitee 仓库当前无残留 release。
+- Gitee 直链格式：`https://gitee.com/zisekongling/bili-terminal-re/releases/download/<tag>/<文件名>`。
+- 已知副作用：Gitee 会**自动附带** `{tag}.zip` / `{tag}.tar.gz` 两个**源码归档**（tag 落在 `master` 上产生），这不是我们上传的内容；客户端已按精确文件名规避。
+- 两处需要人工确认后才能盖章：① GitHub Release / Gitee 发行版的端到端一次真实发版（会建 tag 与 Release，未擅自执行）；② Release 说明里的元数据是否被客户端正确读到（需真机跑一次检查更新）。

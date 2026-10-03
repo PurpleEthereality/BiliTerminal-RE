@@ -15,6 +15,10 @@ on:
       release_body:
         description: 'Release 发布说明，支持 Markdown（留空则自动生成 commits 摘要，也是 Markdown）'
         required: false
+      force_update:
+        type: boolean
+        description: '是否强制更新（写进 Release 说明的机器可读元数据，App 读到后不允许跳过）'
+        default: false
   push:
     tags:
       - '*'
@@ -162,7 +166,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
           INPUT_TAG: ${{ inputs.tag }}
+          INPUT_NAME: ${{ inputs.release_name }}
           INPUT_BODY: ${{ inputs.release_body }}
+          FORCE_UPDATE: ${{ inputs.force_update }}
           MD5_SUMS: ${{ steps.md5.outputs.sums }}
         run: |
           if [ "$EVENT_NAME" = "push" ]; then
@@ -171,6 +177,14 @@ jobs:
             tag="$INPUT_TAG"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          # Release 名称：手工触发可用 release_name 覆盖，否则用 tag。
+          # 在 shell 里算好再输出，避免在 action 表达式里写 `inputs.x || steps.y`。
+          if [ -n "$INPUT_NAME" ]; then
+            echo "name=$INPUT_NAME" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=$tag" >> "$GITHUB_OUTPUT"
+          fi
 
           # APK 校验值区块。Release 附件里另有一份标准格式的 md5sums.txt，两条路都留着，
           # 避免 GitHub 在 generate_release_notes 模式下改写 body 时把它弄丢。
@@ -183,6 +197,31 @@ jobs:
           else
             final_body="$md5_section"
           fi
+
+          # ---- 机器可读元数据 ----
+          # App 的更新检查（UpdateManager）从 Release 说明里读这一段拿 versionCode / versionName /
+          # forceUpdate；读不到时才退回"按 tag 推算"。用 HTML 注释包起来，
+          # GitHub 与 Gitee 渲染 Markdown 时都不会显示，也不会打断正文排版。
+          # 版本号取 app/build.gradle 的**实际构建值**（而不是 tag），这样即使 tag 写法不规范，
+          # 客户端比较的版本号也一定与被发布的那个包一致。
+          version_name=$(grep -oP 'versionName\s+"\K[^"]+' app/build.gradle | head -1)
+          version_code=$(grep -oP 'versionCode\s+\K[0-9]+' app/build.gradle | head -1)
+          if [ -z "$version_code" ] || [ -z "$version_name" ]; then
+            echo "::error::无法从 app/build.gradle 读出 versionName/versionCode"
+            exit 1
+          fi
+          force_update="false"
+          case "$(printf '%s' "${FORCE_UPDATE:-}" | tr '[:upper:]' '[:lower:]')" in
+            true|1|yes) force_update="true" ;;
+          esac
+          meta="<!-- update: versionCode=${version_code} versionName=${version_name} forceUpdate=${force_update} -->"
+          final_body=$(printf '%s\n\n%s' "$final_body" "$meta")
+
+          # 发布说明落盘给 Gitee 同步脚本按文件读，避免把多行 body 塞进命令行/环境变量
+          printf '%s\n' "$final_body" > "$RUNNER_TEMP/release-body.md"
+          echo "body_file=$RUNNER_TEMP/release-body.md" >> "$GITHUB_OUTPUT"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
 
           # 单独给出 has_body 供下游判断，不再用 "inputs.release_body == ''" 表达分支
           # —— push 事件下 inputs.* 恒为空，那种写法只是碰巧算出期望结果。
@@ -199,21 +238,81 @@ jobs:
             echo "RELEASE_BODY_EOF"
           } >> "$GITHUB_OUTPUT"
 
-          echo "DEBUG event=$EVENT_NAME tag=$tag has_body=$(grep '^has_body=' "$GITHUB_OUTPUT" | cut -d= -f2-)"
+          echo "DEBUG event=$EVENT_NAME tag=$tag version=$version_name($version_code) force=$force_update has_body=$(grep '^has_body=' "$GITHUB_OUTPUT" | cut -d= -f2-)"
+
+      # 同步发行版到 Gitee（**只同步发行版，不推代码**）：建 Release + 上传 APK/校验文件 +
+      # 生成 release-links.txt 直链清单 + 只保留最近 3 个发行版。
+      # Gitee 是首发渠道、GitHub Release 是兜底，所以这一步失败**不阻断**后面的 GitHub Release。
+      - name: 同步发行版到 Gitee
+        id: gitee
+        if: steps.tag.outputs.tag != ''
+        continue-on-error: true
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          RELEASE_NAME: ${{ steps.tag.outputs.name }}
+          BODY_FILE: ${{ steps.tag.outputs.body_file }}
+          ASSET_DIR: app/build/outputs/apk/release
+          LINKS_OUT: app/build/outputs/apk/release/release-links.txt
+          KEEP: '3'
+          TARGET_COMMITISH: master
+          GITEE_OWNER: zisekongling
+          GITEE_REPO: bili-terminal-re
+          GITHUB_OWNER: zisekongling
+          GITHUB_REPO: BiliTerminal-RE
+        run: |
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "::warning::未配置 Secrets.GITEE_TOKEN，跳过 Gitee 发行版同步（将由下一步兜底生成直链清单）"
+            exit 0
+          fi
+          python3 .github/scripts/sync_gitee_release.py
+
+      # Gitee 同步失败 / 未配 token 时，仍要保证 release-links.txt 存在：
+      # 兜底版本只列 GitHub 直链，让"发行版直链"这个产物在任何情况下都有。
+      - name: 兜底生成 release-links.txt
+        if: steps.tag.outputs.tag != ''
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          NAME: ${{ steps.tag.outputs.name }}
+        run: |
+          out=app/build/outputs/apk/release/release-links.txt
+          if [ -s "$out" ]; then
+            echo "Gitee 同步已生成 release-links.txt，无需兜底"
+            cat "$out"
+            exit 0
+          fi
+          {
+            echo "# ${NAME} 发行版直链"
+            echo
+            echo "tag：${TAG}"
+            echo
+            echo "## GitHub（本次 Gitee 同步未成功，只有 GitHub 直链）"
+            echo
+            for f in app/build/outputs/apk/release/*.apk app/build/outputs/apk/release/md5sums.txt; do
+              [ -f "$f" ] || continue
+              n=$(basename "$f")
+              echo "- ${n}"
+              echo "  https://github.com/zisekongling/BiliTerminal-RE/releases/download/${TAG}/${n}"
+            done
+          } > "$out"
+          cat "$out"
 
       - name: 创建 GitHub Release
         if: steps.tag.outputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: ${{ inputs.release_name || steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.name }}
           # 版本说明支持 Markdown：提供了 release_body 则按内容渲染（GitHub 默认 Markdown）；
           # 未提供时用 generate_release_notes 自动生成 commits 摘要（同样是 Markdown）。
+          # 末尾附带的 `<!-- update: ... -->` 是给客户端更新检查读的机器可读元数据。
           body: ${{ steps.tag.outputs.body }}
           generate_release_notes: ${{ steps.tag.outputs.has_body != 'true' }}
           files: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/apk/release/md5sums.txt
+            app/build/outputs/apk/release/release-links.txt
           target_commitish: main
           draft: false
           prerelease: false
