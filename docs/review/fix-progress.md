@@ -1005,3 +1005,22 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
   - 文件随 Release 一起发布，**需人工把它传到 123pan**（CI 没有该上传通道）。
 - **兼容性**：老客户端的解析器（历史 `parseConfig`）对 `versionCode`/`forceUpdate` 同时兼容字符串与原生类型，故这里写规范 JSON 类型（number / boolean）即可。
 - **一次性**：迁移之后新客户端不再读 config.json，该文件不再产出。
+
+### 发版链路改为「GitHub 发 Release + 通知中转服务同步 Gitee」（2026-10-03，取代上面第 1 条的做法）
+
+- **为什么改**：GitHub runner **访问不通 Gitee**，直传实测约 13KB/s（10MB 的包 759s），4 个包共 53MB 根本传不完；
+  试过挂 VLESS 代理，节点从 runner 侧 TCP 能连、TLS/REALITY 握手无响应（同一节点从国内线路完全正常）——
+  即节点拒绝云厂商出口 IP，此路不通。
+- **现在怎么做**：Release（含全部附件）在 GitHub 发完之后，追加一步 `Notify relay` 通知中转服务
+  （`POST $RELAY_URL`，请求体 `{"repository":{"full_name":"zisekongling/BiliTerminal-RE"},"release":{"tag_name":"<tag>"}}`，
+  头 `X-GitHub-Event: repository_dispatch` + `X-Hub-Signature-256: sha256=<HMAC-SHA256 小写 hex>`）。
+  中转服务自己去 GitHub 拉附件、校验 `md5sums.txt`、同步到 Gitee，且**幂等**（重复通知无害）。
+- **实现要点**：请求体用 `printf '%s'` 落盘再 `--data-binary @file`（`echo` 会多一个换行 → 签名不一致 → 401）；
+  签名 `openssl dgst -sha256 -hmac ... -binary | xxd -p -c256`；curl `-sS --fail-with-body --max-time 30`，
+  失败重试 3 次、每次 5 秒，三次全失败就让这一步失败（不静默漏同步，也不影响已发布的 GitHub Release）；
+  地址与密钥取 Secrets `RELAY_URL` / `RELAY_SECRET`，并 `::add-mask::` 两个值。
+- **清掉的旧东西**：`build-release.yml` 里的代理/直连 Gitee 三步、`.github/scripts/sync_gitee_release.py`、
+  `start_xray_proxy.sh`、`make_xray_config.py`、`workflows/sync-gitee.yml`、`workflows/proxy-check.yml`。
+  新增 `workflows/relay-notify.yml`（只重发通知，不重新构建），用于漏同步时补救与验收复测。
+- **受影响的 Secrets**：`GITEE_TOKEN`、`VLESS_PROXY_LINK` 已不再被任何工作流引用，可自行删除；
+  新增 `RELAY_URL`（已写入）与 `RELAY_SECRET`（待人工填写）。

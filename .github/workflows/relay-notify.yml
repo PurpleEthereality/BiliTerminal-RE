@@ -1,0 +1,55 @@
+name: 重新通知中转服务（GitHub -> Gitee）
+
+# 用途：某次发版的 Gitee 同步没成功、或想重跑一次时，**只重新发一次通知**，
+# 不必重跑整个发版（那会重新构建，而且 Release 已不可变、附件传不上去）。
+# 中转服务是幂等的：同一 tag 重复通知不会重复下载或上传，两平台一致时直接跳过。
+# 本工作流不直接访问 Gitee，只调用中转服务的 webhook。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要同步的发行 tag（例如 26.10.03）'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-notify-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # 与发版工作流里那一步完全同一份逻辑：签名与请求体必须字节一致，
+      # 所以请求体用 printf 落盘再 --data-binary 发送（echo 会多一个换行导致 401）。
+      # 中转地址与共享密钥都走仓库 Secret，不写进代码库（提示里也不要回显）。
+      - name: Notify relay
+        shell: bash
+        env:
+          RELAY_URL: ${{ secrets.RELAY_URL }}
+          RELAY_SECRET: ${{ secrets.RELAY_SECRET }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$RELAY_URL"
+          echo "::add-mask::$RELAY_SECRET"
+          if [ -z "${RELAY_URL:-}" ] || [ -z "${RELAY_SECRET:-}" ]; then
+            echo "::error::未配置 Secrets.RELAY_URL / Secrets.RELAY_SECRET，无法通知中转服务"
+            exit 1
+          fi
+          BODY=$(printf '{"repository":{"full_name":"zisekongling/BiliTerminal-RE"},"release":{"tag_name":"%s"}}' "$TAG")
+          printf '%s' "$BODY" > /tmp/relay.json
+          SIG=$(openssl dgst -sha256 -hmac "$RELAY_SECRET" -binary /tmp/relay.json | xxd -p -c256)
+          for i in 1 2 3; do
+            code=$(curl -sS --fail-with-body -o /tmp/relay.out -w '%{http_code}' --max-time 30 \
+              -X POST "$RELAY_URL" \
+              -H 'Content-Type: application/json' \
+              -H 'X-GitHub-Event: repository_dispatch' \
+              -H "X-Hub-Signature-256: sha256=$SIG" \
+              --data-binary @/tmp/relay.json) && { echo "通知成功 HTTP $code: $(cat /tmp/relay.out)"; break; }
+            echo "第 $i 次通知失败 (HTTP ${code:-?})，5 秒后重试"; [ "$i" = 3 ] && exit 1; sleep 5
+          done

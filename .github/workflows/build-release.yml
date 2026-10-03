@@ -221,7 +221,7 @@ jobs:
           meta="<!-- update: versionCode=${version_code} versionName=${version_name} forceUpdate=${force_update} -->"
           final_body=$(printf '%s\n\n%s' "$final_body" "$meta")
 
-          # 发布说明落盘给 Gitee 同步脚本按文件读，避免把多行 body 塞进命令行/环境变量
+          # 发布说明落盘给「生成 config.json」的脚本按文件读，避免把多行 body 塞进命令行/环境变量
           printf '%s\n' "$final_body" > "$RUNNER_TEMP/release-body.md"
           echo "body_file=$RUNNER_TEMP/release-body.md" >> "$GITHUB_OUTPUT"
           echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
@@ -244,62 +244,13 @@ jobs:
 
           echo "DEBUG event=$EVENT_NAME tag=$tag version=$version_name($version_code) force=$force_update has_body=$(grep '^has_body=' "$GITHUB_OUTPUT" | cut -d= -f2-)"
 
-      # 同步发行版到 Gitee（**只同步发行版，不推代码**）：建 Release + 上传 APK/校验文件 +
-      # 生成 release-links.txt 直链清单 + 只保留最近 3 个发行版。
-      # Gitee 是首发渠道、GitHub Release 是兜底，所以这一步失败**不阻断**后面的 GitHub Release。
-      # Gitee 上传实测很慢：10MB 的包传 180s 都没完（发版 run 37117070245 就卡在这里超时）。
-      # 配了 Secrets.VLESS_PROXY_LINK 就临时起一个本地 socks5 走代理，**只给 Gitee 上传用**；
-      # 没配 / 起不来 / 连不通都退回直连，不阻断后面的步骤。
-      - name: 准备 Gitee 上传代理（可选）
-        id: proxy
-        if: steps.tag.outputs.tag != ''
-        shell: bash
-        env:
-          VLESS_LINK: ${{ secrets.VLESS_PROXY_LINK }}
-        run: bash .github/scripts/start_xray_proxy.sh
+      # 注意：Gitee 同步**已交给中转服务**（见文件末尾的 Notify relay 步骤）。
+      # Action 到 Gitee 网络不通，这里不再有任何直连 Gitee 的步骤（不 git push、不调 Gitee API）。
 
-      - name: 同步发行版到 Gitee
-        id: gitee
-        if: steps.tag.outputs.tag != ''
-        continue-on-error: true
-        env:
-          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
-          PROXY_URL: ${{ steps.proxy.outputs.proxy_url }}
-          TAG: ${{ steps.tag.outputs.tag }}
-          RELEASE_NAME: ${{ steps.tag.outputs.name }}
-          BODY_FILE: ${{ steps.tag.outputs.body_file }}
-          ASSET_DIR: app/build/outputs/apk/release
-          LINKS_OUT: app/build/outputs/apk/release/release-links.txt
-          KEEP: '3'
-          TARGET_COMMITISH: master
-          GITEE_OWNER: zisekongling
-          GITEE_REPO: bili-terminal-re
-          GITHUB_OWNER: zisekongling
-          GITHUB_REPO: BiliTerminal-RE
-        run: |
-          if [ -z "$GITEE_TOKEN" ]; then
-            echo "::warning::未配置 Secrets.GITEE_TOKEN，跳过 Gitee 发行版同步（将由下一步兜底生成直链清单）"
-            exit 0
-          fi
-          # 只给这一步（以及它派生的 python 进程）套代理，不影响其它步骤访问 GitHub
-          if [ -n "${PROXY_URL:-}" ]; then
-            export https_proxy="$PROXY_URL" http_proxy="$PROXY_URL"
-            echo "Gitee 上传走代理：$PROXY_URL"
-          else
-            echo "Gitee 上传直连"
-          fi
-          python3 .github/scripts/sync_gitee_release.py
 
-      # Gitee 同步是 continue-on-error（失败不该阻断 GitHub Release），但它会显示成绿色，
-      # 容易让人以为同步成功了。这里显式报警，避免"看着成功、其实一个附件没传上去"。
-      - name: Gitee 同步失败告警
-        if: steps.tag.outputs.tag != '' && steps.gitee.outcome != 'success'
-        run: |
-          echo "::warning::Gitee 发行版同步失败（outcome=${{ steps.gitee.outcome }}）：本次只有 GitHub Release 可用，客户端会走 GitHub 兜底。请查看上一步日志。"
-
-      # Gitee 同步失败 / 未配 token 时，仍要保证 release-links.txt 存在：
-      # 兜底版本只列 GitHub 直链，让"发行版直链"这个产物在任何情况下都有。
-      - name: 兜底生成 release-links.txt
+      # 发行版直链清单。两个源的 URL 都是可预测的（{源}/releases/download/{tag}/{文件名}），
+      # 所以**不必等 Gitee 同步完成**（中转是异步的），两份都列出来：GitHub 立即可用，Gitee 稍后可用。
+      - name: 生成发行版直链清单
         if: steps.tag.outputs.tag != ''
         shell: bash
         env:
@@ -307,17 +258,21 @@ jobs:
           NAME: ${{ steps.tag.outputs.name }}
         run: |
           out=app/build/outputs/apk/release/release-links.txt
-          if [ -s "$out" ]; then
-            echo "Gitee 同步已生成 release-links.txt，无需兜底"
-            cat "$out"
-            exit 0
-          fi
           {
             echo "# ${NAME} 发行版直链"
             echo
             echo "tag：${TAG}"
             echo
-            echo "## GitHub（本次 Gitee 同步未成功，只有 GitHub 直链）"
+            echo "## Gitee（由中转服务异步同步，发布后稍等片刻）"
+            echo
+            for f in app/build/outputs/apk/release/*.apk app/build/outputs/apk/release/md5sums.txt; do
+              [ -f "$f" ] || continue
+              n=$(basename "$f")
+              echo "- ${n}"
+              echo "  https://gitee.com/zisekongling/bili-terminal-re/releases/download/${TAG}/${n}"
+            done
+            echo
+            echo "## GitHub（立即可用，客户端兜底源）"
             echo
             for f in app/build/outputs/apk/release/*.apk app/build/outputs/apk/release/md5sums.txt; do
               [ -f "$f" ] || continue
@@ -330,8 +285,10 @@ jobs:
 
       # 给**老客户端**的一次性 config.json（渠道迁移用）：
       # 26.10.02 及更早的客户端只认 123pan 上那份 config.json，不认识"读发行版"的新机制。
-      # 这里按老格式产出一份，downloadUrl 指向 Gitee 直链（Gitee 同步失败则回落 GitHub），
-      # forceUpdate 与本次发版一致，把老客户端强制带到新版本；之后即可永久弃用。
+      # 这里按老格式产出一份，downloadUrl 指向 **Gitee 的 32 位包**（老客户端多装在 32 位手表上，
+      # 且 arm64 设备通常也能装 32 位包）。Gitee 上的附件由中转服务在发版后异步补齐 ——
+      # 这份 config.json 还需要人工传到 123pan，等那时中转早已完成。
+      # 若想改成 GitHub 直链（更"立即可用"），只需把下面的 base 换成 github.com 那行。
       # 注意：CI 不部署它 —— 需人工把这份文件传到 123pan 的更新配置位置。
       - name: 生成给老客户端的一次性 config.json
         if: steps.tag.outputs.tag != '' && inputs.emit_config_json
@@ -342,18 +299,10 @@ jobs:
           VERSION_NAME: ${{ steps.tag.outputs.version_name }}
           DESCRIPTION_FILE: ${{ steps.tag.outputs.body_file }}
           FORCE_UPDATE: ${{ inputs.force_update }}
-          GITEE_OUTCOME: ${{ steps.gitee.outcome }}
         run: |
           out=app/build/outputs/apk/release/config.json
-          if [ "$GITEE_OUTCOME" = "success" ]; then
-            base="https://gitee.com/zisekongling/bili-terminal-re/releases/download/${TAG}"
-            echo "使用 Gitee 直链（Gitee 同步成功）"
-          else
-            base="https://github.com/zisekongling/BiliTerminal-RE/releases/download/${TAG}"
-            echo "::warning::Gitee 同步未成功（outcome=${GITEE_OUTCOME}），config.json 改用 GitHub 直链兜底"
-          fi
-          # 迁移用包固定给 32 位（armeabi-v7a）：老客户端多装在 32 位手表上，
-          # 且 arm64 设备通常也能装 32 位包，比 universal 小得多、下载更快。
+          base="https://gitee.com/zisekongling/bili-terminal-re/releases/download/${TAG}"
+          # 迁移用包固定给 32 位（armeabi-v7a）
           export DOWNLOAD_URL="${base}/app-armeabi-v7a-release.apk"
           export OUT="$out"
           python3 .github/scripts/make_config_json.py
@@ -377,3 +326,37 @@ jobs:
           target_commitish: main
           draft: false
           prerelease: false
+
+      # 通知中转服务，由它把本次 Release 的附件同步到 Gitee；
+      # Action 侧不再直接访问 Gitee（网络不通）。
+      # ⚠️ 必须排在「创建 GitHub Release（含全部附件）」之后：中转会自己去 GitHub 下载附件，
+      #    早了会拿到不完整/不存在的附件。签名与请求体必须是**同一份字节**，
+      #    所以请求体用 printf 落盘再 --data-binary 发送（echo 会多一个换行导致 401）。
+      - name: Notify relay (GitHub -> Gitee 中转)
+        if: success() && steps.tag.outputs.tag != ''
+        shell: bash
+        env:
+          # 中转地址与共享密钥都走仓库 Secret，不写进代码库（提示里也不要回显）
+          RELAY_URL: ${{ secrets.RELAY_URL }}
+          RELAY_SECRET: ${{ secrets.RELAY_SECRET }}
+          TAG: ${{ steps.tag.outputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$RELAY_URL"
+          echo "::add-mask::$RELAY_SECRET"
+          if [ -z "${RELAY_URL:-}" ] || [ -z "${RELAY_SECRET:-}" ]; then
+            echo "::error::未配置 Secrets.RELAY_URL / Secrets.RELAY_SECRET，无法通知中转服务"
+            exit 1
+          fi
+          BODY=$(printf '{"repository":{"full_name":"zisekongling/BiliTerminal-RE"},"release":{"tag_name":"%s"}}' "$TAG")
+          printf '%s' "$BODY" > /tmp/relay.json
+          SIG=$(openssl dgst -sha256 -hmac "$RELAY_SECRET" -binary /tmp/relay.json | xxd -p -c256)
+          for i in 1 2 3; do
+            code=$(curl -sS --fail-with-body -o /tmp/relay.out -w '%{http_code}' --max-time 30 \
+              -X POST "$RELAY_URL" \
+              -H 'Content-Type: application/json' \
+              -H 'X-GitHub-Event: repository_dispatch' \
+              -H "X-Hub-Signature-256: sha256=$SIG" \
+              --data-binary @/tmp/relay.json) && { echo "通知成功 HTTP $code: $(cat /tmp/relay.out)"; break; }
+            echo "第 $i 次通知失败 (HTTP ${code:-?})，5 秒后重试"; [ "$i" = 3 ] && exit 1; sleep 5
+          done

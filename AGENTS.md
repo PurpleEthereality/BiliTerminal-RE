@@ -62,9 +62,9 @@
 
 多模块 `:app` / `:ijkplayer-java` / `:DanmakuFlameMaster` / `:brotlij`（后三个别乱动）。Gradle 8.11.1、AGP 8.5.2、Kotlin 2.0.0、JDK 17、minSdk 24 / compileSdk 34、`resConfigs 'zh'`。
 
-**发版与更新检查**：推 tag 或手工触发 `.github/workflows/build-release.yml` —— 构建签名 APK → 把**发行版**（只同步发行版，不推代码）同步到 Gitee `zisekongling/bili-terminal-re`（Secrets 需 `GITEE_TOKEN`，仓库级令牌）→ 产出 `release-links.txt` 直链清单并挂到 Release。版本号与是否强制更新由工作流从 `app/build.gradle` 读出、写进 Release 说明的机器可读元数据。客户端更新检查按「Gitee → GitHub」读两边的 `releases/latest`（见 `util/UpdateRelease.kt`），**客户端已不再读 config.json**。发版细则见 `.dsh/skills/rebili-version-release/SKILL.md`。
+**发版与更新检查**：推 tag 或手工触发 `.github/workflows/build-release.yml` —— 构建签名 APK → 创建 GitHub Release 并上传全部附件 → **通知中转服务**（地址与共享密钥都在仓库 Secrets：`RELAY_URL` / `RELAY_SECRET`；请求体经 HMAC-SHA256 签名），由中转服务自己去 GitHub 拉附件并同步到 Gitee `zisekongling/bili-terminal-re`。**Action 侧不要直接访问 Gitee**（网络不通），参见该文件末尾的 Notify relay 步骤；**中转地址与密钥都不要写进代码库或日志**。版本号与是否强制更新由工作流从 `app/build.gradle` 读出、写进 Release 说明的机器可读元数据。客户端更新检查按「Gitee → GitHub」读两边的 `releases/latest`（见 `util/UpdateRelease.kt`），**客户端已不再读 config.json**。发版细则见 `.dsh/skills/rebili-version-release/SKILL.md`；漏同步时用 `.github/workflows/relay-notify.yml` 重新通知（幂等，重复通知无害）。
 
-> **老客户端迁移（一次性）**：26.10.02 及更早的客户端只认 123pan 上那份 `config.json`。发版时若把 `emit_config_json` 打开，工作流会额外产出一份**给老客户端**的 `config.json`（`downloadUrl` = Gitee 直链、`forceUpdate` 与本次一致）并挂到 Release，需人工把它传到 123pan。**它只用于渠道切换那一次**，新客户端不读它。
+> **老客户端迁移（一次性）**：26.10.02 及更早的客户端只认 123pan 上那份 `config.json`。发版时若把 `emit_config_json` 打开，工作流会额外产出一份**给老客户端**的 `config.json`（`downloadUrl` = Gitee 上 32 位包的直链、`forceUpdate` 与本次一致）并挂到 Release，需人工把它传到 123pan。**它只用于渠道切换那一次**，新客户端不读它。
 
 坑：`gradle.properties` 第 9 行硬编码 `org.gradle.java.home`（Windows 路径），代理配置在第 88-92 行**是注释状态**；release 签名读 gitignore 的 `local.properties`；`copyApkToDesktop` 未挂在 `assembleRelease` 上，需手动跑。
 

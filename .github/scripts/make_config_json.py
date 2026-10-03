@@ -13,7 +13,7 @@ forceUpdate 置 true，把老客户端强制带到新版本，从此它们也走
   VERSION_CODE      版本号数字，来自 app/build.gradle
   VERSION_NAME      版本名，来自 app/build.gradle
   DESCRIPTION_FILE  发布说明文件（Markdown），可空
-  DOWNLOAD_URL      APK 直链（Gitee 优先，兜底 GitHub）
+  DOWNLOAD_URL      APK 直链（当前给 Gitee 上的 32 位包）
   FORCE_UPDATE      "true"/"false"
   OUT               输出路径，默认 config.json
 """

@@ -2,7 +2,7 @@
 name: rebili-version-release
 description: >-
   在 RE:哔哩终端（ReBiliClient）仓库发版：递增版本号、把旧“本次更新”移入历史更新日志、
-  写入新版本日志、用 Gradle 构建签名发行 APK，并由 CI 把发行版同步到 Gitee、产出下载直链。
+  写入新版本日志、用 Gradle 构建签名发行 APK，并由 CI 通知中转服务把发行版同步到 Gitee、产出下载直链。
   当用户要求“发版/出包/更新日志/构建发行版/把更新日志写入历史”等属于本仓库的操作时使用本技能。
 ---
 
@@ -57,7 +57,7 @@ description: >-
 - 注意（在受限沙箱/agent 环境下）：Gradle 要写 `C:\Users\<user>\.gradle` 与 SDK 等**工作区之外**的路径，首次可能因写锁/权限失败。若失败需以不受限文件权限重跑同一命令，不要改路径绕过。
 - `app/build.gradle` 里 `copyApkToDesktop`（含 `adb install`）已注释，**不会**随 assembleRelease 自动复制/安装；需要时单独跑 `./gradlew.bat copyApkToDesktop`。
 
-### 4. 发版（GitHub Release + 同步 Gitee）
+### 4. 发版（GitHub Release + 通知中转同步 Gitee）
 **优先走 CI**：推一个 tag（或手工触发 `构建发行版并创建 Release` 工作流并填 tag）即可，
 工作流会依次完成：
 
@@ -65,15 +65,17 @@ description: >-
 2. 从 `app/build.gradle` 读出 `versionCode`/`versionName`，连同「是否强制更新」一起写进
    Release 说明末尾的机器可读元数据 `<!-- update: versionCode=… versionName=… forceUpdate=… -->`
    （手工触发时用 `force_update` 输入控制，默认 `false`）——**客户端更新检查就靠这段**；
-3. 把**发行版**（只同步发行版，不推代码）同步到 Gitee 仓库 `zisekongling/bili-terminal-re`：
-   建 Release + 上传 APK/`md5sums.txt`，用 Secrets 里的 `GITEE_TOKEN` 调 Gitee OpenAPI；
-   同步后只保留**最近 3 个** Gitee 发行版。该步失败**不阻断** GitHub Release（GitHub 是兜底）；
-4. 生成 `release-links.txt`（Gitee 与 GitHub 两侧直链）作为附件挂到 Release 上。
+3. 生成 `release-links.txt`（Gitee 与 GitHub 两侧直链）与（按需）老客户端用的 `config.json`，
+   随 APK 一起上传到 **GitHub Release**；
+4. Release 发完后**通知中转服务**（末尾的 Notify relay 步骤）：地址与密钥取仓库 Secrets
+   `RELAY_URL` / `RELAY_SECRET`，请求体用 HMAC-SHA256 签名；由中转服务自己去 GitHub
+   拉附件并同步到 Gitee `zisekongling/bili-terminal-re`（幂等，同步后 Gitee 只留最近若干个发行版）。
+   **Action 侧绝不直接访问 Gitee**（网络不通），也不要把地址/密钥写进代码或日志。
 
 - 客户端更新源：Gitee 发行版优先，失败回落 GitHub 发行版；两处都是公开仓库，读 release 不需要 token。
 - Gitee 直链格式：`https://gitee.com/zisekongling/bili-terminal-re/releases/download/<tag>/<文件名>`。
-- 若需本地出包（不开 CI）：按 §3 构建，然后手工触发工作流上传，或本地跑
-  `.github/scripts/sync_gitee_release.py`（用环境变量传 `GITEE_TOKEN`/`TAG`/`ASSET_DIR` 等，见脚本头部注释）。
+- 漏同步 / 想重跑同步：触发 `.github/workflows/relay-notify.yml` 并填 tag（只重发通知，不重新构建）。
+- 若需本地出包（不开 CI）：按 §3 构建后手工触发工作流上传；**不要**在本地直接调 Gitee API。
 
 ### 5. 校验
 - strings.xml 保持 XML 合法（本次只改数组文本）。
@@ -84,7 +86,7 @@ description: >-
 - 一律**中文**文案与注释；遗留页文案硬编码、不改 `strings.xml`（设置页为字符串驱动例外，用 `desc_*`）。
 - `update_log_items`、`versionCode` 尾码规律（`YYMMDD0`；同一天发第二个包时尾位递增为 `YYMMDD1`）、Gitee 直链这类与既有约定/外部资源强相关的内容，不确定就先确认再改。
 - **新客户端不再读 config.json**：更新检查已改为读发行版本身，版本元数据由发版工作流写进 Release 说明，少一处人工同步的远端文件。
-- 例外：**渠道切换那一次**（把 26.10.02 及更早、只认 123pan config.json 的老客户端带过来）需要在触发发版时把 `emit_config_json` 打开，工作流会额外产出一份 `config.json`（`downloadUrl`=Gitee 直链、`forceUpdate` 同本次）挂到 Release —— 还需**人工把它传到 123pan**。之后不再产出。
+- 例外：**渠道切换那一次**（把 26.10.02 及更早、只认 123pan config.json 的老客户端带过来）需要在触发发版时把 `emit_config_json` 打开，工作流会额外产出一份 `config.json`（`downloadUrl` = Gitee 上 **32 位包**直链、`forceUpdate` 同本次）挂到 Release —— 还需**人工把它传到 123pan**。之后不再产出。
 - `:app:verifyVersionConsistency` 只校验 build.gradle 与 strings.xml 更新日志锚点两处；改了版本号就要同步那个锚点，否则 CI 会红。
 - Gitee 会在发行版里**自动附带** `{tag}.zip` / `{tag}.tar.gz` 两个源码归档（tag 落在 `master` 上产生），
   客户端选包必须按精确文件名匹配（`app-<abi>-release.apk`），不能用"第一个附件"。
