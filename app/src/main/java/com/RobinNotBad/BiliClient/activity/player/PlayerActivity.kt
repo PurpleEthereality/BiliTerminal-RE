@@ -58,6 +58,7 @@ import com.RobinNotBad.BiliClient.model.Subtitle
 import com.RobinNotBad.BiliClient.model.SubtitleLink
 import com.RobinNotBad.BiliClient.model.ViewPoint
 import com.RobinNotBad.BiliClient.player.DanmakuManager
+import com.RobinNotBad.BiliClient.player.PlayerDefaults
 import com.RobinNotBad.BiliClient.player.PlayerSurfaceBinder
 import com.RobinNotBad.BiliClient.player.SurfaceTarget
 import com.RobinNotBad.BiliClient.service.PlaybackService
@@ -250,6 +251,17 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     private var screen_landscape: Boolean = false
     private var screen_round: Boolean = false
 
+    /** 「播放默认值 → 屏幕方向」的模式值（见 [PlayerDefaults.resolveLandscape]）。 */
+    private var playerOrientationMode: String = SettingsKeys.PLAYER_DEFAULT_ORIENTATION_PORTRAIT
+
+    /**
+     * 「按视频分辨率选择」是否已经判过一次方向。
+     *
+     * 必须只做一次：`changeVideoSize()` 会被 `onConfigurationChanged` 再次调到，
+     * 若不设标志，转屏 → 重新判定 → 再转屏 会来回抖。用户之后手动旋转也不该被拽回来。
+     */
+    private var autoOrientationApplied: Boolean = false
+
     @JvmField var online_number: String = "0"
 
     private var aid: Long = 0
@@ -391,8 +403,14 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         setTheme(ColorScheme.themeResId(theme, noSwipe))
         super.onCreate(savedInstanceState)
 
-        screen_landscape = SharedPreferencesUtil.getBoolean("player_autolandscape", false)
-                || SharedPreferencesUtil.getBoolean("ui_landscape", false)
+        // 「播放默认值 → 屏幕方向」：横屏/竖屏立即生效；「按视频分辨率选择」要先拿到视频宽高
+        // （见 changeVideoSize），所以这里先按竖屏进，等 prepare 后再切过去。
+        // 旧实现里全局「界面横屏」(ui_landscape) 会强制播放器横屏；改造后播放器的方向由它自己的
+        // 默认值决定，未设置时用旧的 player_autolandscape 迁移过来（行为与升级前一致）。
+        playerOrientationMode = SharedPreferencesUtil.getString(
+            SettingsKeys.PLAYER_DEFAULT_ORIENTATION, defaultOrientationMode()
+        )
+        screen_landscape = PlayerDefaults.resolveLandscape(playerOrientationMode, 0, 0)
         if (SharedPreferencesUtil.getBoolean("dev_player_rotate_software", false) && screen_landscape) {
             MsgUtil.showMsg("不支持默认横屏！")
             screen_landscape = false
@@ -424,8 +442,29 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         } else
             batteryView.visibility = View.GONE
 
-        loop_enabled = SharedPreferencesUtil.getBoolean("player_loop", false)
-        isAudioOnlyMode = SharedPreferencesUtil.getBoolean("player_audio_only", false)
+        // 「播放默认值」：开/关直接决定，沿用上次读 PLAYER_LAST_*；lastUsed 的默认值取各功能的
+        // 原默认值（循环/听视频原本都是 false），于是"选了沿用上次但还没有历史"时行为与改造前一致。
+        // 旧开关（player_loop / player_audio_only）只用来迁移默认模式，保证升级后行为不变。
+        loop_enabled = PlayerDefaults.resolveTriState(
+            SharedPreferencesUtil.getString(
+                SettingsKeys.PLAYER_DEFAULT_LOOP,
+                if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_LOOP, false))
+                    SettingsKeys.PLAYER_DEFAULT_MODE_ON else SettingsKeys.PLAYER_DEFAULT_MODE_OFF
+            ),
+            SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_LAST_LOOP, false)
+        )
+        isAudioOnlyMode = PlayerDefaults.resolveTriState(
+            SharedPreferencesUtil.getString(
+                SettingsKeys.PLAYER_DEFAULT_AUDIO_ONLY,
+                if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_AUDIO_ONLY, false))
+                    SettingsKeys.PLAYER_DEFAULT_MODE_ON else SettingsKeys.PLAYER_DEFAULT_MODE_OFF
+            ),
+            SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_LAST_AUDIO_ONLY, false)
+        )
+        auto_next_enabled = PlayerDefaults.resolveTriState(
+            SharedPreferencesUtil.getString(SettingsKeys.PLAYER_DEFAULT_AUTONEXT, SettingsKeys.PLAYER_DEFAULT_MODE_OFF),
+            SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_LAST_AUTONEXT, false)
+        )
         isLocalAudioFile = intent.getBooleanExtra("audio_only", false)
         audioTrackUrl = intent.getStringExtra("audio_track_url")
         if (isLocalAudioFile) {
@@ -484,8 +523,7 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                         hasDanmaku = false
                 }
 
-                if (!destroyed && SharedPreferencesUtil.getBoolean("player_subtitle_autoshow", true))
-                    downSubtitle(false)
+                if (!destroyed) maybeAutoSubtitle()
 
                 if (!destroyed && isOnlineVideo && aid > 0 && cid > 0) {
                     loadHighEnergyData()
@@ -991,6 +1029,62 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         mainHandler?.post(loadingRunnable!!)
     }
 
+    /**
+     * 迁移旧「默认横屏」开关：开 → 横屏，关/未设置 → 竖屏（与升级前的行为一致）。
+     *
+     * 只在新的 [SettingsKeys.PLAYER_DEFAULT_ORIENTATION] 还没被写过时充当默认值。
+     */
+    private fun defaultOrientationMode(): String =
+        if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_AUTOLANDSCAPE, false))
+            SettingsKeys.PLAYER_DEFAULT_ORIENTATION_LANDSCAPE
+        else SettingsKeys.PLAYER_DEFAULT_ORIENTATION_PORTRAIT
+
+    /**
+     * 「按视频分辨率选择」：等拿到真实视频宽高后判一次方向。
+     *
+     * 只判一次（[autoOrientationApplied]）——本方法会被 `onConfigurationChanged` 再次调到，
+     * 转屏后重新判定会来回抖；用户手动旋转也不该被拽回来。
+     */
+    private fun applyAutoOrientationIfNeeded(videoWidth: Int, videoHeight: Int) {
+        if (autoOrientationApplied || playerOrientationMode != SettingsKeys.PLAYER_DEFAULT_ORIENTATION_AUTO) return
+        autoOrientationApplied = true
+
+        val wantLandscape = PlayerDefaults.resolveLandscape(playerOrientationMode, videoWidth, videoHeight)
+        if (wantLandscape == screen_landscape) return
+
+        if (SharedPreferencesUtil.getBoolean("dev_player_rotate_software", false)) {
+            // 软件旋屏设备：与 onCreate 一致，不自动转（那里的提示是"不支持默认横屏"），
+            // 交给用户用旋转按钮，否则会走进一条转不动的死路。
+            Logu.d("screen", "按视频分辨率选择：本机走软件旋屏，跳过自动转屏")
+            return
+        }
+        screen_landscape = wantLandscape
+        // 本方法可能在 IJK 线程上被调用（见 onPrepared 注释），转屏必须回主线程
+        runOnUiThread {
+            requestedOrientation = if (wantLandscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
+    /**
+     * 「播放默认值 → 倍速」：把解析出的倍速设到滑条上，并同步给播放器与弹幕。
+     *
+     * 用 `seekbar_speed.progress =` 而不是模拟拖动：这样 `onProgressChanged` 的 `fromUser` 为 false，
+     * 不会把"默认值"误写成「沿用上次」的记录位。
+     */
+    private fun applyDefaultSpeed() {
+        val speed = PlayerDefaults.resolveSpeed(
+            SharedPreferencesUtil.getString(SettingsKeys.PLAYER_DEFAULT_SPEED, "1.0"),
+            SharedPreferencesUtil.getFloat(SettingsKeys.PLAYER_LAST_SPEED, 1.0f)
+        )
+        val index = speed_values.indexOfFirst { abs(it - speed) < 0.001f }.takeIf { it >= 0 } ?: 2
+        seekbar_speed.progress = index
+        text_speed.text = speed_strs[index]
+        text_newspeed.text = speed_strs[index]
+        ijkPlayer?.setSpeed(speed_values[index])
+        mDanmakuView?.setSpeed(speed_values[index])
+    }
+
     private fun changeVideoSize() {
         if (!isPrepared || ijkPlayer == null) return
         val width = ijkPlayer!!.videoWidth
@@ -1002,6 +1096,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
             Logu.v("视频尺寸", "视频宽高为0，跳过尺寸调整（可能处于听视频模式）")
             return
         }
+
+        applyAutoOrientationIfNeeded(width, height)
 
         if (SharedPreferencesUtil.getBoolean("player_ui_round", false)) {
             val videoMul = height.toFloat() / width.toFloat()
@@ -1280,7 +1376,33 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         }
     }
 
-    private fun downSubtitle(fromBtn: Boolean) {
+    /**
+     * 「播放默认值 → 字幕」的入口：决定开播时怎么处理字幕。
+     *
+     * - 中文：自动选中文字幕（优先人工，其次 AI），**不弹**选择框；
+     * - 自行选择：沿用既有「自动弹出字幕选择」开关（开才弹选择框）。
+     *
+     * 三个调用点原本都跑在 `CenterThreadPool` 后台线程里，这里不做线程切换。
+     */
+    private fun maybeAutoSubtitle() {
+        val mode = SharedPreferencesUtil.getString(
+            SettingsKeys.PLAYER_DEFAULT_SUBTITLE, SettingsKeys.PLAYER_DEFAULT_SUBTITLE_MANUAL
+        )
+        if (mode == SettingsKeys.PLAYER_DEFAULT_SUBTITLE_ZH) {
+            downSubtitle(false, autoChinese = true)
+        } else if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SUBTITLE_AUTOSHOW, true)) {
+            downSubtitle(false)
+        }
+    }
+
+    /**
+     * 拉取字幕列表并按需展示选择框。
+     *
+     * @param fromBtn 用户点了字幕按钮（true 时无字幕要提示；且忽略「允许仅AI字幕」限制）
+     * @param autoChinese 「播放默认值 → 字幕 = 中文」：自动选中文字幕（优先人工，其次 AI），
+     *   **不弹选择框**。此时不走下面那段选择框逻辑。
+     */
+    private fun downSubtitle(fromBtn: Boolean, autoChinese: Boolean = false) {
         try {
             if (subtitleLinks == null) {
                 subtitleLinks = if (isOnlineVideo) PlayerApi.getSubtitleLinks(aid, cid)
@@ -1293,6 +1415,17 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
             }
 
             subtitle_delta = SharedPreferencesUtil.getFloat("player_subtitle_delta", 0.3f)
+
+            if (autoChinese) {
+                val index = PlayerDefaults.pickChineseSubtitleIndex(
+                    subtitleLinks!!.map { PlayerDefaults.SubtitleCandidate(it.lang, it.isAI) }
+                )
+                Logu.d("subtitle", "默认中文字幕自动选择：index=$index")
+                if (index < 0) return
+                subtitle_selected = index
+                CenterThreadPool.run { getSubtitle(subtitleLinks!![index].url) }
+                return
+            }
 
             val aiNotOnly = (subtitleLinks!!.size > 2 || (subtitleLinks!!.size == 2 && !subtitleLinks!![0].isAI))
             val aiAllowed = (fromBtn || SharedPreferencesUtil.getBoolean("player_subtitle_ai_allowed", false))
@@ -2078,6 +2211,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                     text_speed.text = speed_strs[position]
                     ijkPlayer?.setSpeed(speed_values[position])
                     mDanmakuView?.setSpeed(speed_values[position])
+                    // 「播放默认值 → 倍速 = 沿用上次」的记录位：只有用户自己调过才算"上次用过的"。
+                    SharedPreferencesUtil.putFloat(SettingsKeys.PLAYER_LAST_SPEED, speed_values[position])
                 }
             }
 
@@ -2218,6 +2353,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     private fun toggleAudioOnlyMode() {
         val oldMode = isAudioOnlyMode
         isAudioOnlyMode = !isAudioOnlyMode
+        // 「播放默认值 → 听视频模式 = 沿用上次」的记录位；切换失败会在下面 catch 里回滚
+        SharedPreferencesUtil.putBoolean(SettingsKeys.PLAYER_LAST_AUDIO_ONLY, isAudioOnlyMode)
 
         if (isPrepared && ijkPlayer != null) {
             // 重建前的续播位置由 video_now 提供（与 retryAfterPlayerError 同一口径），
@@ -2266,6 +2403,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                     runOnUiThread {
                         MsgUtil.showMsg("切换失败，请重试")
                         isAudioOnlyMode = oldMode
+                        // 切换失败就不该污染「沿用上次」的记录
+                        SharedPreferencesUtil.putBoolean(SettingsKeys.PLAYER_LAST_AUDIO_ONLY, oldMode)
                         updateAudioOnlyButton()
                         updateAudioOnlyUI()
                         loading_info.visibility = View.GONE
@@ -2544,8 +2683,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                     downdanmu()
                 }
 
-                if (!destroyed && SharedPreferencesUtil.getBoolean("player_subtitle_autoshow", true)) {
-                    downSubtitle(false)
+                if (!destroyed) {
+                    maybeAutoSubtitle()
                 }
 
                 if (!destroyed && isOnlineVideo && aid > 0 && cid > 0) {
@@ -2566,6 +2705,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     private fun toggleAutoNext() {
         auto_next_enabled = !auto_next_enabled
         updateAutoNextButton()
+        // 「播放默认值 → 自动连播 = 沿用上次」的记录位
+        SharedPreferencesUtil.putBoolean(SettingsKeys.PLAYER_LAST_AUTONEXT, auto_next_enabled)
         MsgUtil.showMsg(if (auto_next_enabled) "已开启自动连播" else "已关闭自动连播")
     }
 
@@ -3042,8 +3183,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                                 downdanmu()
                             }
 
-                            if (!destroyed && SharedPreferencesUtil.getBoolean("player_subtitle_autoshow", true)) {
-                                downSubtitle(false)
+                            if (!destroyed) {
+                                maybeAutoSubtitle()
                             }
 
                             if (!destroyed && isOnlineVideo && aid > 0 && cid > 0) {
@@ -3173,17 +3314,27 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
 
         if ((isLiveMode || hasDanmaku) && mDanmakuView != null) mDanmakuView!!.start()
         if (SharedPreferencesUtil.getBoolean("player_ui_showDanmakuBtn", true)) {
-            isDanmakuVisible = !SharedPreferencesUtil.getBoolean("pref_switch_danmaku", true)
+            // 「播放默认值 → 弹幕」：开/关直接决定；沿用上次读 pref_switch_danmaku
+            // （沿用既有键，默认开 —— 与改造前完全一致）。
+            isDanmakuVisible = PlayerDefaults.resolveTriState(
+                SharedPreferencesUtil.getString(SettingsKeys.PLAYER_DEFAULT_DANMAKU, SettingsKeys.PLAYER_DEFAULT_MODE_LAST),
+                SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_LAST_DANMAKU, true)
+            )
+            // 直接把视图与图标设成解析结果。旧写法是"先设成反值、再 performClick() 翻一次"，
+            // 那种取反技巧叠加三种默认模式后很容易对不上（开/关会互相打架），改成直白设置。
+            if (mDanmakuView != null) {
+                if (isDanmakuVisible) mDanmakuView!!.show() else mDanmakuView!!.hide()
+            }
+            btn_danmaku.setImageResource(if (isDanmakuVisible) R.mipmap.danmakuon else R.mipmap.danmakuoff)
             btn_danmaku.setOnClickListener {
                 if (mDanmakuView == null) return@setOnClickListener
                 if (isDanmakuVisible) mDanmakuView!!.hide()
                 else mDanmakuView!!.show()
                 btn_danmaku.setImageResource(if (isDanmakuVisible) R.mipmap.danmakuoff else R.mipmap.danmakuon)
                 isDanmakuVisible = !isDanmakuVisible
-                SharedPreferencesUtil.putBoolean("pref_switch_danmaku", isDanmakuVisible)
+                // 「播放默认值 → 弹幕 = 沿用上次」的记录位
+                SharedPreferencesUtil.putBoolean(SettingsKeys.PLAYER_LAST_DANMAKU, isDanmakuVisible)
             }
-            btn_danmaku.performClick()
-            
             btn_danmaku.visibility = View.VISIBLE
         } else btn_danmaku.visibility = View.GONE
 
@@ -3193,8 +3344,13 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
             btn_loop.setOnClickListener {
                 btn_loop.setImageResource(if (loop_enabled) R.mipmap.loopoff else R.mipmap.loopon)
                 loop_enabled = !loop_enabled
+                // 「播放默认值 → 循环播放 = 沿用上次」的记录位
+                SharedPreferencesUtil.putBoolean(SettingsKeys.PLAYER_LAST_LOOP, loop_enabled)
             }
             btn_loop.visibility = View.VISIBLE
+
+            // 「播放默认值 → 倍速」：放到滑条上并同步给播放器/弹幕
+            applyDefaultSpeed()
 
             if (isLocalAudioFile) {
                 btn_audio_only.visibility = View.GONE
