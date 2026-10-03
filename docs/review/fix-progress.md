@@ -929,3 +929,12 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 待版本发布后由 issue 作者真机确认删除交互（第一次长按提示「再次长按删除」，4 秒内第二次长按执行删除）。
 
 > 验证：本轮改动为 Kotlin / 资源引用级修改，且**未增删 `res/` 文件集合**（只引用既有的 `Theme.*.NoSwipe.AppCompat`），可避开 AGENTS.md 记录的资源 build-cache 坑。本机无 JDK / Android SDK，改由 GitHub Actions（`.github/workflows/ci.yml`：`:app:assembleDebug` + `:app:testDebugUnitTest`）验证，结果以 CI 为准。
+
+### 短视频页点顶栏直接退出（已修）
+
+- **现象**：短视频页点击顶栏（标题栏 / 返回箭头）会直接把页面 `finish()` 掉；短视频作为启动页时等于直接退出应用。
+- **根因**：`ShortVideoPlayerActivity : InstanceActivity()`，属于「菜单入口页」。基类已为这类页面统一提供 `menuClick`（跳 `MenuActivity` 主菜单），其余兄弟页（推荐 / 热门 / 入榜必刷 / 排行榜 / 热搜 / 直播 / 时间线 / 动态）都在 `onCreate` 里 `setMenuClick()`。短视频页没走这条链，反而在 `PageHolder` 里把 `top.setOnClickListener` 覆盖成了 `pause(); activity.finish()`（`MenuActivity` 的 import 随之变成死代码，说明历史上曾是回菜单）。
+- **修复**：`PageHolder` 的顶栏点击改为「先 `pause()` 暂停当前短视频与弹幕，再 `activity.menuClick.run()` 展开主菜单」，与其它菜单入口页一致。
+- **未动正常视频**：`PlayerActivity`（普通播放器，非 `InstanceActivity`）的 `layout_top.setOnClickListener { finish() }` 保持原样。
+- **说明**：`MenuActivity` 是 `launchMode="singleTask"`，若任务栈里已有菜单实例，`menuClick` 会回到那个实例并清掉其上的短视频页（与其它入口页行为一致）；短视频作为启动页（栈里无菜单）时，菜单叠在其上、短视频暂停，返回后按 `wasPlayingWhenPaused` 恢复播放。
+
