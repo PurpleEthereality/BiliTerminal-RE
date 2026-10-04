@@ -141,6 +141,46 @@
 
         </LinearLayout>
 
+        <!-- 多选条：同样默认隐藏，只有收藏夹内容页在能写（自己的收藏夹 + 有 media_id）时才点亮。
+             「多选」进出多选模式，「删除(n)」把选中的条目一次从收藏夹里移除。 -->
+        <LinearLayout
+            android:id="@+id/manageBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="@dimen/activity_padding_horizontal"
+            android:paddingVertical="2dp"
+            android:orientation="horizontal"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:id="@+id/manageToggle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:minHeight="@dimen/touch_min"
+                android:paddingVertical="4dp"
+                android:background="?attr/selectableItemBackground"
+                android:text="多选"
+                android:textSize="13sp"
+                android:textColor="?android:attr/textColorSecondary" />
+
+            <TextView
+                android:id="@+id/manageDelete"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:minHeight="@dimen/touch_min"
+                android:paddingVertical="4dp"
+                android:background="?attr/selectableItemBackground"
+                android:text="删除"
+                android:textSize="13sp"
+                android:textColor="?android:attr/textColorSecondary" />
+
+        </LinearLayout>
+
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
             android:id="@+id/swipeRefreshLayout"
             android:layout_width="match_parent"

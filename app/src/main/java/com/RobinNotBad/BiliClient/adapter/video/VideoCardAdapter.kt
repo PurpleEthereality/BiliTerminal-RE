@@ -19,6 +19,15 @@ class VideoCardAdapter(
     /** 自定义点击监听器，如果设置了则覆盖默认的视频详情页跳转行为 */
     var onItemClickListener: ((Int, VideoCard) -> Unit)? = null
 
+    /**
+     * 多选模式：进入后列表项可以勾选/取消（收藏夹多选删除用）。
+     * 勾选状态由页面持有，这里只按 [selectedAids] 画样式。
+     */
+    var selectionMode: Boolean = false
+
+    /** 已勾选的 aid 集合（页面持有同一个引用） */
+    var selectedAids: MutableSet<Long> = HashSet()
+
     init {
         setHasStableIds(true)
     }
@@ -65,6 +74,8 @@ class VideoCardAdapter(
         if (onItemClickListener != null) {
             holder.setCustomClickCallback { onItemClickListener!!.invoke(position, videoCard) }
         }
+
+        holder.applySelection(selectionMode, selectedAids.contains(videoCard.aid))
     }
 
     override fun getItemCount(): Int {

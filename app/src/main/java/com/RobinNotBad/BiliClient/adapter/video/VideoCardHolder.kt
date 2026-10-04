@@ -124,6 +124,23 @@ class VideoCardHolder(@androidx.annotation.NonNull itemView: View) : RecyclerVie
         this.customClickCallback = callback
     }
 
+    /**
+     * 多选模式下的选中样式：未选中的条目整体压暗，选中的条目标题前加一个 ✓ 前缀。
+     * 不做新控件、也不动 `cell_video_list.xml` 的 id——那些 id 是跨包事实协议
+     * （见 `docs/architecture-map.md` 第 7 节），为多选再引入一个 id 不值得。
+     */
+    fun applySelection(selectionMode: Boolean, selected: Boolean) {
+        if (!selectionMode) {
+            itemView.alpha = 1f
+            return
+        }
+        itemView.alpha = if (selected) 1f else 0.45f
+        if (title.text?.startsWith(PREFIX_SELECTED) == true || title.text?.startsWith(PREFIX_UNSELECTED) == true) {
+            title.text = title.text.subSequence(2, title.text.length)
+        }
+        title.text = android.text.TextUtils.concat(if (selected) PREFIX_SELECTED else PREFIX_UNSELECTED, title.text)
+    }
+
     @SuppressLint("SetTextI18n")
     fun showVideoCard(videoCard: VideoCard, context: Context) {
         val strUpName = videoCard.upName
@@ -178,6 +195,10 @@ class VideoCardHolder(@androidx.annotation.NonNull itemView: View) : RecyclerVie
     companion object {
         private val requestManager = Glide.with(BiliTerminal.context!!)
         private val TITLE_COLOR_SPAN = ForegroundColorSpan(ColorScheme.PRIMARY)
+
+        /** 多选模式下标题前缀，两者都是 2 个字符宽（后者是全角空格，用来保持对齐） */
+        private const val PREFIX_SELECTED = "✓ "
+        private const val PREFIX_UNSELECTED = "　 "
 
         @JvmStatic
         fun getRequestOptions(): RequestOptions {

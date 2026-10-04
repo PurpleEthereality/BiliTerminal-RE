@@ -656,7 +656,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | C17 | 弹幕点赞 / 撤回自己的弹幕 | 无计划 |
 | C18 | 稍后再看「未看完」分类 | **已实现（26.10.04 批次 7）**：判据来自稍后再看接口本身就带的 `progress`（已看秒数）与 `duration`（总时长秒数）——`api/WatchLaterApi.java` 新增纯函数 `isUnfinished(progress, duration)`（`progress <= 0` 不算「未看完」，那是「没播过」；总时长未知时只看 `progress > 0`；否则 `progress < duration`）与 `filterUnfinished(list, onlyUnfinished)`；`model/VideoCard.java` 新增 `duration` 字段（只有本接口会填，Parcel 读写成对追加在末尾）。UI 侧 `res/layout/activity_simple_refresh.xml` 新增**默认 `gone`** 的 `filterBar`（「全部」/「未看完」两个 chip，和 `loadMoreTip` 一样放在列表外，不影响其它 `RefreshListActivity` 页面），`activity/user/WatchLaterActivity.kt` 重写：接口全量存 `allList`、adapter 持有 `shownList` 引用，切档只重填引用 + `notifyDataSetChanged()`，**不重新请求接口**；删除手势仍是原来的「连点两次长按」 |
 | C19 | 收藏夹排序 / 复制 / 移动 | **已实现（26.10.04 批次 7）**：这里的「排序」指**收藏内容列表的排序**（`GET x/v3/fav/resource/list` 的 `order` 参数，取值 `mtime`/`view`/`pubtime`）——快照里**没有任何给收藏夹本身排序的接口**。`api/FavoriteApi.java` 新增排序常量 `ORDER_FAV_TIME`/`ORDER_VIEW`/`ORDER_PUBTIME` 与 `legacyOrder()`（老接口 `x/space/fav/arc` 的收藏时间叫 `fav_time` 不叫 `mtime`），`getFolderVideosNew`/`getFolderVideos` 各加一个带 `order` 的重载（旧签名保留并委托）；复制/移动走 `POST x/v3/fav/resource/copy`∥`/move`，参数 `src_media_id`/`tar_media_id`/`mid`/`resources`（格式 `{avid}:2`，`buildResources()` 纯函数负责拼、跳过 `aid<=0`）/`platform=web`/`csrf`，另有 `resourceErrorMsg()`（0/-101/-111/-400/11010）。UI 侧 `activity_simple_refresh.xml` 新增**默认 `gone`** 的 `sortBar`（三个 chip），`FavoriteVideoListActivity` 重写：切档 = 重置 `page` + 清列表 + 重发第一页（**排序是服务端参数，必须重拉**，与 C18 的本地筛选不同）；`writable`（自己的收藏夹且拿得到 `media_id`）时长按弹「复制到…/移动到…/取消收藏」菜单，目标收藏夹从 `getFavoriteFolders(mid)` 里选并排除自己；拿不到 `media_id` 时保留原「连点两次长按删除」兜底。`FavoriteFolderAdapter` 现在也把自己的收藏夹的 `media_id` 传过去（原来只有他人收藏夹传） |
-| C20 | 收藏夹多选删除 | 想要实现（与 C19 共用接口封装） |
+| C20 | 收藏夹多选删除 | **已实现（26.10.04 批次 7）**：走 `POST x/v3/fav/resource/batch-del`，参数 `resources`（复用 C19 的 `buildResources()`，格式 `{avid}:2` 逗号分隔）/`media_id`/`platform=web`/`csrf`，`api/FavoriteApi.java` 新增 `batchDeleteResources(mediaId, cards)`（`mediaId<=0` 或资源为空直接返回 `-400` 不发请求）、错误文案复用 C19 的 `resourceErrorMsg()`。UI 侧 `activity_simple_refresh.xml` 再新增**默认 `gone`** 的 `manageBar`（「多选」/「删除」两个 chip），`FavoriteVideoListActivity` 只在 `writable`（自己的收藏夹且有 `media_id`）时点亮：点「多选」进入勾选模式（点条目勾选、标题前加 `✓ `、未选中条目压暗到 `alpha=0.45`），点「删除」先弹确认框再批量请求，成功后本地移除并退出多选；勾选状态由页面持有 `LinkedHashSet<Long>`，adapter 只按集合画样式（**没有动 `cell_video_list.xml` 的任何 id**，那是跨包事实协议）；切排序会自动退出多选 |
 | C21 | 关注分组增删改 | 想要实现 |
 | C22 | 移除粉丝 | 暂缓 |
 | C23 | 搜索用户动态 | 无计划 |
@@ -704,7 +704,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 
 | 结论 | 项数 |
 |---|---|
-| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C12 / C13 / C14 / C16 已于批次 5 落地、C3 / C4 / C6b / C7 / C8 / C9 / C10 / C27 已于批次 6 落地，C18 / C19 已于批次 7 落地，剩 12） |
+| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C12 / C13 / C14 / C16 已于批次 5 落地、C3 / C4 / C6b / C7 / C8 / C9 / C10 / C27 已于批次 6 落地，C18 / C19 / C20 已于批次 7 落地，剩 11） |
 | 暂缓 | 10 |
 | 无计划 | 25 |
 | 已经实现（勘误） | 4（D2 / D3 / D5 主体，另 C3·C6·C8 的「已实现」子项） |
@@ -712,9 +712,9 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | **26.10.04 批次 4 落地** | 3（E4 E5 E6），另有 2 项勘误（E4 字面量 13 处而非 14 处；`applyBatch` 与 `beginBatchEdit` 同类一并删） |
 | **26.10.04 批次 5 落地** | 4（C13 会话删除 + 置顶/取消置顶；C12 私信发图；C14 新消息通知栏提醒；C16 追番更新提醒），本批 4 项全部完成 |
 | **26.10.04 批次 6 落地** | 8 项全部完成（C3 评论置顶/删除菜单；C4 楼中楼排序；C6b 带图评论发送闸门；C7 动态编辑；C8 动态置顶/取消；C9 动态定时发布；C10 话题广场 + 话题动态列表；C27 视频笔记查看），每项（或小分组）独立提交，见 `docs/review/fix-progress.md` §十九~§二十六 |
-| **26.10.04 批次 7 落地** | 进行中（2/4）：C18 稍后再看「未看完」分类见 §二十七、C19 收藏夹排序/复制/移动见 §二十八；C20 收藏夹多选删除、C21 关注分组增删改待做 |
+| **26.10.04 批次 7 落地** | 进行中（3/4）：C18 稍后再看「未看完」分类见 §二十七、C19 收藏夹排序/复制/移动见 §二十八、C20 收藏夹多选删除见 §二十九；C21 关注分组增删改待做 |
 
-**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（**批次 5 全部完成**：C13 ✅ 见 §十五；C12 ✅ 见 §十六；C14 ✅ 见 §十七；C16 ✅ 见 §十八，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27（**批次 6 全部完成**：C3 ✅ 见 §十九；C4 ✅ 见 §二十；C6b ✅ 见 §二十一；C7 ✅ 见 §二十二；C8 ✅ 见 §二十三；C9 ✅ 见 §二十四；C10 ✅ 见 §二十五；C27 ✅ 见 §二十六）→ ⑦ C18 C19 C20 C21（**批次 7 进行中（2/4）**：C18 ✅ 见 §二十七；C19 ✅ 见 §二十八；C20 / C21 待做）→ ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
+**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（**批次 5 全部完成**：C13 ✅ 见 §十五；C12 ✅ 见 §十六；C14 ✅ 见 §十七；C16 ✅ 见 §十八，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27（**批次 6 全部完成**：C3 ✅ 见 §十九；C4 ✅ 见 §二十；C6b ✅ 见 §二十一；C7 ✅ 见 §二十二；C8 ✅ 见 §二十三；C9 ✅ 见 §二十四；C10 ✅ 见 §二十五；C27 ✅ 见 §二十六）→ ⑦ C18 C19 C20 C21（**批次 7 进行中（3/4）**：C18 ✅ 见 §二十七；C19 ✅ 见 §二十八；C20 ✅ 见 §二十九；C21 待做）→ ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
 
 ---
 

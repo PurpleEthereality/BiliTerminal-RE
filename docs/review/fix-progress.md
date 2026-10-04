@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八/§二十九
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -2228,7 +2228,63 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 调研报告 §12.4 的 C19 行改为「已实现（26.10.04 批次 7）」；§12.6 测试数改 34 类 / 290 例；§12.7 的「想要实现 36（…剩 13）」改剩 12，「26.10.04 批次 7 落地」行改 2/4；批次顺序 ⑦ 标为进行中（2/4）。
 - `docs/architecture-map.md` 新增 §7.24「收藏夹：排序 + 复制 / 移动」，并把测试数改为 34 个测试类 / 290 个用例。
 - 接口依据：`bilibili-API/docs/fav/list.md:5-32`（资源列表的 `order` 取值）、`bilibili-API/docs/fav/action.md:246-304`（`x/v3/fav/resource/copy`）、`:306-364`（`/move`，参数与 `resources` 格式、错误码 0/-101/-111/-400/11010）、`:366-418`（`batch-del`，C20 用）。
-- 批次 7 进度：C18（§二十七）→ C19（本条）→ C20 收藏夹多选删除 → C21 关注分组增删改。
+- 批次 7 进度：C18（§二十七）→ C19（§二十八）→ C20 收藏夹多选删除（本条）→ C21 关注分组增删改。
+
+---
+
+## 二十九、26.10.04 批次 7（3/4）：收藏夹多选删除（C20）
+
+### 为什么做
+
+用户裁决「收藏夹批量整理」为**想要实现**（调研报告 §12.4 的 C19/C20）。C19 解决的是「一条一条挪」，C20 解决的是「一次清掉一批」——手表上没有键盘，但多选只需要点，正好适合触屏。范围限定为**收藏夹内的多选删除**，不做跨夹批量移动（那需要另一套目标夹选择交互，收益低）。
+
+### 改动
+
+| 文件 | 改动 |
+| --- | --- |
+| `app/src/main/res/layout/activity_simple_refresh.xml` | 新增默认 `gone` 的 `manageBar`（`manageToggle`「多选」/`manageDelete`「删除」两个等宽 chip），第三个复用该基类布局的可选分组 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/FavoriteApi.java` | 新增 `batchDeleteResources(mediaId, cards)`：走 `POST x/v3/fav/resource/batch-del`，复用 `buildResources()`；`mediaId<=0` 或资源为空直接返回 `-400` 不发请求；错误文案复用 `resourceErrorMsg()` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/video/VideoCardAdapter.kt` | 新增 `selectionMode` 与 `selectedAids`（页面注入同一个集合引用）；`onBindViewHolder` 末尾调 `holder.applySelection(...)` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/video/VideoCardHolder.kt` | 新增 `applySelection(selectionMode, selected)`：未选中压暗 `alpha=0.45f`、标题前加 `"✓ "`/`"　 "` 前缀；companion 新增两个 2 字符前缀常量 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/user/favorite/FavoriteVideoListActivity.kt` | `setupManageBar()`/`enterSelectionMode()`/`exitSelectionMode()`/`toggleSelected()`/`updateManageBar()`/`confirmBatchDelete()`/`applyRemoved()`；多选下点击与长按都改为勾选；`switchSort` 先退出多选；虚拟合集关闭时补回「进视频详情页」默认行为 |
+
+### 取舍
+
+- **接口用 `x/v3/fav/resource/batch-del` 而不是循环调单条删除**：一次请求删完，且与快照 :366-418 的参数（`resources`/`media_id`/`platform`/`csrf`）完全对上；`resources` 与 C19 的复制/移动同格式，直接复用 `buildResources()`，两个功能不会各写一套拼接。
+- **不加 FAB / 不在条目上加 checkbox**：`cell_video_list.xml` 的 id 是跨包事实协议（`PrivateMsgAdapter`、`DynamicHolder`、`NoticeHolder`、`OpusContentAdapter` 都在用），为多选加控件风险大于收益。选中态改用「条目压暗 + 标题前缀」，零新 id。
+- **勾选状态放页面、adapter 只画样式**：删除要按「当前列表里选中的那些」算，页面本来就持有 `videoList`；adapter 持有同一个 `MutableSet` 引用即可，避免两边状态不同步。`notifyItemChanged(position)` 只重画改动的那一条。
+- **`manageBar` 只在 `writable` 时出现**：别人的收藏夹（`readOnly`）与拿不到 `media_id` 的老链路不做多选——服务端也一定会拒（`media_id` 必填）。与 C19 的「长按菜单」共用同一个 `writable` 判据。
+- **切排序先退出多选**：排序会清空并重拉 `videoList`，`selectedAids` 若留着就会指向已经不存在的条目；先 `exitSelectionMode()` 再重拉，避免"删了一批看不见的东西"。
+- **空选时「删除」压暗但仍可点**：点了只提示「先选几条吧~」，比禁用后毫无反馈更适合手表（小屏上用户不一定看得出手感差异）。
+- **删除成功后本地移除、不重拉整页**：与 C19 的移动一致（`videoList.removeAll` + `notifyDataSetChanged`），少一次网络往返；空列表时才 `showEmptyView()`。
+
+### 单测
+
+C20 没有新增纯函数（`buildResources`/`resourceErrorMsg` 已在 C19 测过），故测试数不变：**34 个测试类 / 290 个用例**。网络请求部分与既有 api 测试一致，不测。
+
+### 验证
+
+本次只改既有布局文件、**没有新增 `res/` 文件**，按 AGENTS.md 不需要 clean 两连：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → **BUILD SUCCESSFUL in 1m 7s**（99 tasks）。`app/build/test-results/testDebugUnitTest` **34 个 XML / 290 个用例 / 0 失败 / 0 错误 / 0 跳过**。乱码自检 `git diff | Select-String '鐐|璇|鍒|锛|銆|鎴|鏂|锟'` 计数 0；`git status --porcelain` 无未跟踪文件；diff 涉及 5 个已跟踪文件（+207/-3）。
+
+### 真机验证清单
+
+1. 进入**自己的**收藏夹：排序行下面出现「多选 / 删除」两个项；**别人的收藏夹没有这一行**，其它列表页（稍后再看、历史记录）也看不到。
+2. 点「多选」：提示「点条目勾选，再点「删除」」，按钮文案变「退出多选」，进入勾选状态。
+3. 点几条视频：条目标题前出现 `✓`，未选中的条目明显压暗；再点一次取消勾选、标题前缀变回全角空格（文字不抖动、不错位）。
+4. 勾选后「删除」文案变「删除(3)」且是高亮色；没勾选时是「删除」且压暗，点它只提示「先选几条吧~」、不弹确认框。
+5. 点「删除」勾选 3 条：确认框写「确定把选中的 3 条从收藏夹里移除吗？」；确认后提示「已删除 3 条」、列表少 3 条、自动退出多选；网页端核对这 3 条确实没了。
+6. 取消确认框：列表不变、仍停留在多选模式、勾选状态保留。
+7. 多选模式下点击条目**不会**触发虚拟合集播放、也不会进视频详情页；长按也不会弹 C19 的管理菜单。
+8. 多选模式下切「播放量」排序：自动退出多选（按钮回到「多选」、勾选清空），列表按新排序重拉。
+9. 把整个收藏夹都选上删除：提示条数正确，删完显示空视图（不是白屏），再进这个收藏夹网页端也是空的。
+10. 未登录/风控场景：接口返回 `-101`/`-111` 时提示「还没有登录喵~」/「登录凭证已失效，请重新登录」；选中别人的收藏夹（若可达）时不会出现多选入口。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C20 行改为「已实现（26.10.04 批次 7）」；§12.7 的「想要实现 36（…剩 12）」改剩 11、「26.10.04 批次 7 落地」行改 3/4；批次顺序 ⑦ 标为进行中（3/4）。§12.6 测试数保持 34 类 / 290 例（无新增用例）。
+- `docs/architecture-map.md` 新增 §7.25「收藏夹多选删除」，并说明 `manageBar` 是 `activity_simple_refresh.xml` 里第三个默认隐藏分组。
+- 接口依据：`bilibili-API/docs/fav/action.md:366-418`（`x/v3/fav/resource/batch-del` 参数与错误码）；`resources` 格式与错误码文案见 C19（§二十八 / §7.24）。
+- 批次 7 进度：C18（§二十七）→ C19（§二十八）→ C20（本条）→ C21 关注分组增删改。
 
 
 

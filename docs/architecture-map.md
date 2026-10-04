@@ -555,6 +555,17 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 ---
 
+### 7.25 收藏夹多选删除（26.10.04 批次 7 的 C20）
+
+- **接口**：`POST x/v3/fav/resource/batch-del`，参数 `resources`（C19 的 `buildResources()`，`{avid}:2` 逗号分隔）/`media_id`/`platform=web`/`csrf`；`api/FavoriteApi.batchDeleteResources(mediaId, cards)` 在 `mediaId <= 0` 或资源为空时**直接返回 `-400` 不发请求**（和 `copyResources`/`moveResources` 一样的前置校验），错误文案复用 `resourceErrorMsg()`。
+- **`manageBar` 是 `res/layout/activity_simple_refresh.xml` 里第三个默认 `gone` 的分组**（前两个是 C18 的 `filterBar`、C19 的 `sortBar`）：两个等宽 chip `manageToggle`（「多选」/「退出多选」）与 `manageDelete`（「删除」/「删除(n)」）。只在 `writable`（自己的收藏夹且有 `media_id`）时点亮；没勾选任何条目时「删除」压暗到 `alpha=0.5`，点了只提示「先选几条吧~」。
+- **勾选状态在页面，不在 adapter**：页面持有 `LinkedHashSet<Long> selectedAids` 并把同一个引用交给 `VideoCardAdapter.selectedAids`；`VideoCardAdapter.selectionMode` 只影响 `onBindViewHolder` 末尾那次 `holder.applySelection(selectionMode, selectedAids.contains(aid))`。
+- **选中样式不动任何布局 id**：`adapter/video/VideoCardHolder.applySelection` 用「未选中条目 `itemView.alpha = 0.45f`」+「标题前加 2 字符前缀」（`TextUtils.concat`，选中 `"✓ "`、未选中 `"　 "` 全角空格对齐，加之前先 `subSequence(2, …)` 剥旧前缀）。**没有给 `cell_video_list.xml` 加 checkbox**——那里的 id 是跨包事实协议（见第 7 节开头），为画个勾不值得冒险。
+- **多选模式下的手势语义**：点条目 = 勾选/取消勾选（覆盖虚拟合集点击与进视频详情页），长按也走勾选、不再弹 C19 的管理菜单。**切排序会先 `exitSelectionMode()`**（`switchSort` 里），否则 `selectedAids` 会指向被清空的旧列表。
+- **删除流程**：确认框文案「确定把选中的 N 条从收藏夹里移除吗？」→ `CenterThreadPool.run { batchDeleteResources(mediaId, targets) }` → code 0 时提示「已删除 N 条」+ 本地 `videoList.removeAll(targets)` + `notifyDataSetChanged` + 空则 `showEmptyView()` + 退出多选；非 0 用 `resourceErrorMsg(code)`。
+
+---
+
 ## 8. UI 基建速查（新增页面临摹用）
 
 ### 8.1 完整继承体系

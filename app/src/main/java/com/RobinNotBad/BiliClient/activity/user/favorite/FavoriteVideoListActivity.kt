@@ -18,6 +18,7 @@ import com.RobinNotBad.BiliClient.ui.appearance.ColorScheme
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
+import com.RobinNotBad.BiliClient.util.TerminalContext
 
 class FavoriteVideoListActivity : RefreshListActivity() {
 
@@ -41,6 +42,12 @@ class FavoriteVideoListActivity : RefreshListActivity() {
     private var sortFavTime: TextView? = null
     private var sortView: TextView? = null
     private var sortPubtime: TextView? = null
+
+    /** 多选删除：模式开关与已勾选的 aid（adapter 持有同一个集合引用） */
+    private var selectionMode = false
+    private val selectedAids = LinkedHashSet<Long>()
+    private var manageToggle: TextView? = null
+    private var manageDelete: TextView? = null
 
     /** 未选中档位的颜色，创建时从布局里的默认文字色抓一次 */
     private var unselectedColor: Int = 0
@@ -69,6 +76,7 @@ class FavoriteVideoListActivity : RefreshListActivity() {
         writable = !readOnly && mediaId > 0
 
         setupSortBar()
+        setupManageBar()
         setOnLoadMoreListener { page -> continueLoading(page) }
         loadFirstPage()
     }
@@ -90,7 +98,8 @@ class FavoriteVideoListActivity : RefreshListActivity() {
         if (order == sortOrder) return
         sortOrder = order
         updateSortColors()
-        // 排序是服务端参数，必须从第一页重拉
+        // 排序是服务端参数，必须从第一页重拉；重拉前先退出多选，避免勾选状态指向旧列表
+        if (selectionMode) exitSelectionMode()
         page = 1
         bottom = false
         videoList.clear()
@@ -102,6 +111,97 @@ class FavoriteVideoListActivity : RefreshListActivity() {
         sortFavTime?.setTextColor(if (sortOrder == FavoriteApi.ORDER_FAV_TIME) ColorScheme.PRIMARY else unselectedColor)
         sortView?.setTextColor(if (sortOrder == FavoriteApi.ORDER_VIEW) ColorScheme.PRIMARY else unselectedColor)
         sortPubtime?.setTextColor(if (sortOrder == FavoriteApi.ORDER_PUBTIME) ColorScheme.PRIMARY else unselectedColor)
+    }
+
+    /** 多选条只在能写（自己的收藏夹 + 有 media_id）时才出现 */
+    private fun setupManageBar() {
+        if (!writable) return
+        findViewById<View>(R.id.manageBar).visibility = View.VISIBLE
+        manageToggle = findViewById(R.id.manageToggle)
+        manageDelete = findViewById(R.id.manageDelete)
+        if (unselectedColor == 0) unselectedColor = manageToggle?.currentTextColor ?: unselectedColor
+        manageToggle?.setOnClickListener { if (selectionMode) exitSelectionMode() else enterSelectionMode() }
+        manageDelete?.setOnClickListener { confirmBatchDelete() }
+        updateManageBar()
+    }
+
+    private fun enterSelectionMode() {
+        selectionMode = true
+        selectedAids.clear()
+        videoCardAdapter?.let {
+            it.selectionMode = true
+            it.notifyDataSetChanged()
+        }
+        updateManageBar()
+        MsgUtil.showMsg("点条目勾选，再点「删除」")
+    }
+
+    private fun exitSelectionMode() {
+        selectionMode = false
+        selectedAids.clear()
+        videoCardAdapter?.let {
+            it.selectionMode = false
+            it.notifyDataSetChanged()
+        }
+        updateManageBar()
+    }
+
+    private fun toggleSelected(position: Int) {
+        val card = videoList.getOrNull(position) ?: return
+        if (!selectedAids.add(card.aid)) selectedAids.remove(card.aid)
+        videoCardAdapter?.notifyItemChanged(position)
+        updateManageBar()
+    }
+
+    private fun updateManageBar() {
+        manageToggle?.text = if (selectionMode) "退出多选" else "多选"
+        manageToggle?.setTextColor(if (selectionMode) ColorScheme.PRIMARY else unselectedColor)
+        manageDelete?.text = if (selectedAids.isEmpty()) "删除" else "删除(${selectedAids.size})"
+        // 没选东西时把「删除」压暗，点了给提示而不是弹一个空确认框
+        manageDelete?.alpha = if (selectedAids.isEmpty()) 0.5f else 1f
+        manageDelete?.setTextColor(if (selectedAids.isEmpty()) unselectedColor else ColorScheme.PRIMARY)
+    }
+
+    private fun confirmBatchDelete() {
+        if (selectedAids.isEmpty()) {
+            MsgUtil.showMsg("先选几条吧~")
+            return
+        }
+        val targets = videoList.filter { selectedAids.contains(it.aid) }
+        if (targets.isEmpty()) {
+            MsgUtil.showMsg("先选几条吧~")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("删除收藏内容")
+            .setMessage("确定把选中的 ${targets.size} 条从收藏夹里移除吗？")
+            .setPositiveButton("删除") { _, _ ->
+                CenterThreadPool.run {
+                    try {
+                        val code = FavoriteApi.batchDeleteResources(mediaId, targets)
+                        runOnUiThread {
+                            if (code == 0) {
+                                MsgUtil.showMsg("已删除 ${targets.size} 条")
+                                applyRemoved(targets)
+                                exitSelectionMode()
+                            } else {
+                                MsgUtil.showMsg(FavoriteApi.resourceErrorMsg(code))
+                            }
+                        }
+                    } catch (e: Exception) {
+                        report(e)
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    @SuppressLint("NotifyDataSetChanged")
+    private fun applyRemoved(removed: List<VideoCard>) {
+        videoList.removeAll(removed)
+        videoCardAdapter?.notifyDataSetChanged()
+        if (videoList.isEmpty()) showEmptyView()
     }
 
     /** 按当前排序拉一页 */
@@ -135,11 +235,19 @@ class FavoriteVideoListActivity : RefreshListActivity() {
     }
 
     private fun bindAdapter(adapter: VideoCardAdapter) {
+        adapter.selectedAids = selectedAids
         // 虚拟合集模式：点击收藏夹内视频，将当前收藏夹所有视频组成合集播放
-        if (SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.VIRTUAL_COLLECTION_ENABLE, true)) {
-            adapter.onItemClickListener = { position, videoCard ->
+        val virtualCollection = SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.VIRTUAL_COLLECTION_ENABLE, true)
+        adapter.onItemClickListener = { position, videoCard ->
+            if (selectionMode) {
+                // 多选模式下点击 = 勾选/取消勾选
+                toggleSelected(position)
+            } else if (virtualCollection) {
                 val folderId = if (mediaId > 0) mediaId else fid
                 playFavoriteVirtualCollection(position, videoCard.aid, folderId, folderName)
+            } else {
+                // 关掉虚拟合集时回到默认行为：进视频详情页
+                TerminalContext.getInstance().enterVideoDetailPage(this, videoCard.aid, videoCard.bvid, "video")
             }
         }
 
@@ -147,6 +255,11 @@ class FavoriteVideoListActivity : RefreshListActivity() {
     }
 
     private fun onItemLongClick(position: Int): Boolean {
+        // 多选模式下长按也是勾选，不再弹管理菜单
+        if (selectionMode) {
+            toggleSelected(position)
+            return true
+        }
         // 自己的收藏夹：长按弹管理菜单（复制/移动/取消收藏）
         if (writable) {
             showManageMenu(position)

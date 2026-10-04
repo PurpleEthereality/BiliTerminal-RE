@@ -420,6 +420,25 @@ public class FavoriteApi {
         return dealResources("https://api.bilibili.com/x/v3/fav/resource/move", srcMediaId, tarMediaId, cards);
     }
 
+    /**
+     * 批量把收藏内容从收藏夹里移除（多选删除）。
+     *
+     * @param mediaId 收藏夹 media_id（不能是 0，接口只认这个）
+     * @param cards   要删除的内容
+     * @return 服务端 code（0 成功）
+     */
+    public static int batchDeleteResources(long mediaId, List<VideoCard> cards) throws IOException, JSONException {
+        String resources = buildResources(cards);
+        if (mediaId <= 0 || resources.isEmpty()) return -400;
+        NetWorkUtil.FormData formData = new NetWorkUtil.FormData()
+                .put("resources", resources)
+                .put("media_id", mediaId)
+                .put("platform", "web")
+                .put("csrf", NetWorkUtil.currentCsrf());
+        JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post("https://api.bilibili.com/x/v3/fav/resource/batch-del", formData.toString(), NetWorkUtil.webHeaders).body()).string());
+        return result.getInt("code");
+    }
+
     private static int dealResources(String url, long srcMediaId, long tarMediaId, List<VideoCard> cards) throws IOException, JSONException {
         long mid = SharedPreferencesUtil.getLong("mid", 0);
         String resources = buildResources(cards);
