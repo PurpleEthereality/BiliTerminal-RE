@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -905,11 +905,11 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 
 ### P2 工程化
 
-- [ ] 拆分 PlayerActivity（3090 行）
-- [ ] 拆分 DownloadService（65KB）
-- [ ] 补单元测试（当前 **16 个测试类 / 112 用例**，覆盖 363 个源文件；26.09.11 新增 `ColorSchemeTest` 14、`CornerStyleTest` 10、`FontStyleTest` 13、`AppearanceManagerTest` 11；26.09.13 新增 `ViewCapabilityProbeTest` 4）
-- [ ] `AsyncLayoutInflaterX` 生命周期：`cancel()` 已实现但无人调用，`BaseActivity.asyncInflate` 回调可能落到已销毁 Activity
-- [ ] `SettingsKeys` 收敛收尾：`PLAYER` / `PLAY_QN` 与 14 处字面量、`SharedPreferencesUtil` 第三处定义并存
+- [ ] 拆分 PlayerActivity（实测 **3494 行**；26.10.04 拍板 → **E1：暂缓**）
+- [ ] 拆分 DownloadService（65KB；26.10.04 拍板 → **E2：想要实现**）
+- [ ] 补单元测试（当前 **21 个测试类 / 165 用例**；26.10.04 拍板 → **E3：想要实现**。历史：26.09.11 新增 `ColorSchemeTest` 14、`CornerStyleTest` 10、`FontStyleTest` 13、`AppearanceManagerTest` 11；26.09.13 新增 `ViewCapabilityProbeTest` 4；26.10.03 新增 `ViewPointSkipTest` 9；26.10.04 新增 `PlayerApiPbpTest` 9）
+- [ ] `AsyncLayoutInflaterX` 生命周期：`cancel()` 已实现但无人调用，`BaseActivity.asyncInflate` 回调可能落到已销毁 Activity（26.10.04 拍板 → **A12：想要实现**）
+- [ ] `SettingsKeys` 收敛收尾：`PLAYER` / `PLAY_QN` 与 14 处字面量、`SharedPreferencesUtil` 第三处定义并存（26.10.04 拍板 → **E4：想要实现**）
 
 ---
 
@@ -1107,3 +1107,50 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 ### 交叉引用
 
 架构记录见 `docs/architecture-map.md` §7.8。
+
+---
+
+## 十、26.10.04 逐条拍板后的待做队列
+
+> 依据：`docs/watch-optimization-research.md` **§12 决策台账**。该轮把本报告 §五/§六 与调研报告 §5/§7/§8/§10.4 的全部未落地项整理成清单，逐条向项目所有者确认。
+> 本节只解决 §五/§六 的处置去向，不重复台账全文（完整清单见台账 §12.2~§12.5）。
+
+### 结论映射
+
+| 台账编号 | 事项 | 结论 | 本报告对应位置 |
+|---|---|---|---|
+| A1 | csrf 实时化铺开到 11 个 api 类 | 想要实现 | 源自调研报告 §5.1（本报告未单列） |
+| A2 | `AnnouncementsActivity` 下拉刷新卡死 | 想要实现 | §五 P0 界面卡死 第 1 条 |
+| A3 | `PopularActivity` 不复位 refreshing | 想要实现 | §五 P0 界面卡死 第 3 条 |
+| A4 | `CollectionInfoActivity` 缺 onFailure + 死变量 | 想要实现 | §五 P0 界面卡死 第 2、5 条 |
+| A5 | `SeriesInfoActivity` 空字段 | 想要实现 | §五 P0 界面卡死 第 4 条 |
+| A6 | `OpusInfoActivity` 幽灵订阅 + 漏 `leaveDetailPage()` | 想要实现 | §五 P0 界面卡死 第 6 条 |
+| A7 | `SetupUIActivity` WebView 输入校验 | 暂缓 | §五 P0 功能正确性 末条 |
+| A8 | `TutorialManagerActivity` 教程键污染 | 暂缓 | §五 P0 界面卡死 第 8 条 |
+| A9 | `TestActivity` 硬编码专栏 id | 无计划 | §五 P0 界面卡死 第 7 条 |
+| A10 | 评论点踩死视图（`adapter/ReplyAdapter.kt:495`） | 想要实现 | 新增（本报告未列） |
+| A11 | 禁右滑主题被 `setTheme` 覆盖失效 | 想要实现 | 新增（与 issue #1 同源） |
+| A12 | `AsyncLayoutInflaterX` 生命周期 | 想要实现 | §五 P2 第 4 条 |
+| C6b | 评论发图无进度 / 无反馈 | 想要实现 | 新增（发图本体已实现） |
+| E1 | 拆分 `PlayerActivity`（实测 3494 行） | 暂缓 | §五 P2 第 1 条 |
+| E2 | 拆分 `DownloadService` | 想要实现 | §五 P2 第 2 条 |
+| E3 | 补单元测试 | 想要实现 | §五 P2 第 3 条 |
+| E4 | `SettingsKeys` 收敛 | 想要实现 | §五 P2 第 5 条 |
+| E5 | 删 `SharedPreferencesUtil.beginBatchEdit` | 想要实现 | §五 P1 架构清理 第 4 条 |
+| E6 | APK 签名 / 哈希校验 | 想要实现 | §五 P1 安全 末条 |
+
+### 已核实为「已经实现」，相应旧条目作废
+
+- **D2 跑马灯标题**：`ui/widget/MarqueeTextView.kt:21-31` 按 `marquee_enable` 设 `ellipsize=MARQUEE`，开关在 `activity/settings/SettingGroupActivity.kt:281`，约 20 个布局已改用。例外：`BaseActivity.kt:191-193` 把页面标题栏强制 `TruncateAt.END`，标题栏不跑马灯。
+- **D3 圆屏适配**：`util/SettingsKeys.kt:20` `UI_ROUND = "player_ui_round"`，开关 `SettingGroupActivity.kt:234`，`BaseActivity.kt:188-204` + `PlayerActivity.kt:839/859/1129/2071-2072`。设置页与代码读同一 key，无冲突（本报告 §五 P0 里曾记的"圆屏适配顶栏崩溃"已在第二十八/二十九轮修复）。
+- **D5 候选词点击即搜**：`activity/search/SearchActivity.kt:232-239` 建议项点击即 `setText` + `searchKeyword(...)`；输入框 `:197-202` 主动弹键盘。仅剩「搜索历史点击只填入、不触发搜索」（`:213`）→ 该小项裁为**暂缓**。
+
+### 数字勘误
+
+- `activity/player/PlayerActivity.kt` 实测 **3494 行**（原述 3090 行）。
+- 单元测试实测 **21 个测试类 / 165 个用例**（原述 16 类 / 112 例）。
+- JVM 单测可用 `org.json`（`app/build.gradle` 已有 `testImplementation 'org.json:json:20231013'`），但**纯解析函数禁止调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
+
+### 建议落地顺序（未拍板，仅供参考）
+
+**A 组缺陷**（多为 10 分钟~半天，先还技术债）→ **性能三项**（B5 限推荐/热门/搜索三页 / B2 / B3）→ **私信与通知链**（C13 / C14 / C16）→ **动态与评论增强**（C3 置顶 / C8 置顶 / C4 / C7 / C9 / C10）→ **收藏与关注整理**（C18~C21）→ **大件**（F4 漫画）；E 组（E2~E6）作为穿插收尾。

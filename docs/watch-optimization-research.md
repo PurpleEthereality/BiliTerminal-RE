@@ -4,6 +4,7 @@
 > 基线版本：26.10.03（versionCode 2610031，见 `app/build.gradle:23-24`）
 > 方法：GitHub REST API 一手查询 + Android 官方文档 + 对 `app/src/main` 源码逐条核对
 > 配套文档：`docs/architecture-map.md`（架构）、`docs/review/fix-progress.md`（问题台账）
+> **决策汇总：§12 决策台账（2026-10-04 逐条拍板）。本文其余章节与 §12 冲突时，一律以 §12 为准。**
 
 ---
 
@@ -19,7 +20,7 @@
 
 | # | 事项 | 类型 | 成本 | 说明 |
 |---|---|---|---|---|
-| 1 | 删除 `x86` ABI、视发布需要关掉 `universalApk` | 体积 | 10 分钟 | 实测通用包 22.63 MB，单 arm64 包 9.64 MB |
+| 1 | ~~删除 `x86` ABI~~、视发布需要关掉 `universalApk` | 体积 | — | **26.10.04 拍板：x86 ABI 保留、`universalApk` 维持现状，两项均不做**（见 §12.3 B10） |
 | 2 | csrf 实时化补齐到全部写操作 api | 正确性 | 半天 | 否则点赞/投币/评论在 Cookie 轮换后静默失败 |
 | 3 | `PerformanceManager` 死参数接线或删除 | 性能 | 半天 | 7 个 getter 零调用点 |
 | 4 | 自动跳过片头/片尾（复用已有 `view_points`） | 功能 | 1 天 | 数据已解析，只差自动跳转 |
@@ -29,6 +30,8 @@
 | 8 | 崩溃页独立进程 | 稳定性 | 半天 | 借鉴 Re-WearBili 的 `android:process=":error_activity"` |
 | 9 | 弹幕点击菜单（点赞/复制/举报） | 功能 | 1~2 天 | PiliPlus 有，本项目暂无 |
 | 10 | 动态编辑/置顶/定时发布 | 功能 | 2~3 天 | 发布链路已有，改/顶缺接口封装 |
+
+**优先清单的落地情况（截至 26.10.04）**：#4 自动跳过片头/片尾**已实现并提交**（`cefd844`，见 `docs/architecture-map.md` §7.7 与 `player/ViewPointSkip.kt`）；#1 已被拍板撤销（x86 保留）；其余各项的最终裁决（想要实现 / 暂缓 / 无计划）一律见 §12。
 
 **本文还包含**：§7.4 是把 B 站客户端全部功能模块（视频/番剧/动态/评论/私信/账号/直播/搜索/本地共 9 组）逐条对照本项目覆盖情况的矩阵，标注 ✅已有 / ❌未做 / ➖建议不做，用于把"B 站有哪些功能"收敛成可判定的待办清单；§10 是**手表相关接口速查 + 风控硬约束**（含 11 条实测约束与错误码语义），供动手实现时直接查。
 
@@ -573,6 +576,135 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 **本仓库实测**
 - 体积数据：对 `app/build/outputs/apk/release/app-arm64-v8a-release.apk`（2026-10-02 构建）解包统计
 - 其余结论均标注了 `文件:行号`，可直接核对
+
+---
+
+## 12. 决策台账（2026-10-04 逐条拍板）
+
+本文 §5 / §7 / §8 / §10.4 里的未落地项已整理成清单，逐条向项目所有者确认，结论如下。
+**拍板档位**：想要实现 / 暂缓 / 无计划 / 记得已经实现（核实后修正）/ 不清楚实现了没（核实后回报）。
+
+> **前提**：**x86 ABI 保留，不进本轮**。`universalApk` 的取舍单列为 B10，已裁决。
+> **注意**：凡结论为「已经实现」的条目，同时视为**对本文旧表述的勘误**（见 §12.6）；属缺陷的条目另在 `docs/review/fix-progress.md` 建立待修记录。
+
+### 12.1 图例
+
+| 结论 | 含义 |
+|---|---|
+| 想要实现 | 进待做队列，按「收益 ÷ 成本」排期 |
+| 暂缓 | 进暂缓池，本轮不排期（不否定） |
+| 无计划 | 明确不做，理由保留备查 |
+| 已经实现 | 代码中已存在并接线，原条目作废 |
+
+### 12.2 A 组：正确性 / 有 UI 无逻辑
+
+| 编号 | 事项 | 结论 | 依据 / 备注 |
+|---|---|---|---|
+| A1 | csrf 实时化铺开到 11 个 api 类 | 想要实现 | §5.1；目前只有 `api/HistoryApi.java` 改成实时派生，其余仍读启动快照 |
+| A2 | `AnnouncementsActivity` 下拉刷新卡死 | 想要实现 | catch 分支缺 `setRefreshing(false)`（§5.2） |
+| A3 | `PopularActivity` 不复位 refreshing | 想要实现 | catch 只 `MsgUtil.err(e)`（§5.2） |
+| A4 | `CollectionInfoActivity` 缺 onFailure + 死变量 | 想要实现 | `activity/video/collection/CollectionInfoActivity.kt:42-71` 只有 `onSuccess`；`:37-39` 的 `seasonId`/`mid` 是死变量；唯一入口 `activity/video/info/VideoInfoFragment.kt:571-572` 只传 `fromVideo` |
+| A5 | `SeriesInfoActivity` 封面/简介/总数恒空 | 想要实现 | 数据其实在上游：`adapter/video/SeriesCardAdapter.kt:29-38`（源自 `api/SeriesApi.java:138-141`），但跳转只 putExtra `type`/`mid`/`sid`/`name`；`activity/video/series/SeriesInfoActivity.kt:35-37` 声明后 `:43-46` 不读，`:139-141`/`:150` 却拿去渲染。修法 = 补 putExtra + 读回，约 20 分钟，不需要新接口 |
+| A6 | `OpusInfoActivity` 幽灵空 `@Subscribe` + 漏 `leaveDetailPage()` | 想要实现 | 空函数体订阅是死代码；`onDestroy` 未调 `leaveDetailPage()`（对照 `DynamicInfoActivity` / `LiveInfoActivity` 均已调用） |
+| A7 | `SetupUIActivity` WebView 输入校验 | 暂缓 | `activity/settings/setup/SetupUIActivity.kt:79,86,92` |
+| A8 | `TutorialManagerActivity` 读写 `tutorial_ver_$tag` 污染新教程系统 | 暂缓 | 与 `tutorial/Tutorials.kt` 的已读记账互相覆盖 |
+| A9 | `TestActivity:105` 硬编码专栏 id | 无计划 | 仅调试页，收益极低 |
+| A10 | 评论点踩死视图 | 想要实现 | `adapter/ReplyAdapter.kt:495` |
+| A11 | 禁右滑主题被 `setTheme` 覆盖失效 | 想要实现 | issue #1 |
+| A12 | `AsyncLayoutInflaterX` 生命周期 | 想要实现 | `cancel()` 无任何调用点 |
+
+### 12.3 B 组：性能 / 体积 / 启动
+
+| 编号 | 事项 | 结论 | 依据 / 备注 |
+|---|---|---|---|
+| B1 | `PerformanceManager` 7 个死参数裁决 | 想要实现 | §7.1；7 个 getter 零调用点 |
+| B2 | 首次硬件检测挪到后台 | 想要实现 | `util/PerformanceManager.kt:125` |
+| B3 | 图片按档位降 w | 想要实现 | `GlideUtil.url()` 接入 `getImageMaxWidth()` |
+| B4 | OkHttp 连接池 / 保活接线 | 暂缓 | §5.3 |
+| B5 | 列表增量刷新 | 想要实现 | **范围限定：推荐 / 热门 / 搜索三个高频页先行**（全库 53 处 `notifyDataSetChanged`） |
+| B6 | Baseline Profile 模块 | 暂缓 | §7.1 |
+| B7 | 打开 viewBinding | 无计划 | 用户口径：**老代码不动**，新代码可自行采用 |
+| B8 | 崩溃页独立进程 | 想要实现 | `android:process=":error_activity"` |
+| B9 | ffmpeg 裁剪重编 | 无计划 | 体积收益不足以抵消风险 |
+| B10 | `universalApk` 是否只 release 关 | 无计划 | 单 arm64 9.64MB vs 通用 22.63MB（保留现状） |
+
+### 12.4 C 组：功能新增
+
+| 编号 | 事项 | 结论 |
+|---|---|---|
+| C1 | 弹幕点击菜单（点赞/复制/举报） | 无计划 |
+| C2 | 评论举报 | 无计划 |
+| C3 | 评论删除 / 置顶自己的评论 | **删除已实现**（`adapter/ReplyAdapter.kt:385` → `api/ReplyApi.java:327` `x/v2/reply/del`）；**置顶 = 想要实现** |
+| C4 | 评论楼中楼排序 / 定位 | 想要实现 |
+| C5 | 评论保存（收藏评论） | 无计划（接口亦未核实） |
+| C6 | 评论图片（发图） | **已实现**（`activity/reply/WriteReplyActivity.kt:127`；`api/ReplyApi.java:218/231`；`:40` `BIZ_REPLY= new_reply`）；**「上传/发送无进度无反馈」= 想要实现（独立 bug）** |
+| C7 | 动态编辑 | 想要实现（发布链路已有 `DynamicApi.publishComplex`） |
+| C8 | 动态置顶 / 删除 | **删除已实现**（`adapter/dynamic/DynamicHolder.kt:104,153` → `api/DynamicApi.java:460` `rm_dynamic`）；**置顶 = 想要实现** |
+| C9 | 动态定时发布 | 想要实现 |
+| C10 | 动态话题页 | 想要实现 |
+| C11 | 屏蔽带货动态 | 暂缓（用户「先等等」） |
+| C12 | 私信发图 | 想要实现 |
+| C13 | 私信删除 / 置顶 / 折叠 | 想要实现（`remove_session` / `set_top` / `batch_rm_dustbin`） |
+| C14 | 私信通知栏速回（`RemoteInput`） | 想要实现 |
+| C15 | 关注主播开播提醒 | 无计划 |
+| C16 | 追番更新提醒 | 想要实现（与 C15 共用通知基建，C15 不做则另起） |
+| C17 | 弹幕点赞 / 撤回自己的弹幕 | 无计划 |
+| C18 | 稍后再看「未看完」分类 | 想要实现（`api/WatchLaterApi.java:23`） |
+| C19 | 收藏夹排序 / 复制 / 移动 | 想要实现 |
+| C20 | 收藏夹多选删除 | 想要实现（与 C19 共用接口封装） |
+| C21 | 关注分组增删改 | 想要实现 |
+| C22 | 移除粉丝 | 暂缓 |
+| C23 | 搜索用户动态 | 无计划 |
+| C24 | 分享视频/番剧/动态/专栏/直播至站内消息 | 无计划 |
+| C25 | 直播弹幕发表情 / SuperChat | 无计划 |
+| C26 | 画中画 PiP | 无计划 |
+| C27 | 笔记 | 想要实现（**范围限定：仅「查看」**） |
+| C28 | 自建众包「自动空降」 | 无计划（需要服务端，与纯客户端定位冲突） |
+| C29 | WebDAV 备份 / 恢复设置 | 无计划 |
+| C30 | 滑动跳转预览缩略图（storyboard） | 无计划 |
+| C31 | 亮度 / 音量滑动手势 | 无计划 |
+| C32 | 视频截图 / 截取动图 | 无计划 |
+| C33 | 视频 TAG / staff 展示 | 无计划 |
+| C34 | 高级弹幕 / 合并弹幕 / 彩色弹幕 | 无计划 |
+
+### 12.5 D / E / F 组
+
+| 编号 | 事项 | 结论 | 依据 / 备注 |
+|---|---|---|---|
+| D1 | 旋冠接入「音量/进度」调节 | 无计划 | 旋冠现仅用于滚动 |
+| D2 | 跑马灯标题 | **已经实现**（勘误） | `ui/widget/MarqueeTextView.kt:21-31`（`marquee_enable` 控制 `ellipsize=MARQUEE` + `marqueeRepeatLimit=-1`）；开关 `activity/settings/SettingGroupActivity.kt:281`；约 20 个布局已改用。例外：`BaseActivity.kt:191-193` 把页面标题栏强制 `TruncateAt.END`，故标题栏不跑马灯 |
+| D3 | 圆屏列表项曲率避让 | **已经实现**（勘误） | `util/SettingsKeys.kt:20` `UI_ROUND = "player_ui_round"`；开关 `SettingGroupActivity.kt:234`；`BaseActivity.kt:188-204` 给标题栏加 18% 横向内边距并护住时钟；播放器另有 `PlayerActivity.kt:839/859/1129/2071-2072`。设置页与代码读同一 key，无冲突 |
+| D4 | 图标按钮补 `contentDescription` / TalkBack | 暂缓 | §8 |
+| D5 | 搜索优先点选候选词 | **基本已实现**（勘误）：建议列表 `SearchActivity.kt:232-239` 点击即 `setText` + 直接搜索；输入框 `:197-202` 会主动弹键盘。**仅剩「搜索历史点击只填入、不触发搜索」（`:213`），该项 = 暂缓** |
+| D6 | 常亮屏 ambient | 无计划 | 官方不建议，且视频场景本就亮屏 |
+| E1 | 拆分 `PlayerActivity` | 暂缓 | 实测 **3494 行**，大重构且无界面测试兜底 |
+| E2 | 拆分 `DownloadService` | 想要实现 | 65KB |
+| E3 | 补单元测试 | 想要实现 | 持续投入；现状见 §12.6 |
+| E4 | `SettingsKeys` 收敛收尾 | 想要实现 | `PLAYER`/`PLAY_QN` 常量与 14 处字面量并存 |
+| E5 | 删死方法 `SharedPreferencesUtil.beginBatchEdit` | 想要实现 | 全库仅剩定义 |
+| E6 | 更新 APK 签名 / 哈希校验 | 想要实现 | 防中间人替换安装包 |
+| F1 | 创作中心 / 会员购 / 课堂 / 直播礼物 / 舰长 / 桌面小组件 / 多窗口 | 无计划 | 手表端无场景或成本极高 |
+| F2 | DLNA 投屏 / 超分辨率 / Live Photo / AI 原声翻译 / 互动视频增强 | 无计划 | 需解码或服务端能力，超出纯客户端 |
+| F3 | 关注粉丝列表管理 / 登录密码短信 / 风纪委员 / 入站考试 | 无计划 | 低频 / 与手表定位不符 |
+| F4 | 漫画（**F1 中单独捞回**） | 想要实现 | 范围 = 追漫列表 + 漫画详情 + 长条阅读器；工期约 5~6 天 |
+
+### 12.6 勘误与台账数字更新
+
+- **D2 / D3 / D5 原被本文 §8 列为待办，核实后为「已实现」**，相应条目作废（D5 只剩历史点击一个 10 分钟小项，已裁为暂缓）。
+- `activity/player/PlayerActivity.kt` 实际 **3494 行**（原述 3090 行）。
+- 单元测试实际 **21 个测试类 / 165 个用例**（原述 16 类 / 112 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
+- **本文 §10.4 与用户裁决存在三处冲突，以本台账为准**：① §10.4 把「关注主播开播提醒」列为"高价值低成本、值得做"，用户裁为**无计划**；② §10.4 把「漫画」列入"明确不值得做"，用户裁为**想要实现（F4）**；③ §10.4 把「收藏夹批量整理」「发布动态/评论/弹幕」列入"明确不值得做"，用户分别裁为**想要实现（C19/C20）**与**想要实现（C7/C9/C10）**——即"需要输入"不是本项目的否决理由（无键盘只影响输入方式，不影响功能取舍）。
+
+### 12.7 量化汇总与建议顺序
+
+| 结论 | 项数 |
+|---|---|
+| 想要实现 | 36 |
+| 暂缓 | 10 |
+| 无计划 | 25 |
+| 已经实现（勘误） | 4（D2 / D3 / D5 主体，另 C3·C6·C8 的「已实现」子项） |
+
+建议落地顺序（仅建议，未拍板）：**A 组缺陷（A1/A2/A3/A4/A5/A6/A10/A11/A12，多为 10 分钟~半天）→ 性能三项（B5 限三页 / B2 / B3）→ 私信与通知链（C13/C14/C16）→ 动态与评论增强（C3 置顶 / C8 置顶 / C4 / C7 / C9 / C10）→ 收藏与关注整理（C18~C21）→ 大件（F4 漫画）**；E 组（E2~E6）作为穿插收尾。
 
 ---
 
