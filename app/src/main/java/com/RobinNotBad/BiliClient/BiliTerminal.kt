@@ -17,6 +17,7 @@ import com.RobinNotBad.BiliClient.activity.user.info.UserInfoActivity
 import com.RobinNotBad.BiliClient.api.DynamicApi
 import com.RobinNotBad.BiliClient.api.MessageApi
 import com.RobinNotBad.BiliClient.tutorial.TutorialStore
+import com.RobinNotBad.BiliClient.util.BangumiUpdateChecker
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.Logu
 import com.RobinNotBad.BiliClient.util.MsgNotifier
@@ -337,6 +338,21 @@ class BiliTerminal : Application() {
                         Logu.w("BiliTerminal", "未读检查失败: ${e.message}")
                     } catch (e: JSONException) {
                         Logu.w("BiliTerminal", "未读检查失败: ${e.message}")
+                    }
+                }
+            }
+
+            // C16：追番更新提醒。只在这里检查（用户拍板不做后台定时），失败保持旧快照不清空。
+            if (SharedPreferencesUtil.getBoolean(SettingsKeys.BANGUMI_UPDATE_NOTIFY_ENABLE, true)
+                && SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0) != 0L
+            ) {
+                CenterThreadPool.run {
+                    try {
+                        context?.let { BangumiUpdateChecker.checkAndNotify(it) }
+                    } catch (e: IOException) {
+                        Logu.w("BiliTerminal", "追番更新检查失败: ${e.message}")
+                    } catch (e: JSONException) {
+                        Logu.w("BiliTerminal", "追番更新检查失败: ${e.message}")
                     }
                 }
             }

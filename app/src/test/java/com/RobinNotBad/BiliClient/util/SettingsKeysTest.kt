@@ -22,4 +22,10 @@ class SettingsKeysTest {
     fun playQnKey_isLocked() {
         assertEquals("play_qn", SettingsKeys.PLAY_QN)
     }
+
+    @Test
+    fun bangumiUpdateNotifyKey_isLocked() {
+        // C16 新增：改了会让"追番更新提醒"开关静默失效（用户关不掉 / 开不了）
+        assertEquals("bangumi_update_notify_enable", SettingsKeys.BANGUMI_UPDATE_NOTIFY_ENABLE)
+    }
 }

@@ -57,6 +57,11 @@ object SettingsKeys {
      * `util/MsgNotifier.shouldNotify`。
      */
     const val PRIVATE_MSG_NOTIFY_ENABLE = "private_msg_notify_enable"
+    /**
+     * 追番更新提醒开关。打开应用时对比追番列表的最新集快照，有变化才提醒一次；
+     * 纯逻辑见 `util/BangumiUpdateChecker.findUpdated`，项目不做后台定时检查。
+     */
+    const val BANGUMI_UPDATE_NOTIFY_ENABLE = "bangumi_update_notify_enable"
 
     // ==================== 缓存与下载 ====================
     const val ARIA2_ENABLED = "aria2_enabled"

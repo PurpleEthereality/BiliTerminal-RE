@@ -28,6 +28,12 @@ public class SharedPreferencesUtil {
     public static final String DYNAMIC_UPDATE_NUM = "dynamic_update_num";
     public static final String MESSAGE_UPDATE_CHECK_ENABLE = "message_update_check_enable";
     public static final String MESSAGE_UPDATE_NUM = "message_update_num";
+    /**
+     * C16：上次检查到的「追番最新集」快照，JSON 形如 {"media_id": new_ep_id, ...}。
+     * 由 BangumiUpdateChecker 读写：只在快照里已存在的番剧的 new_ep.id 变化时才算「更新了」，
+     * 所以首次检查只会写下快照、不会提醒；拉取失败时绝不清空（否则下下次会把老集当新集报）。
+     */
+    public static final String BANGUMI_UPDATE_SNAPSHOT = "bangumi_update_snapshot";
     public static final String PRIVATE_MSG_UNREAD_BADGE_ENABLE = "private_msg_unread_badge_enable";
     public static final String PRIVATE_MSG_AUTO_READ_ENABLE = "private_msg_auto_read_enable";
     public static final String FOLLOW_GROUP_MODE = "follow_group_mode";

@@ -1,8 +1,7 @@
 package com.RobinNotBad.BiliClient.api;
 
-import android.util.Log;
-
 import com.RobinNotBad.BiliClient.model.Bangumi;
+import com.RobinNotBad.BiliClient.model.FollowedBangumi;
 import com.RobinNotBad.BiliClient.model.VideoCard;
 import com.RobinNotBad.BiliClient.util.NetWorkUtil;
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil;
@@ -18,6 +17,11 @@ import java.util.List;
 import java.util.Objects;
 
 public class BangumiApi {
+    /** 追番列表每页项数，接口定义域 1-30。 */
+    private static final int FOLLOW_PAGE_SIZE = 30;
+    /** C16 追番更新检查最多翻多少页：追番再多也不该在冷启动时把流量打满。 */
+    private static final int FOLLOW_MAX_PAGES = 10;
+
     public static int getFollowingList(int page, List<VideoCard> cardList) throws JSONException, IOException {
         String url = "https://api.bilibili.com/x/space/bangumi/follow/list?type=1&follow_status=0&pn=" + page
                 + "&ps=15&vmid=" + SharedPreferencesUtil.getLong("mid", 0);
@@ -45,6 +49,68 @@ public class BangumiApi {
         return 0;
     }
 
+    /**
+     * 拉取"我的追番"全部条目，供 C16 的更新检查用（与 {@link #getFollowingList} 是两个用途：
+     * 那个是给列表页展示卡片，翻页由 RecyclerView 驱动，字段取舍不同）。
+     *
+     * 未登录返回空列表；逐页拉到"不满一页"为止，最多 {@link #FOLLOW_MAX_PAGES} 页。
+     */
+    public static ArrayList<FollowedBangumi> getFollowedBangumi() throws JSONException, IOException {
+        ArrayList<FollowedBangumi> result = new ArrayList<>();
+        long mid = SharedPreferencesUtil.getLong("mid", 0);
+        if (mid == 0) return result;
+
+        for (int page = 1; page <= FOLLOW_MAX_PAGES; page++) {
+            String url = "https://api.bilibili.com/x/space/bangumi/follow/list?type=1&follow_status=0&pn=" + page
+                    + "&ps=" + FOLLOW_PAGE_SIZE + "&vmid=" + mid;
+            ArrayList<FollowedBangumi> pageList = parseFollowingList(NetWorkUtil.getJson(url));
+            result.addAll(pageList);
+            if (pageList.size() < FOLLOW_PAGE_SIZE) break;
+        }
+        return result;
+    }
+
+    /**
+     * 纯解析：把追番列表响应转成 {@link FollowedBangumi} 列表（抽出来是为了能被 JVM 单测覆盖，
+     * 参照 {@code HotSearchApi.parseHotSearch} 的做法）。
+     */
+    public static ArrayList<FollowedBangumi> parseFollowingList(JSONObject all) throws JSONException {
+        ArrayList<FollowedBangumi> list = new ArrayList<>();
+
+        int code = all.optInt("code", -1);
+        if (code != 0) {
+            String message = all.optString("message", "");
+            throw new JSONException(message.isEmpty() ? ("错误码：" + code) : message);
+        }
+
+        JSONObject data = all.optJSONObject("data");
+        if (data == null) return list;
+
+        JSONArray array = data.optJSONArray("list");
+        if (array == null) return list;
+
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject bangumi = array.optJSONObject(i);
+            if (bangumi == null) continue;
+
+            FollowedBangumi item = new FollowedBangumi();
+            item.mediaId = bangumi.optLong("media_id", 0);
+            item.title = bangumi.optString("title", "");
+
+            JSONObject newEp = bangumi.optJSONObject("new_ep");
+            if (newEp != null) {
+                item.newEpId = newEp.optLong("id", 0);
+                item.newEpIndexShow = newEp.optString("index_show", "");
+            }
+
+            // 没有 media_id 的项无法参与快照比对，直接跳过（不污染快照）
+            if (item.mediaId == 0) continue;
+
+            list.add(item);
+        }
+        return list;
+    }
+
 
     //获取番剧信息, 详情页需要有基本的cover, 信息等
     public static Bangumi getBangumi(long mediaId) throws JSONException, IOException {
@@ -58,8 +124,6 @@ public class BangumiApi {
         try {
             String url = "https://api.bilibili.com/pgc/view/web/season?ep_id=" + epid;
             JSONObject all = NetWorkUtil.getJson(url);
-
-            Log.e("debug-epid", String.valueOf(epid));
 
             int code = all.getInt("code");
             if (code != 0) return 0L;

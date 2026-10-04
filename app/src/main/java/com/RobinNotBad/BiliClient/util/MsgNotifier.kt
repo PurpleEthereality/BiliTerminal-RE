@@ -10,6 +10,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.message.MessageActivity
+import com.RobinNotBad.BiliClient.activity.user.FollowingBangumisActivity
 
 /**
  * 新消息的通知栏通知（26.10.04 批次 5 的 C14）。
@@ -57,14 +58,10 @@ object MsgNotifier {
             // 13+ 未授予 POST_NOTIFICATIONS，或用户在系统设置里关掉了，直接放弃
             if (!manager.areNotificationsEnabled()) return
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    CHANNEL_ID, "新消息", NotificationManager.IMPORTANCE_DEFAULT
-                )
-                channel.description = "收到新私信 / 新消息时的提醒"
-                (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                    .createNotificationChannel(channel)
-            }
+            ensureChannel(
+                context, CHANNEL_ID, "新消息",
+                "收到新私信 / 新消息时的提醒"
+            )
 
             val intent = Intent(context, MessageActivity::class.java)
             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -97,5 +94,69 @@ object MsgNotifier {
         } catch (e: Exception) {
             Logu.e("MsgNotifier", "撤销通知失败: ${e.message}")
         }
+    }
+
+    // ==================== 追番更新提醒（26.10.04 批次 5 的 C16） ====================
+
+    const val BANGUMI_CHANNEL_ID = "bangumi_update_channel"
+
+    /** 1027 下载 / 1028 播放 / 1029 新消息已占用，追番更新用 1030，勿改。 */
+    private const val BANGUMI_NOTIFICATION_ID = 1030
+
+    /**
+     * 追番更新通知正文：一部就报名字，多部报第一部 + 总数，避免手表上一屏塞不下。
+     */
+    fun bangumiSummaryText(titles: List<String>): String = when {
+        titles.isEmpty() -> "有追番更新了"
+        titles.size == 1 -> "《${titles[0]}》更新了"
+        else -> "《${titles[0]}》等 ${titles.size} 部追番更新了"
+    }
+
+    /**
+     * 追番更新通知。点通知进「追番列表」页（`FollowingBangumisActivity`）。
+     *
+     * 与 `notifyNewMessages` 分开是因为两者生命周期不同：消息通知会在进消息页时被撤销，
+     * 追番通知没有对应的"已读"动作，只能等下次检查覆盖或用户手动划掉。
+     */
+    fun notifyBangumiUpdates(context: Context, titles: List<String>) {
+        if (titles.isEmpty()) return
+        try {
+            val manager = NotificationManagerCompat.from(context)
+            if (!manager.areNotificationsEnabled()) return
+
+            ensureChannel(
+                context, BANGUMI_CHANNEL_ID, "追番更新",
+                "追的番剧有更新时提醒（只在打开应用时检查）"
+            )
+
+            val intent = Intent(context, FollowingBangumisActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            val pendingIntent = PendingIntent.getActivity(
+                context, 0, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = NotificationCompat.Builder(context, BANGUMI_CHANNEL_ID)
+                .setSmallIcon(R.mipmap.icon)
+                .setContentTitle("追番更新啦~")
+                .setContentText(bangumiSummaryText(titles))
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build()
+
+            manager.notify(BANGUMI_NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Logu.e("MsgNotifier", "发送追番更新通知失败: ${e.message}")
+        }
+    }
+
+    /** Android 8.0+ 必须先把通道建出来，重复创建同名通道是幂等的。 */
+    private fun ensureChannel(context: Context, id: String, name: String, description: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val channel = NotificationChannel(id, name, NotificationManager.IMPORTANCE_DEFAULT)
+        channel.description = description
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .createNotificationChannel(channel)
     }
 }

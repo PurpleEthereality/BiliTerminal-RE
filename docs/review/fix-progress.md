@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1148,7 +1148,7 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 ### 数字勘误
 
 - `activity/player/PlayerActivity.kt` 实测 **3494 行**（原述 3090 行）。
-- 单元测试实测 **26 个测试类 / 204 个用例**（原述 16 类 / 112 例；批次 1 后 21/165，批次 2 后 23/184，批次 3 后 24/194，批次 4 后 26/204）。
+- 单元测试实测 **29 个测试类 / 233 个用例**（原述 16 类 / 112 例；批次 1 后 21/165，批次 2 后 23/184，批次 3 后 24/194，批次 4 后 26/204，批次 5 后 29/233）。
 - JVM 单测可用 `org.json`（`app/build.gradle` 已有 `testImplementation 'org.json:json:20231013'`），但**纯解析函数禁止调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 
 ### 建议落地顺序（26.10.04 已由项目所有者确认为 8 批）
@@ -1157,7 +1157,7 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 2. **A1** csrf 实时化铺开到 13 个 api 类 + **A10** 评论点踩 → **✅ 已完成，见 §十二**
 3. **B1 B2 B3** + **B5**（限推荐/热门/搜索三页）+ **B8** → **✅ 已完成，见 §十三**
 4. **E4 E5 E6** → **✅ 已完成，见 §十四**
-5. **C12 C13 C14 C16**（私信与通知链）→ 下一批
+5. **C12 C13 C14 C16**（私信与通知链）→ **✅ 已完成，见 §十五（C13）/ §十六（C12）/ §十七（C14）/ §十八（C16）**
 6. **C3 C4 C6b C7 C8 C9 C10 C27**
 7. **C18 C19 C20 C21**（收藏与关注整理）
 8. **E2** 拆分 `DownloadService` + **F4** 漫画（追漫列表 / 漫画详情 / 长条阅读器）
@@ -1615,4 +1615,64 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - `docs/architecture-map.md` §7.15「新消息通知」。
 - 通知 ID 占用：`app/src/main/java/com/RobinNotBad/BiliClient/service/DownloadService.kt:493`、`app/src/main/java/com/RobinNotBad/BiliClient/service/PlaybackService.kt:42-43`。
 - 本批剩余：C16（打开应用时检查追番更新提醒，不做后台定时）。
+
+---
+
+## 十八、26.10.04 批次 5（4/4）：追番更新提醒（C16）
+
+对应调研报告 §12.4 的 C16「追番更新提醒」。**范围按用户拍板收窄：只在打开应用时检查追番列表，不做后台定时**（项目没有也不引入 WorkManager / AlarmManager）。复用 C14 刚建好的通知基建（`MsgNotifier`）。
+
+### 为什么这么做（取舍写在代码里，也记在这里）
+
+- **判据是「同一部番的 `new_ep.id`（最新一集 id）变了」**，不是"总集数变了"（电影/特别篇对总集数不敏感），也不是服务端的 `is_new`（那是个"有新内容"标记，用户在别的客户端看过之后会被清掉，与本地的"我看到哪了"无关）。
+- **首次检查只写快照、不提醒**：否则一装上就会把全部追番报成"更新"。
+- **这次新追的番不算更新**：只记入快照。否则"追了一部已经更完的番"会立刻弹通知。
+- **快照只在成功拉到列表后写回**：拉取失败保持旧快照，否则下次会把老集当新集重复提醒（与 C14 未读检查失败不清零是同一个道理）。
+- **拉取上限 10 页 × 30 条 = 300 部**：冷启动不该为了一个提醒把流量打满；`ps` 的定义域就是 1-30（见接口快照 `bilibili-API/docs/user/space.md:4626-4795`）。
+
+### 新增文件与改动
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/FollowedBangumi.java`（**新建**） | 只带判断更新需要的四个字段：`mediaId` / `title` / `newEpId`（`new_ep.id`）/ `newEpIndexShow`；类注释写明为什么不用 `total_count` 与 `is_new` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/BangumiApi.java` | 新增常量 `FOLLOW_PAGE_SIZE = 30`、`FOLLOW_MAX_PAGES = 10`；新增 `getFollowedBangumi()`（未登录 `mid==0` 直接返回空表；逐页拉到"不满一页"为止，最多 10 页）；新增**纯解析** `parseFollowingList(JSONObject)`（`code!=0` 抛 `JSONException(message)`、没有 message 时用 `错误码：N` 兜底；`data`/`data.list` 缺失返回空表；`media_id==0` 的项跳过，避免脏数据污染快照）。原有给列表页用的 `getFollowingList(int, List<VideoCard>)` **未动**（两个用途：一个给 RecyclerView 翻页展示，一个给更新检查，字段取舍不同） |
+| 同上 | 顺手删除 `import android.util.Log;` 与 `getMdidFromEpid` 里的 `Log.e("debug-epid", …)`（调试残留；删 import 后该行编译不过，正好一起清掉） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/util/BangumiUpdateChecker.kt`（**新建**，`object`） | **纯函数** `snapshotJson(items)`（`{"media_id": new_ep_id, …}`，整份替换语义：取消追番后旧条目要跟着消失）、`parseSnapshot(json)`（空/坏 JSON 一律当"没有快照"、非数字键跳过，绝不因坏数据崩在启动路径）、`findUpdated(stored, current)`（**只有"快照里存在 + `newEpId` 变了 + 新值 > 0"才算更新**）；入口 `checkAndNotify(context)`（未登录/空列表直接返回且**不覆盖快照**；无快照只写快照、不通知；有更新则 `MsgNotifier.notifyBangumiUpdates`；最后写回当前快照） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/util/MsgNotifier.kt` | 新增 `BANGUMI_CHANNEL_ID = "bangumi_update_channel"`、`BANGUMI_NOTIFICATION_ID = 1030`（避开 1027/1028/1029）、`notifyBangumiUpdates(context, titles)`（`PendingIntent` 指向 `FollowingBangumisActivity`）、**纯函数** `bangumiSummaryText(titles)`（1 部→`《x》更新了`、N 部→`《第一部》等 N 部追番更新了`、空→`有追番更新了`）；把两处建渠道的重复代码抽成私有 `ensureChannel(context, id, name, description)` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/util/SettingsKeys.kt` | 新增 `const val BANGUMI_UPDATE_NOTIFY_ENABLE = "bangumi_update_notify_enable"`（通知分组内，紧跟 C14 的开关） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/util/SharedPreferencesUtil.java` | 新增 `BANGUMI_UPDATE_SNAPSHOT = "bangumi_update_snapshot"`（快照 JSON），注释写明"失败绝不清空" |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/settings/SettingPrefActivity.kt` | 「更新提醒」分组在「新消息通知」之后新增开关「追番更新提醒」（默认 `"true"`） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/settings/SettingsIndex.kt` | 通用偏好的可搜索条目补「追番更新提醒」（新增设置项的第三处） |
+| `app/src/main/res/values/strings.xml` | 新增 `desc_bangumi_update_notify_enable` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/BiliTerminal.kt` | 在未读检查块与 `checkAppUpdate()` 之间加第三块：开关默认 true **且** 已登录 → `CenterThreadPool.run { BangumiUpdateChecker.checkAndNotify(context) }`，两个 catch（`IOException`/`JSONException`）只记日志、不动快照 |
+
+### 单测
+
+- `app/src/test/java/com/RobinNotBad/BiliClient/api/BangumiApiTest.kt`（**新建**）+6 例：取 `mediaId`/`newEpId`/`indexShow`；没有 `new_ep` 时 `newEpId` 为 0；跳过 `media_id=0` 的脏数据；`data`/`list` 缺失或为 null 返回空表；错误码抛可读异常（53013 隐私未公开）；错误码无 message 时用 `错误码：-400` 兜底。
+- `app/src/test/java/com/RobinNotBad/BiliClient/util/BangumiUpdateCheckerTest.kt`（**新建**）+8 例：快照序列化往返；空值/坏 JSON/数组都当没有快照；非数字键跳过；最新集变了才算更新；**这次新追的番不算更新**；**新集变成 0 不算更新**；多部更新保持列表顺序；快照为空时一律不报更新。
+- `app/src/test/java/com/RobinNotBad/BiliClient/util/MsgNotifierTest.kt` +2 例：`bangumiSummaryText` 的一部/多部文案；没有更新时的兜底文案。
+- `app/src/test/java/com/RobinNotBad/BiliClient/util/SettingsKeysTest.kt` +1 例：钉死 `bangumi_update_notify_enable` 的键名（改了会静默失效用户的开关）。
+
+**验证**：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → BUILD SUCCESSFUL in 16s（首次失败过一次：删了 `import android.util.Log` 但漏删 `getMdidFromEpid` 里的 `Log.e("debug-epid", …)`，编译报"找不到符号 Log"，两处一起清掉后通过）；`app/build/test-results/testDebugUnitTest` **29 个 XML / 233 个用例 / 0 失败 / 0 错误**（C14 后 27 个 / 216 例，本批 +2 类 +17 例）。
+
+### 真机验证清单（JVM 单测覆盖不到的部分，发布前逐条走一遍）
+
+1. 首次安装（无快照）冷启动 → **不弹**追番更新通知，安静地写下快照。
+2. 追一部"已经更完"的番 → 冷启动 → 不弹（新追的番不算更新）。
+3. 让追番里某部更新一集（或手工改快照里的 `new_ep_id` 模拟）→ 冷启动 → 弹一次，正文是「《番名》更新了」。
+4. 连点两次冷启动、期间没有新集 → **只弹一次**（快照已写回，不重复提醒）。
+5. 多部同时有更新 → 正文是「《第一部》等 N 部追番更新了」，N 与快照 diff 的数量一致。
+6. 通知栏点追番通知 → 进「追番列表」页（`FollowingBangumisActivity`），不会叠出多个页面。
+7. 取消追番后再冷启动 → 不弹（旧条目从快照里消失，不会被当成更新）。
+8. 未登录/退出登录状态冷启动 → 不弹，且**快照不被清空**（重新登录后仍能正确比对）。
+9. 断网冷启动 → 不弹、不崩溃；恢复网络后冷启动，期间真有新集才弹，且不会把老集当新集重复弹。
+10. 设置里关掉「追番更新提醒」→ 冷启动完全不检查（应有对应日志缺失）、不弹；打开后恢复。
+11. 与下载通知（1027）、播放通知（1028）、新消息通知（1029）同时存在时，四条通知互不覆盖。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C16 行改为「已实现（26.10.04 批次 5）：打开应用时对比追番最新集快照，有变化才提醒；不做后台定时」。
+- `docs/architecture-map.md` §7.16「追番更新提醒」。
+- 接口依据：仓库自带快照 `bilibili-API/docs/user/space.md:4626-4795`（`type=1` 追番 / `type=2` 追剧、`ps` 定义域 1-30、53013 隐私未公开）。
+- 批次 5 至此四条全部完成：C13（§十五）→ C12（§十六）→ C14（§十七）→ C16（本条）。下一批（批次 6）：C3 C4 C6b C7 C8 C9 C10 C27。
 

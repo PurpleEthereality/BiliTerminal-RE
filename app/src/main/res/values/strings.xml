@@ -164,6 +164,7 @@
     <string name="desc_message_update_check_enable">启动应用时检查是否有新消息并显示在菜单中\n菜单中的未读消息数量只统计未读私信数和回复我的数、艾特我的数</string>
     <string name="desc_private_msg_notify_enable">发现新消息时在通知栏提醒\n仅在"打开应用检查未读"发现未读数变多时提醒一次，不做后台定时检查；点通知直接进消息页</string>
     <string name="desc_recent_up_display_enable">在动态页面显示最近更新的UP主列表</string>
+    <string name="desc_bangumi_update_notify_enable">追的番剧有新一集时在通知栏提醒\n只在打开应用时对比追番列表，发现最新一集变了才提醒一次，不做后台定时检查；点通知直接进追番列表</string>
     <string name="desc_private_msg_unread_badge_enable">在私信会话列表中为未读消息显示红色"未读"标记并置顶显示\n注意：开启后打开消息页面可能会加剧卡顿问题。</string>
     <string name="desc_private_msg_auto_read_enable">打开私信会话时自动将会话标记为已读</string>
     <string name="desc_follow_group_mode">以分组形式展示关注列表</string>

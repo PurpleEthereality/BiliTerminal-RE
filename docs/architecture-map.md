@@ -292,7 +292,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 - **巨型类**：`activity/player/PlayerActivity.kt` 127 KB、`service/DownloadService.kt` 65 KB、`activity/video/ShortVideoPlayerActivity.kt` 35 KB。改播放/下载相关功能前先想清楚在哪个位置插入。
 - **Application 静态状态已收敛为一套**：26.10.02 起只有 `BiliTerminal.context` / `BiliTerminal.instance`（`BiliTerminal.kt` 伴生对象 `@JvmField`，`:43-44`），`BiliTerminalApp` 已整文件删除。**新代码一律用 `BiliTerminal`**。
-- **测试覆盖仍偏低**：`app/src/test/` 28 个文件（27 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **216 个用例**，对 364 个源文件（26.10.04 批次 5 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`NetWorkUtilTest`、`PerformanceManagerTest`、`MsgNotifierTest`、`ApkVerifierTest`、`SettingsKeysTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
+- **测试覆盖仍偏低**：`app/src/test/` 30 个文件（29 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **233 个用例**，对 364 个源文件（26.10.04 批次 5 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`BangumiApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`NetWorkUtilTest`、`PerformanceManagerTest`、`BangumiUpdateCheckerTest`、`MsgNotifierTest`、`ApkVerifierTest`、`SettingsKeysTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
 - **主题色表带缓存，失效点只有一处**：`ColorScheme.getCurrentTheme()`（26.09.11 起）缓存当前色表，**只由 `AppearanceManager.setTheme()` 经 `ColorScheme.invalidateCache()` 置空**。这是刻意的——36 个属性 getter 全走它，而列表滚动时一个 item 要调多次，此前每次都重读 SharedPreferences（热路径重复 IO）。**若将来给主题 key 增加第二个写入路径（比如直接 `SharedPreferencesUtil.putString(SettingsKeys.THEME, …)`），必须同步调用 `ColorScheme.invalidateCache()`，否则改主题后色表不跟着变且在 `onResume` 重建后依然错**。守卫测试：`ColorSchemeTest.themeCache_isInvalidatedOnEverySetTheme`、`colorGetters_doNotTouchSharedPreferencesAfterFirstRead`。
 - **主题体系有 3 个"裸 Activity"不参与**：`SplashActivity`、`GetIntentActivity` 不继承 `BaseActivity`（开屏/外链恒定 B站粉），`PlayerActivity` 自己 `setTheme` 但**不调 `applyWindowTheme`、也不参与 `onResume` 主题检测**。改主题相关行为时别以为全局都生效了。
 - **文案硬编码**：遗留页面标题/Toast 直接写中文字符串（Manifest 里 `android:label` 也是中文），只有设置页用 `desc_*` 资源。改文案按现有风格来，别顺手抽 `strings.xml`。
@@ -455,7 +455,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 ### 7.15 新消息通知（26.10.04 批次 5 的 C14 新增）
 
-- 全库通知只有三处：`DownloadService`（渠道 `biliterminal_download`、通知 ID **1027**）、`PlaybackService`（渠道 `playback_channel`、通知 ID **1028**）、以及本节的 `util/MsgNotifier.kt`（渠道 `private_msg_channel`、通知 ID **1029**）。**新增通知必须先确认 ID 不撞车**，撞了会互相覆盖。
+- 全库通知现有四处：`DownloadService`（渠道 `biliterminal_download`、通知 ID **1027**）、`PlaybackService`（渠道 `playback_channel`、通知 ID **1028**）、本节的 `util/MsgNotifier.kt` 新消息（渠道 `private_msg_channel`、通知 ID **1029**）、以及同文件里的追番更新（渠道 `bangumi_update_channel`、通知 ID **1030**，见 §7.16）。**新增通知必须先确认 ID 不撞车**，撞了会互相覆盖。
 - `MsgNotifier` 的三个成员：`notifyNewMessages(context, privateMsgUnread, otherUnread)`、`cancel(context)`、以及两个纯函数 `shouldNotify(previousUnread, currentUnread, enabled)` / `summaryText(privateMsgUnread, otherUnread)`。纯函数被 `util/MsgNotifierTest.kt` 覆盖。
 - **提醒判据是"未读变多"而不是"有未读"**：`shouldNotify` = 开关开 && `currentUnread > 0` && `currentUnread > previousUnread`。否则每次冷启动都会弹，变成骚扰。`previousUnread` 取的是 `SharedPreferencesUtil.MESSAGE_UPDATE_NUM`（上次检查后存下的总未读）。
 - **触发点是 `BiliTerminal.onCreate` 里既有的未读检查**（受「消息数量检查」开关注释）：`MessageApi.checkPrivateMsgUnread()` 给 `privateMsgUnread`、`checkMessageUnread()`（at + reply）给 `otherUnread`，**实参顺序别搞反**。项目无 WorkManager / AlarmManager 依赖，也不为此新增，所以没有后台定时提醒。
@@ -463,6 +463,17 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 - Android 13+ 需要运行时 `POST_NOTIFICATIONS`，在 `activity/message/MessageActivity.kt` 的 `requestNotificationPermissionIfNeeded()` 里申请；未授权时 `notifyNewMessages` 因 `areNotificationsEnabled()` 为 false 静默放弃，**不报错**——调试"通知不弹"时先查权限/系统开关，不要只盯代码。
 - 开关键：`SettingsKeys.PRIVATE_MSG_NOTIFY_ENABLE`（`private_msg_notify_enable`，默认开）；设置入口在「更新提醒」分组（`SettingPrefActivity`），可搜索条目在 `SettingsIndex` 通用偏好下（新增设置项的三处都改了）。
 - **不做 RemoteInput 速回**（用户拍板）：要额外权限 + 跨进程回复广播，手表打字成本高，收益不抵复杂度；点通知 = 打开消息页（`PendingIntent` 用 `NEW_TASK or CLEAR_TOP` + `FLAG_IMMUTABLE`）。
+- 两个 `notify*` 里的建渠道重复代码已抽成私有 `ensureChannel(context, id, name, description)`（Android 8.0+ 必须建渠道，重复创建同名渠道是幂等的）；再往这个文件加通知时复用它，别再抄一遍。
+
+### 7.16 追番更新提醒（26.10.04 批次 5 的 C16 新增）
+
+- 链路：`BiliTerminal.onCreate` 第三块（在未读检查之后、`checkAppUpdate()` 之前）→ `util/BangumiUpdateChecker.checkAndNotify(context)` → `api/BangumiApi.getFollowedBangumi()` → 与快照 diff → `util/MsgNotifier.notifyBangumiUpdates(context, titles)`（通知 ID **1030**，`PendingIntent` 指向 `activity/user/FollowingBangumisActivity`）。
+- **判据是同一部番的 `new_ep.id` 变了**（`model/FollowedBangumi.newEpId`），不是总集数、也不是服务端的 `is_new`（后者会被用户在别的客户端看过之后清掉）。纯逻辑 `BangumiUpdateChecker.findUpdated(stored, current)` 只认三种情况：快照里存在、`newEpId` 变了、且当前 `newEpId > 0`。
+- **首次检查只写快照、不提醒**；**这次新追的番不算更新**；**快照只在成功拉到列表后写回**（失败保持旧快照，否则下次把老集当新集重复提醒，与 §7.15 未读检查失败不清零同理）。快照是 `SharedPreferencesUtil.BANGUMI_UPDATE_SNAPSHOT`（`bangumi_update_snapshot`），内容是 `{"media_id": new_ep_id, …}` 整份替换。
+- **拉取上限 10 页 × 30 条 = 300 部**（`FOLLOW_PAGE_SIZE` / `FOLLOW_MAX_PAGES`，`ps` 定义域 1-30）：冷启动不该为一个提醒把流量打满。接口是 `x/space/bangumi/follow/list`（`type=1` 追番、`follow_status=0`），与列表页用的 `getFollowingList(int, List<VideoCard>)` **是两个用途**，别合并。
+- 开关键 `SettingsKeys.BANGUMI_UPDATE_NOTIFY_ENABLE`（`bangumi_update_notify_enable`，默认开），设置三处齐全（「更新提醒」分组 + `SettingsIndex` 通用偏好 + `strings.xml` 的 `desc_bangumi_update_notify_enable`）。
+- **不做后台定时**（用户拍板）：项目没有也不引入 WorkManager / AlarmManager；`getFollowedBangumi()` 未登录时返回空表，`checkAndNotify` 遇到空表直接返回且**不覆盖快照**。
+- 单测：`api/BangumiApiTest.kt`（纯解析）、`util/BangumiUpdateCheckerTest.kt`（快照往返 + 更新判定）、`util/MsgNotifierTest.kt` 的 `bangumiSummaryText`、`util/SettingsKeysTest.kt` 的键名钉子。
 
 ---
 
@@ -789,7 +800,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 **不可单测**（内部发网络 / 依赖 Context / 弹 UI）：`DynamicApi.analyzeDynamic`、`MessageApi` 全部解析（SpannableString）、`PrivateMsgApi.getPrivateMsgList`、`LikeCoinFavApi.getVideoStats`。
 
-**测试覆盖现状（26.10.04 批次 5 实测）**：`app/src/test/` 27 个测试类 / 216 个用例；api 层只有 4 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`，另有 `PlayerApiPbpTest`、`ReplyApiTest` 覆盖部分纯逻辑）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口；`PerformanceManagerTest` 覆盖档位换算与图片/分页参数（见 §7.10）；`ApkVerifierTest` 覆盖更新包校验的判定规则（见 §7.11）；`SettingsKeysTest` 把 `player`/`play_qn` 两个磁盘键名钉死（见 §7.12）；`PrivateMsgApiTest` 另覆盖会话列表解析（含 `top_ts`）、`opTypeForTop` 的 0/1 映射（见 §7.13）与图片消息 content 的字段/单位换算（见 §7.14）；`MsgNotifierTest` 覆盖新消息通知的提醒判据与正文拼装（见 §7.15）。
+**测试覆盖现状（26.10.04 批次 5 实测）**：`app/src/test/` 29 个测试类 / 233 个用例；api 层只有 5 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`BangumiApiTest`，另有 `PlayerApiPbpTest`、`ReplyApiTest` 覆盖部分纯逻辑）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口；`PerformanceManagerTest` 覆盖档位换算与图片/分页参数（见 §7.10）；`ApkVerifierTest` 覆盖更新包校验的判定规则（见 §7.11）；`SettingsKeysTest` 把 `player`/`play_qn`/`bangumi_update_notify_enable` 三个磁盘键名钉死（见 §7.12）；`PrivateMsgApiTest` 另覆盖会话列表解析（含 `top_ts`）、`opTypeForTop` 的 0/1 映射（见 §7.13）与图片消息 content 的字段/单位换算（见 §7.14）；`MsgNotifierTest` 覆盖新消息通知的提醒判据与正文拼装（见 §7.15）以及追番更新的文案；`BangumiApiTest` 覆盖追番列表解析（见 §7.16）；`BangumiUpdateCheckerTest` 覆盖追番快照序列化与更新判定（见 §7.16）。
 
 ### API 层的坑
 

@@ -44,4 +44,18 @@ class MsgNotifierTest {
     fun summaryText_都没有未读时给出兜底文案() {
         assertEquals("有新消息", MsgNotifier.summaryText(0, 0))
     }
+
+    @Test
+    fun bangumiSummaryText_一部报名字_多部报第一部与总数() {
+        assertEquals("《葬送的芙莉莲》更新了", MsgNotifier.bangumiSummaryText(listOf("葬送的芙莉莲")))
+        assertEquals(
+            "《葬送的芙莉莲》等 3 部追番更新了",
+            MsgNotifier.bangumiSummaryText(listOf("葬送的芙莉莲", "孤独摇滚", "别当欧尼酱了"))
+        )
+    }
+
+    @Test
+    fun bangumiSummaryText_没有更新时给出兜底文案() {
+        assertEquals("有追番更新了", MsgNotifier.bangumiSummaryText(emptyList()))
+    }
 }
