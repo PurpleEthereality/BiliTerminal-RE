@@ -25,6 +25,21 @@ import java.util.Objects;
 public class FavoriteApi {
     // TODO 合集收藏
 
+    /** 排序：按收藏时间（x/v3/fav/resource/list 的 order 参数） */
+    public static final String ORDER_FAV_TIME = "mtime";
+    /** 排序：按播放量 */
+    public static final String ORDER_VIEW = "view";
+    /** 排序：按投稿时间 */
+    public static final String ORDER_PUBTIME = "pubtime";
+
+    /**
+     * 老接口 {@code x/space/fav/arc} 的 order 取值与新接口不同：收藏时间是 {@code fav_time} 而不是 {@code mtime}。
+     * 其余两个取值（view / pubtime）两边一致。
+     */
+    public static String legacyOrder(String order) {
+        return ORDER_FAV_TIME.equals(order) ? "fav_time" : order;
+    }
+
     public static ArrayList<FavoriteFolder> getFavoriteFolders(long mid) throws IOException, JSONException {
         String url = "https://space.bilibili.com/ajax/fav/getBoxList?mid=" + mid;
         JSONObject result = NetWorkUtil.getJson(url);
@@ -140,12 +155,22 @@ public class FavoriteApi {
      * @return 0：成功 1：已到底 -1：失败
      */
     public static int getFolderVideosNew(long mediaId, int page, ArrayList<VideoCard> videoList) throws IOException, JSONException {
+        return getFolderVideosNew(mediaId, page, videoList, ORDER_FAV_TIME);
+    }
+
+    /**
+     * 带排序的收藏夹内容（新接口）。
+     *
+     * @param order {@link #ORDER_FAV_TIME} / {@link #ORDER_VIEW} / {@link #ORDER_PUBTIME}
+     */
+    public static int getFolderVideosNew(long mediaId, int page, ArrayList<VideoCard> videoList, String order) throws IOException, JSONException {
         String url = "https://api.bilibili.com/x/v3/fav/resource/list" + new NetWorkUtil.FormData()
                 .setUrlParam(true)
                 .put("media_id", mediaId)
                 .put("platform", "web")
                 .put("pn", page)
-                .put("ps", 20);
+                .put("ps", 20)
+                .put("order", order == null ? ORDER_FAV_TIME : order);
         JSONObject result = NetWorkUtil.getJson(url);
         if (result.optInt("code", -1) != 0) return -1;
         JSONObject data = result.optJSONObject("data");
@@ -211,8 +236,18 @@ public class FavoriteApi {
     }
 
     public static int getFolderVideos(long mid, long fid, int page, ArrayList<VideoCard> videoList) throws IOException, JSONException {
+        return getFolderVideos(mid, fid, page, videoList, ORDER_FAV_TIME);
+    }
+
+    /**
+     * 老接口（{@code x/space/fav/arc}，已停用，仅在没有 media_id 时兜底）。
+     *
+     * @param order 新接口风格的排序常量，内部会过 {@link #legacyOrder(String)} 转成老取值
+     */
+    public static int getFolderVideos(long mid, long fid, int page, ArrayList<VideoCard> videoList, String order) throws IOException, JSONException {
         String url = "https://api.bilibili.com/x/space/fav/arc?vmid=" + mid
-                + "&ps=30&fid=" + fid + "&tid=0&keyword=&pn=" + page + "&order=fav_time";
+                + "&ps=30&fid=" + fid + "&tid=0&keyword=&pn=" + page + "&order=" + legacyOrder(order);
+
         JSONObject result = NetWorkUtil.getJson(url);
         JSONObject data = result.getJSONObject("data");
         if (data.has("archives") && !data.isNull("archives")) {
@@ -347,6 +382,75 @@ public class FavoriteApi {
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, data, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-删除收藏夹", result.toString());
         return result.getInt("code");
+    }
+
+    /**
+     * 拼批量操作要的 resources 参数：`{aid}:2`（2 = 视频稿件），多项用英文逗号连接。
+     * 跳过 aid &lt;= 0 的脏数据；空表返回空串。纯函数，方便单测。
+     */
+    public static String buildResources(List<VideoCard> cards) {
+        if (cards == null || cards.isEmpty()) return "";
+        StringBuilder builder = new StringBuilder();
+        for (VideoCard card : cards) {
+            if (card == null || card.aid <= 0) continue;
+            if (builder.length() > 0) builder.append(',');
+            builder.append(card.aid).append(":2");
+        }
+        return builder.toString();
+    }
+
+    /**
+     * 批量把收藏内容复制到另一个收藏夹。
+     *
+     * @param srcMediaId 源收藏夹 media_id
+     * @param tarMediaId 目标收藏夹 media_id
+     * @param cards      要复制的内容
+     * @return 服务端 code（0 成功）
+     */
+    public static int copyResources(long srcMediaId, long tarMediaId, List<VideoCard> cards) throws IOException, JSONException {
+        return dealResources("https://api.bilibili.com/x/v3/fav/resource/copy", srcMediaId, tarMediaId, cards);
+    }
+
+    /**
+     * 批量把收藏内容移动到另一个收藏夹。
+     *
+     * @see #copyResources(long, long, List)
+     */
+    public static int moveResources(long srcMediaId, long tarMediaId, List<VideoCard> cards) throws IOException, JSONException {
+        return dealResources("https://api.bilibili.com/x/v3/fav/resource/move", srcMediaId, tarMediaId, cards);
+    }
+
+    private static int dealResources(String url, long srcMediaId, long tarMediaId, List<VideoCard> cards) throws IOException, JSONException {
+        long mid = SharedPreferencesUtil.getLong("mid", 0);
+        String resources = buildResources(cards);
+        if (srcMediaId <= 0 || tarMediaId <= 0 || resources.isEmpty()) return -400;
+        NetWorkUtil.FormData formData = new NetWorkUtil.FormData()
+                .put("src_media_id", srcMediaId)
+                .put("tar_media_id", tarMediaId)
+                .put("mid", mid)
+                .put("resources", resources)
+                .put("platform", "web")
+                .put("csrf", NetWorkUtil.currentCsrf());
+        JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, formData.toString(), NetWorkUtil.webHeaders).body()).string());
+        return result.getInt("code");
+    }
+
+    /** 收藏内容批量操作的错误码文案（copy / move / batch-del 通用） */
+    public static String resourceErrorMsg(int code) {
+        switch (code) {
+            case 0:
+                return "";
+            case -101:
+                return "还没有登录喵~";
+            case -111:
+                return "登录凭证已失效，请重新登录";
+            case -400:
+                return "请求出错了，请稍后再试";
+            case 11010:
+                return "内容不存在，可能已经被删除了";
+            default:
+                return "操作失败（错误码 " + code + "）";
+        }
     }
 
 }

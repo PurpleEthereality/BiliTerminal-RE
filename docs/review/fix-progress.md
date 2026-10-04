@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -2171,6 +2171,64 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - `docs/architecture-map.md` 新增 §7.23「稍后再看『未看完』分类」，并把测试数改为 34 个测试类 / 285 个用例（api 层 9 个类被覆盖）。
 - 接口依据：`bilibili-API/docs/historytoview/toview.md:124-334`（列表接口，字段表 `:148`/`:173`/`:175` `duration`/`:183` `progress`/`:184` `add_at`）。
 - 批次 7 进度：C18（本条）→ C19 收藏夹排序/复制/移动 → C20 收藏夹多选删除 → C21 关注分组增删改。
+
+---
+
+## 二十八、26.10.04 批次 7（2/4）：收藏夹排序与复制 / 移动（C19）
+
+### 为什么做
+
+收藏夹内容列表此前**只有一个顺序**（老接口写死 `order=fav_time`），想找播放量最高的、或最近投稿的只能自己翻；收藏内容也没法在收藏夹之间整理——想「把这条挪到另一个夹子」只能取消收藏再去目标夹重新收藏，两步操作且会丢收藏时间。调研报告 §12.4 的 C19 建议做排序 + 复制/移动，本次按用户拍板的范围落地：**排序 + 单条复制/移动 + 单条取消收藏**，多选（C20）留到下一项。
+
+### 改动
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/FavoriteApi.java` | 新增排序常量 `ORDER_FAV_TIME`/`ORDER_VIEW`/`ORDER_PUBTIME` 与 `legacyOrder(String)`；`getFolderVideosNew` 与 `getFolderVideos` 各加一个带 `order` 的重载（旧签名保留并委托）；新增纯函数 `buildResources(List<VideoCard>)`；新增 `copyResources`/`moveResources`（共用私有 `dealResources`）与 `resourceErrorMsg(int)` |
+| `app/src/main/res/layout/activity_simple_refresh.xml` | 在 C18 的 `filterBar` 之后新增**默认 `android:visibility="gone"`** 的 `sortBar`（三个等宽 `TextView`：`sortFavTime`「收藏时间」/`sortView`「播放量」/`sortPubtime`「投稿时间」） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/user/favorite/FavoriteVideoListActivity.kt` | 重写：`readOnly`/`writable` 分开判定、`sortOrder` + `switchSort()`（重置 `page`/`bottom` 后重拉第一页）、`fetch()` 统一两条加载路径、`writable` 时长按弹「复制到…/移动到…/取消收藏」菜单（目标夹从 `getFavoriteFolders(mid)` 里选并排除自己）、`media_id` 为 0 时保留原「连点两次长按删除」 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/favorite/FavoriteFolderAdapter.kt` | 自己的收藏夹点击时补传 `mediaId` 与 `readOnly=false` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/favorite/UserFavoriteFolderAdapter.kt` | 补传 `readOnly=true` |
+| `app/src/test/java/com/RobinNotBad/BiliClient/api/FavoriteApiTest.kt` | 追加 5 例：`buildResources` ×3、`legacyOrder` ×1、`resourceErrorMsg` ×1 |
+
+### 取舍
+
+- **「收藏夹排序」落地成「收藏内容列表排序」**：快照里**没有任何给收藏夹本身排序的接口**（`bilibili-API/docs/fav/list.md` 只有资源列表的 `order`）。能做的就是给 `x/v3/fav/resource/list` 传 `mtime`/`view`/`pubtime`，这也是用户实际想要的效果（"让我按播放量看这个夹子"）。
+- **排序必须重发请求，与 C18 的筛选相反**：筛选是内存过滤，切档零请求；排序是服务端参数，切档必须 `page = 1` + 清列表 + 重拉第一页。两套东西共用同一个布局文件里的两个默认隐藏分组，注释里写明了区别，避免以后互相抄错。
+- **老接口的 `order` 取值不同**：`x/space/fav/arc` 的收藏时间叫 `fav_time` 而不是 `mtime`，另两个取值两边一致。映射收敛到纯函数 `legacyOrder()`，调用点只认新常量。
+- **自己的收藏夹也要带 `media_id`**：原先只有"别人的收藏夹"才传 `mediaId`，页面用 `readOnly = mediaId > 0` 把两件事混在一起。现在 `FavoriteFolderAdapter` 也传自己的 `media_id`，页面改用显式 `readOnly` extra（缺省仍按 `mediaId > 0` 兜底，兼容旧调用方）。**`media_id` 是从 `getFavoriteFolders` 的 `fid → media_id` 映射里拿的，映射失败就是 0**——此时退回老接口、不给复制/移动，长按保留原删除手势，不会出现"点了没反应"。
+- **长按弹菜单而不是长按即删**：与 C3/C7 的菜单化一致，也避免"想复制却误删"。菜单里仍保留「取消收藏」；`media_id` 为 0 的老链路保留原「连点两次长按删除」，不静默丢掉既有能力。
+- **`resources` 参数只拼 `aid:2`**：`{内容id}:{内容类型}` 里视频稿件是 `2`、内容 id 是 **avid**；拼装进纯函数 `buildResources`（跳过 `aid <= 0` 的脏数据），C20 的多选删除（`x/v3/fav/resource/batch-del`）直接复用同一个函数与同一套错误码文案。
+- **客户端预校验不发请求**：`src_media_id`/`tar_media_id` 缺失或 `resources` 为空时直接返回 `-400`，不浪费一次网络往返。
+- **目标收藏夹排除自己**：源夹不出现在选择列表里（`mediaId` 相同或 `<= 0` 的跳过），避免"复制到自己"这种服务端必拒的操作。
+
+### 单测
+
+`api/FavoriteApiTest.kt` 由 3 例增至 **8 例**（+5）：`buildResources_joinsAidAndType`（`1:2,2:2`）、`buildResources_skipsNullAndBadAid`（`aid<=0` 与 null 元素）、`buildResources_nullOrEmpty_returnsEmpty`、`legacyOrder_mapsFavTimeOnly`（`mtime → fav_time`，`view`/`pubtime` 原样）、`resourceErrorMsg_mapsKnownCodes`（0 / -101 / -111 / -400 / 11010 / 未知码带原码）。已有的 3 例 `parseFavoriteState` 未改。网络请求部分不测（与既有 api 测试一致）。
+
+### 验证
+
+本次只改既有布局文件、**没有新增 `res/` 文件**，按 AGENTS.md 不需要 clean 两连：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → **BUILD SUCCESSFUL in 1m 4s**（99 tasks；pwsh 因 javac 的过时 API 注记报 `[exit code: 1]`，属已知假阳性）。`app/build/test-results/testDebugUnitTest` **34 个 XML / 290 个用例 / 0 失败 / 0 错误**（C18 后 34/285，本次 +5 例）。乱码自检 `git diff | Select-String '鐐|璇|鍒|锛|銆|鎴|鏂|锟'` 计数 0；diff 涉及 6 个已跟踪文件（无新增文件）。
+
+### 真机验证清单
+
+1. 进入**自己的**收藏夹：顶部出现「收藏时间 / 播放量 / 投稿时间」三个排序项；**其它列表页（稍后再看、历史记录等）看不到这一行**，稍后再看的「全部 / 未看完」也不受影响。
+2. 默认选中「收藏时间」，列表与升级前一致（顺序、条数、封面）；点「播放量」「投稿时间」后列表内容/顺序确实变化（可与网页端同一收藏夹对照）。
+3. 排序项字色跟随主题：选中项是主题色，另两项是次要色；点已选中档位不重新请求、不闪屏。
+4. 长按自己收藏夹里的一条：弹出菜单，标题是该视频标题，三项「复制到…」「移动到…」「取消收藏」。
+5. 「复制到…」：选择目标收藏夹后提示「已复制」；**当前列表不变**，去目标收藏夹能看到这条，源收藏夹里也还在。
+6. 「移动到…」：提示「已移动」，**当前列表立即少一行且不跳位**；源收藏夹少一条、目标收藏夹多一条（网页端核对）。
+7. 「取消收藏」：二次确认后提示「已取消收藏」，列表少一行；网页端该收藏夹也少了。
+8. 目标收藏夹选择列表里**不出现当前这个收藏夹**；只有 0 个可选目标时提示「没有别的收藏夹可以放喵~」而不是弹空列表。
+9. 进入**别人的**收藏夹：排序项在、长按**不弹菜单**、点击仍按虚拟合集逻辑播放；未登录/接口失败时提示文案正常（`-101`「还没有登录喵~」等）。
+10. 点「播放量」排序后点一条视频，虚拟合集的播放顺序与屏幕上看到的顺序一致。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C19 行改为「已实现（26.10.04 批次 7）」；§12.6 测试数改 34 类 / 290 例；§12.7 的「想要实现 36（…剩 13）」改剩 12，「26.10.04 批次 7 落地」行改 2/4；批次顺序 ⑦ 标为进行中（2/4）。
+- `docs/architecture-map.md` 新增 §7.24「收藏夹：排序 + 复制 / 移动」，并把测试数改为 34 个测试类 / 290 个用例。
+- 接口依据：`bilibili-API/docs/fav/list.md:5-32`（资源列表的 `order` 取值）、`bilibili-API/docs/fav/action.md:246-304`（`x/v3/fav/resource/copy`）、`:306-364`（`/move`，参数与 `resources` 格式、错误码 0/-101/-111/-400/11010）、`:366-418`（`batch-del`，C20 用）。
+- 批次 7 进度：C18（§二十七）→ C19（本条）→ C20 收藏夹多选删除 → C21 关注分组增删改。
 
 
 

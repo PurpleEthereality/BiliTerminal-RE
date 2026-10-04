@@ -655,7 +655,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | C16 | 追番更新提醒 | **已实现（26.10.04 批次 5）**：`util/BangumiUpdateChecker.kt` 在打开应用时拉 `x/space/bangumi/follow/list`（最多 10 页 × 30 条），按 `new_ep.id` 快照 diff，有变化才经 `util/MsgNotifier.kt`（渠道 `bangumi_update_channel`、通知 ID 1030）提醒，点通知进追番列表；首次检查只记快照不提醒、新追的番不算更新、拉取失败不清快照；设置项「追番更新提醒」。**不做后台定时**（无 WorkManager/AlarmManager 依赖，也不新增） |
 | C17 | 弹幕点赞 / 撤回自己的弹幕 | 无计划 |
 | C18 | 稍后再看「未看完」分类 | **已实现（26.10.04 批次 7）**：判据来自稍后再看接口本身就带的 `progress`（已看秒数）与 `duration`（总时长秒数）——`api/WatchLaterApi.java` 新增纯函数 `isUnfinished(progress, duration)`（`progress <= 0` 不算「未看完」，那是「没播过」；总时长未知时只看 `progress > 0`；否则 `progress < duration`）与 `filterUnfinished(list, onlyUnfinished)`；`model/VideoCard.java` 新增 `duration` 字段（只有本接口会填，Parcel 读写成对追加在末尾）。UI 侧 `res/layout/activity_simple_refresh.xml` 新增**默认 `gone`** 的 `filterBar`（「全部」/「未看完」两个 chip，和 `loadMoreTip` 一样放在列表外，不影响其它 `RefreshListActivity` 页面），`activity/user/WatchLaterActivity.kt` 重写：接口全量存 `allList`、adapter 持有 `shownList` 引用，切档只重填引用 + `notifyDataSetChanged()`，**不重新请求接口**；删除手势仍是原来的「连点两次长按」 |
-| C19 | 收藏夹排序 / 复制 / 移动 | 想要实现 |
+| C19 | 收藏夹排序 / 复制 / 移动 | **已实现（26.10.04 批次 7）**：这里的「排序」指**收藏内容列表的排序**（`GET x/v3/fav/resource/list` 的 `order` 参数，取值 `mtime`/`view`/`pubtime`）——快照里**没有任何给收藏夹本身排序的接口**。`api/FavoriteApi.java` 新增排序常量 `ORDER_FAV_TIME`/`ORDER_VIEW`/`ORDER_PUBTIME` 与 `legacyOrder()`（老接口 `x/space/fav/arc` 的收藏时间叫 `fav_time` 不叫 `mtime`），`getFolderVideosNew`/`getFolderVideos` 各加一个带 `order` 的重载（旧签名保留并委托）；复制/移动走 `POST x/v3/fav/resource/copy`∥`/move`，参数 `src_media_id`/`tar_media_id`/`mid`/`resources`（格式 `{avid}:2`，`buildResources()` 纯函数负责拼、跳过 `aid<=0`）/`platform=web`/`csrf`，另有 `resourceErrorMsg()`（0/-101/-111/-400/11010）。UI 侧 `activity_simple_refresh.xml` 新增**默认 `gone`** 的 `sortBar`（三个 chip），`FavoriteVideoListActivity` 重写：切档 = 重置 `page` + 清列表 + 重发第一页（**排序是服务端参数，必须重拉**，与 C18 的本地筛选不同）；`writable`（自己的收藏夹且拿得到 `media_id`）时长按弹「复制到…/移动到…/取消收藏」菜单，目标收藏夹从 `getFavoriteFolders(mid)` 里选并排除自己；拿不到 `media_id` 时保留原「连点两次长按删除」兜底。`FavoriteFolderAdapter` 现在也把自己的收藏夹的 `media_id` 传过去（原来只有他人收藏夹传） |
 | C20 | 收藏夹多选删除 | 想要实现（与 C19 共用接口封装） |
 | C21 | 关注分组增删改 | 想要实现 |
 | C22 | 移除粉丝 | 暂缓 |
@@ -697,14 +697,14 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 
 - **D2 / D3 / D5 原被本文 §8 列为待办，核实后为「已实现」**，相应条目作废（D5 只剩历史点击一个 10 分钟小项，已裁为暂缓）。
 - `activity/player/PlayerActivity.kt` 实际 **3494 行**（原述 3090 行）。
-- 单元测试实际 **34 个测试类 / 285 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例、C12 同文件 +4 例、C14 新增 `util/MsgNotifierTest` 5 例、C16 新增 `api/BangumiApiTest` 6 例 + `util/BangumiUpdateCheckerTest` 8 例 + `MsgNotifierTest`/`SettingsKeysTest` 各 +1 例；批次 6 的 C3 在 `api/ReplyApiTest` +2 例、`model/ReplyParseActionTest` +3 例，C4 新增 `model/ReplySortTest` 6 例，C6b 在 `api/ReplyApiTest` +2 例，C7 新增 `api/DynamicApiTest` 6 例、C8 同文件 +5 例、C9 同文件 +5 例，C10 新增 `api/TopicApiTest` 4 例、C27 新增 `api/NoteApiTest` 12 例、C18 新增 `api/WatchLaterApiTest` 7 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
+- 单元测试实际 **34 个测试类 / 290 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例、C12 同文件 +4 例、C14 新增 `util/MsgNotifierTest` 5 例、C16 新增 `api/BangumiApiTest` 6 例 + `util/BangumiUpdateCheckerTest` 8 例 + `MsgNotifierTest`/`SettingsKeysTest` 各 +1 例；批次 6 的 C3 在 `api/ReplyApiTest` +2 例、`model/ReplyParseActionTest` +3 例，C4 新增 `model/ReplySortTest` 6 例，C6b 在 `api/ReplyApiTest` +2 例，C7 新增 `api/DynamicApiTest` 6 例、C8 同文件 +5 例、C9 同文件 +5 例，C10 新增 `api/TopicApiTest` 4 例、C27 新增 `api/NoteApiTest` 12 例、C18 新增 `api/WatchLaterApiTest` 7 例、C19 在 `api/FavoriteApiTest` +5 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 - **本文 §10.4 与用户裁决存在三处冲突，以本台账为准**：① §10.4 把「关注主播开播提醒」列为"高价值低成本、值得做"，用户裁为**无计划**；② §10.4 把「漫画」列入"明确不值得做"，用户裁为**想要实现（F4）**；③ §10.4 把「收藏夹批量整理」「发布动态/评论/弹幕」列入"明确不值得做"，用户分别裁为**想要实现（C19/C20）**与**想要实现（C7/C9/C10）**——即"需要输入"不是本项目的否决理由（无键盘只影响输入方式，不影响功能取舍）。
 
 ### 12.7 量化汇总与建议顺序
 
 | 结论 | 项数 |
 |---|---|
-| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C12 / C13 / C14 / C16 已于批次 5 落地、C3 / C4 / C6b / C7 / C8 / C9 / C10 / C27 已于批次 6 落地，C18 已于批次 7 落地，剩 13） |
+| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C12 / C13 / C14 / C16 已于批次 5 落地、C3 / C4 / C6b / C7 / C8 / C9 / C10 / C27 已于批次 6 落地，C18 / C19 已于批次 7 落地，剩 12） |
 | 暂缓 | 10 |
 | 无计划 | 25 |
 | 已经实现（勘误） | 4（D2 / D3 / D5 主体，另 C3·C6·C8 的「已实现」子项） |
@@ -712,9 +712,9 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | **26.10.04 批次 4 落地** | 3（E4 E5 E6），另有 2 项勘误（E4 字面量 13 处而非 14 处；`applyBatch` 与 `beginBatchEdit` 同类一并删） |
 | **26.10.04 批次 5 落地** | 4（C13 会话删除 + 置顶/取消置顶；C12 私信发图；C14 新消息通知栏提醒；C16 追番更新提醒），本批 4 项全部完成 |
 | **26.10.04 批次 6 落地** | 8 项全部完成（C3 评论置顶/删除菜单；C4 楼中楼排序；C6b 带图评论发送闸门；C7 动态编辑；C8 动态置顶/取消；C9 动态定时发布；C10 话题广场 + 话题动态列表；C27 视频笔记查看），每项（或小分组）独立提交，见 `docs/review/fix-progress.md` §十九~§二十六 |
-| **26.10.04 批次 7 落地** | 进行中（1/4）：C18 稍后再看「未看完」分类已实现，见 `docs/review/fix-progress.md` §二十七；C19 收藏夹排序/复制/移动、C20 收藏夹多选删除、C21 关注分组增删改待做 |
+| **26.10.04 批次 7 落地** | 进行中（2/4）：C18 稍后再看「未看完」分类见 §二十七、C19 收藏夹排序/复制/移动见 §二十八；C20 收藏夹多选删除、C21 关注分组增删改待做 |
 
-**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（**批次 5 全部完成**：C13 ✅ 见 §十五；C12 ✅ 见 §十六；C14 ✅ 见 §十七；C16 ✅ 见 §十八，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27（**批次 6 全部完成**：C3 ✅ 见 §十九；C4 ✅ 见 §二十；C6b ✅ 见 §二十一；C7 ✅ 见 §二十二；C8 ✅ 见 §二十三；C9 ✅ 见 §二十四；C10 ✅ 见 §二十五；C27 ✅ 见 §二十六）→ ⑦ C18 C19 C20 C21（**批次 7 进行中（1/4）**：C18 ✅ 见 §二十七；C19 / C20 / C21 待做）→ ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
+**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（**批次 5 全部完成**：C13 ✅ 见 §十五；C12 ✅ 见 §十六；C14 ✅ 见 §十七；C16 ✅ 见 §十八，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27（**批次 6 全部完成**：C3 ✅ 见 §十九；C4 ✅ 见 §二十；C6b ✅ 见 §二十一；C7 ✅ 见 §二十二；C8 ✅ 见 §二十三；C9 ✅ 见 §二十四；C10 ✅ 见 §二十五；C27 ✅ 见 §二十六）→ ⑦ C18 C19 C20 C21（**批次 7 进行中（2/4）**：C18 ✅ 见 §二十七；C19 ✅ 见 §二十八；C20 / C21 待做）→ ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
 
 ---
 

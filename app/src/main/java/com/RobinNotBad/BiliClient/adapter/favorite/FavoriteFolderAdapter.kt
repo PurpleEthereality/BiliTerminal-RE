@@ -118,6 +118,10 @@ class FavoriteFolderAdapter(
                     intent.putExtra("fid", folder.id)
                     intent.putExtra("mid", mid)
                     intent.putExtra("name", folder.name)
+                    // 自己的收藏夹：把 media_id 也带过去，排序/复制/移动都要用它
+                    // （media_id 取不到时为 0，页面会退回老接口且不提供写操作）
+                    intent.putExtra("mediaId", folder.mediaId)
+                    intent.putExtra("readOnly", false)
                     context.startActivity(intent)
                 }
                 favoriteHolder.itemView.setOnLongClickListener {

@@ -66,6 +66,8 @@ class UserFavoriteFolderAdapter(
             intent.putExtra("mediaId", folder.mediaId)
             intent.putExtra("mid", mid)
             intent.putExtra("name", folder.name)
+            // 别人的收藏夹只读：不给排序之外的写操作
+            intent.putExtra("readOnly", true)
             context.startActivity(intent)
         }
     }
