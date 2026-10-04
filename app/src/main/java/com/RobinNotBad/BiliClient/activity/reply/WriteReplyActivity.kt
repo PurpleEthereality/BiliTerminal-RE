@@ -81,7 +81,23 @@ class WriteReplyActivity : BaseActivity() {
         }
     }
 
-    private var sent: Boolean = false
+    /**
+     * 发送闸门。点下发送的**那一刻**就置位，用来挡住「请求还没回来又点一次」——
+     * 原来的 `sent` 是等请求返回后才置 true，等待期里连点会发出两条评论。
+     * 在后台线程里读写，所以加 @Volatile。
+     */
+    @Volatile
+    private var sending: Boolean = false
+
+    /**
+     * 仍在上传中的图片张数。
+     *
+     * 选完图 [imageList] 里立刻就有这张图了，但压缩 + 上传还在后台跑。它挡的是一个更隐蔽的问题：
+     * 图还没传完就发送时，[buildPictures] 只能拼出已成功的那几张，评论会**少图发出且毫无提示**。
+     * 读写在主线程（[addImage] 由选图回调调用、减一也回到主线程），所以不需要加锁。
+     */
+    private var pendingUploads: Int = 0
+
     private var dontKyPlease: Boolean = true
 
     @SuppressLint("SetTextI18n")
@@ -113,45 +129,60 @@ class WriteReplyActivity : BaseActivity() {
 
         send.setOnClickListener {
             if (SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.cookie_refresh, true)) {
-                if (!sent) {
-                    CenterThreadPool.run {
+                if (sending) {
+                    MsgUtil.showMsg("正在发送中")
+                    return@setOnClickListener
+                }
+                // 图还没传完就发送 = 评论少图且没有任何提示，必须在这里拦住
+                if (!ReplyApi.canSendReply(pendingUploads)) {
+                    MsgUtil.showMsg(ReplyApi.uploadPendingTip(pendingUploads))
+                    return@setOnClickListener
+                }
+                sending = true
+                CenterThreadPool.run {
+                    try {
                         val text = editText.text.toString()
-                        if (text.isNotEmpty() || imageList.isNotEmpty()) {
-                            if (checkKy(text) && dontKyPlease) {
-                                MsgUtil.showDialog("保护措施……", getString(R.string.reply_dont_ky), 15)
-                                dontKyPlease = false
-                                return@run
-                            }
-                            try {
-                                val pictures = buildPictures()
-                                val result = ReplyApi.sendReply(oid, rpid, parent, text, replyType, pictures)
-                                val resultCode = result.first
-                                val resultReply = result.second
+                        if (text.isEmpty() && imageList.isEmpty()) {
+                            runOnUiThread { MsgUtil.showMsg("还没输入内容呢~") }
+                            return@run
+                        }
+                        if (checkKy(text) && dontKyPlease) {
+                            MsgUtil.showDialog("保护措施……", getString(R.string.reply_dont_ky), 15)
+                            dontKyPlease = false
+                            return@run
+                        }
+                        // 进后台先给一次反馈：原先这段等待期界面毫无变化，点一下像没反应
+                        runOnUiThread { MsgUtil.showMsg("正在发送…") }
+                        try {
+                            val pictures = buildPictures()
+                            val result = ReplyApi.sendReply(oid, rpid, parent, text, replyType, pictures)
+                            val resultCode = result.first
+                            val resultReply = result.second
 
-                                sent = true
-
-                                if (resultCode == 0) {
-                                    runOnUiThread { MsgUtil.showMsg("发送成功>w<") }
-                                    resultReply.forceDelete = true
-                                    resultReply.pubTime = "刚刚"
-                                    synchronized(uploadDataList) {
-                                        for (uploadData in uploadDataList) {
-                                            resultReply.pictureList.add(uploadData.image_url)
-                                        }
+                            if (resultCode == 0) {
+                                runOnUiThread { MsgUtil.showMsg("发送成功>w<") }
+                                resultReply.forceDelete = true
+                                resultReply.pubTime = "刚刚"
+                                synchronized(uploadDataList) {
+                                    for (uploadData in uploadDataList) {
+                                        resultReply.pictureList.add(uploadData.image_url)
                                     }
-                                    EventBus.getDefault().post(ReplyEvent(1, resultReply, pos, oid))
-                                    finish()
-                                } else {
-                                    val toast_msg = "评论发送失败：\n" + (msgMap.getOrDefault(resultCode, resultCode.toString()))
-                                    runOnUiThread { MsgUtil.showMsg(toast_msg) }
-                                    sent = false
                                 }
-                            } catch (e: Exception) {
-                                runOnUiThread { MsgUtil.err(e) }
+                                EventBus.getDefault().post(ReplyEvent(1, resultReply, pos, oid))
+                                finish()
+                            } else {
+                                val toast_msg = "评论发送失败：\n" + (msgMap.getOrDefault(resultCode, resultCode.toString()))
+                                runOnUiThread { MsgUtil.showMsg(toast_msg) }
                             }
-                        } else runOnUiThread { MsgUtil.showMsg("还没输入内容呢~") }
+                        } catch (e: Exception) {
+                            runOnUiThread { MsgUtil.err(e) }
+                        }
+                    } finally {
+                        // 成功、失败、还是上面几个提前 return，都要把闸门松开，
+                        // 否则用户在这条评论之后再想发就永远被挡
+                        sending = false
                     }
-                } else MsgUtil.showMsg("正在发送中")
+                }
             } else
                 MsgUtil.showDialog("无法发送", "上一次的Cookie刷新失败了，\n您可能需要重新登录以进行敏感操作", -1)
         }
@@ -187,6 +218,7 @@ class WriteReplyActivity : BaseActivity() {
 
     private fun addImage(uri: Uri) {
         imageList.add(uri.toString())
+        pendingUploads++
         updateImageText()
         CenterThreadPool.run {
             try {
@@ -200,7 +232,6 @@ class WriteReplyActivity : BaseActivity() {
                     runOnUiThread {
                         MsgUtil.showMsg("图片上传失败")
                         imageList.remove(uri.toString())
-                        updateImageText()
                     }
                     return@run
                 }
@@ -211,6 +242,12 @@ class WriteReplyActivity : BaseActivity() {
                 runOnUiThread {
                     MsgUtil.showMsg("图片处理失败")
                     imageList.remove(uri.toString())
+                }
+            } finally {
+                // 不管成功、失败还是提前 return，都要把「上传中」计数放开，
+                // 否则这个计数永远回不到 0、发送会被永久拦住
+                runOnUiThread {
+                    pendingUploads--
                     updateImageText()
                 }
             }
@@ -331,9 +368,12 @@ class WriteReplyActivity : BaseActivity() {
         return jsonArray.toString()
     }
 
+    @SuppressLint("SetTextI18n")
     private fun updateImageText() {
         val count = imageList.size
-        imageText.text = if (count == 0) getString(R.string.btn_image) else getString(R.string.btn_image) + "($count)"
+        val base = if (count == 0) getString(R.string.btn_image) else getString(R.string.btn_image) + "($count)"
+        // 有图还在上传就在按钮上写明，别让用户以为「图片(1)」= 已经可以发了
+        imageText.text = if (pendingUploads > 0) "$base・上传中($pendingUploads)" else base
     }
 
     private fun checkKy(str: String): Boolean {

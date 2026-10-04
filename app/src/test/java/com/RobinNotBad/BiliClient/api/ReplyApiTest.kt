@@ -107,4 +107,28 @@ class ReplyApiTest {
         val msg = ReplyApi.actionErrorMsg(99999)
         assertTrue("兜底文案要带上错误码本身", msg.contains("99999"))
     }
+
+    // ---- 带图评论的发送闸门（WriteReplyActivity） ----
+
+    @Test
+    fun canSendReply_blocksWhileImagesAreStillUploading() {
+        // 允许的条件只有一个：没有图片还在上传。
+        // 图没传完就放行 = 评论少图发出且无提示，这是这条闸门存在的唯一理由。
+        assertTrue("没有图片在上传时才能发", ReplyApi.canSendReply(0))
+        assertTrue("负数按没有处理", ReplyApi.canSendReply(-1))
+        assertFalse("还有 1 张在上传时必须拦住", ReplyApi.canSendReply(1))
+        assertFalse("还有 3 张在上传时必须拦住", ReplyApi.canSendReply(3))
+    }
+
+    @Test
+    fun uploadPendingTip_countsAndIsEmptyWhenClear() {
+        assertEquals("没有图片在上传时不该有提示", "", ReplyApi.uploadPendingTip(0))
+        assertEquals("", ReplyApi.uploadPendingTip(-1))
+
+        val tip = ReplyApi.uploadPendingTip(2)
+        assertTrue("提示要带上还没传完的张数", tip.contains("2"))
+        assertTrue("提示要说清是图片还在上传", tip.contains("上传"))
+        // 文案必须能直接丢给 MsgUtil.showMsg，所以连完整文案一起钉死
+        assertEquals("还有 3 张图片正在上传，请稍候", ReplyApi.uploadPendingTip(3))
+    }
 }

@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1783,4 +1783,58 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - `docs/architecture-map.md` 新增 §7.17（主列表走服务端排序、楼中楼只能客户端排，两种档位别共用文案表）。
 - 接口依据：`bilibili-API/docs/comment/list.md:1559-1665`（`/x/v2/reply/reply` 参数表与 20 条上限）、`:876`（`/x/v2/reply/wbi/main` 的 `mode`）、`:18`（`/x/v2/reply` 的 `sort`）、`bilibili-API/docs/comment/readme.md:56`（`floor` 字段）。
 - 批次 6 进度：C3（§十九）→ C4（本条）→ C6b → C7 → C8 → C9 → C10 → C27。
+
+---
+
+## 二十一、26.10.04 批次 6（3/8）：带图评论的三个静默出错（C6b）
+
+对应调研报告 §12.4 的 C6 行（「上传/发送无进度无反馈」）。
+
+### 问题：不是「没有反馈」这么简单
+
+勘察后纠正了原台账的描述——代码**本来就有**失败提示（「图片上传失败」「图片处理失败」）和发送结果提示（「发送成功>w<」「评论发送失败：…」）。真正的问题是**三个静默出错**：
+
+1. `activity/reply/WriteReplyActivity.kt` 的 `addImage()` 在 `imageList.add()` 之后立刻调 `updateImageText()`，按钮马上显示「图片(1)」，但压缩 + 上传还在后台线程跑；界面没有任何「进行中」的迹象，用户以为已经可以发了。
+2. **图还没传完就点发送**：`buildPictures()` 只遍历 `uploadDataList`（上传成功的那些），评论会**少图发出且没有任何提示**；更糟的是原发送成功分支会把后到的 `uploadDataList` 里的 url 补进本地 `resultReply.pictureList`，于是**本地显示的图比实际发出去的还多**。
+3. 原来的 `sent` 是**请求返回之后**才置 `true`（失败置回 `false`），而 `else MsgUtil.showMsg("正在发送中")` 只在 `sent == true` 时可达——也就是**发送等待期根本没有闸门**，连点会把同一条评论发出两遍。
+
+### 改动（第 1 步，零布局改动）
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/reply/WriteReplyActivity.kt` | ① 字段：`sent` → `@Volatile private var sending`（点下即置位、后台 `finally` 里松开），新增 `pendingUploads`（仍在上传的图片张数；读写在主线程故不加锁）。② 发送入口：先判 `sending`（→「正在发送中」）→ 再判 `ReplyApi.canSendReply(pendingUploads)`（→「还有 k 张图片正在上传，请稍候」并 return）→ 进后台先弹「正在发送…」→ 整段包 `try/finally`，成功、失败、提前 return 都会松开闸门。③ `addImage()`：`pendingUploads++` 后再 `updateImageText()`；`finally { runOnUiThread { pendingUploads--; updateImageText() } }`（不管成功失败都要归零，否则发送会被永久拦住），两个失败分支里重复的 `updateImageText()` 删除。④ `updateImageText()`：有图在上传时显示「图片(n)・上传中(k)」 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/ReplyApi.java` | 新增两个纯函数：`canSendReply(int pendingUploads)`（<=0 才允许发送）、`uploadPendingTip(int pendingUploads)`（「还有 k 张图片正在上传，请稍候」，无待传时返回空串）。放在 api 层是因为同文件已有 `actionErrorMsg(int)` 这种「用户可读文案」的先例，且纯函数才好单测 |
+| `app/src/test/java/com/RobinNotBad/BiliClient/api/ReplyApiTest.kt` | +2 例（见下） |
+
+### 取舍
+
+- **只做第 1 步**（用户拍板）：不加进度条、不改布局。`res/layout/activity_write_reply.xml` 里唯一能承载状态的控件就是 image 按钮上的 `imageText`，所以「进行中」用按钮文字 + toast 表达。
+- **「正在发送」用 toast 而不是 `MsgUtil.createSnack(LENGTH_INDEFINITE)`**：后者需要一个可 dismiss 的 View 句柄，而发送成功会 `finish()`，多一个句柄就多一处悬挂/泄漏风险；发送本身只有一次网络往返，toast 足够。
+- **没做按字节的真进度条**：那需要新写 `ProgressRequestBody`（OkHttp 4.12 的 `RequestBody` 子类 + 8KB 分块 + 200ms 节流，范式见 `util/UpdateManager.kt:238-290`）并给 `uploadReplyImage` 加重载签名，属第 2 步。
+- **闸门是「点下即置位」而不是「期间禁用按钮」**：不改布局；用户再点只会看到「正在发送中」。
+- **没顺手做**（发现但保持独立）：`api/ReplyApi.java` 的 `deleteReply` 里还留着 `Log.e("debug-点赞评论", …)`；`activity/reply/ReplyFragment.kt:241` 还有 `Log.e("debug", …)`。都不属于 C6b，留待专门的清理。
+
+### 单测
+
+`api/ReplyApiTest.kt` +2 例：`canSendReply_blocksWhileImagesAreStillUploading`（0 与 -1 放行，1 与 3 拦住）、`uploadPendingTip_countsAndIsEmptyWhenClear`（0/-1 返回空串，带张数，并钉死完整文案「还有 3 张图片正在上传，请稍候」）。
+
+### 验证
+
+`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → BUILD SUCCESSFUL；`app/build/test-results/testDebugUnitTest` **30 个 XML / 246 个用例 / 0 失败 / 0 错误**（C4 后 244 例，本次 +2 例）。
+
+### 真机验证清单
+
+1. 选一张大图 → 按钮立刻变「图片(1)・上传中(1)」，上传完成后回到「图片(1)」。
+2. 图还在上传时点发送 → 提示「还有 1 张图片正在上传，请稍候」，**评论不会发出去**。
+3. 图传完后点发送 → 先弹「正在发送…」，再「发送成功>w<」并返回上一页。
+4. 发送过程中连点发送 → 只弹「正在发送中」，服务端只多一条评论。
+5. 选一张超过 25MB 的图触发「图片上传失败」→ 张数与「上传中」计数都回退，之后仍能正常发送。
+6. 选图后不输入文字直接发送 → 图能正常带出（只有文字与图片都为空才拦「还没输入内容呢~」）。
+7. 一条评论发送失败（如频繁）后再点发送 → 能再发（闸门已松开，不会被永久挡住）。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C6 行已改写；`docs/architecture-map.md` 新增 §7.18。
+- 第 2 步的落点（未做）：`api/ReplyApi.uploadReplyImage`（`app/src/main/java/com/RobinNotBad/BiliClient/api/ReplyApi.java:218/231`）与小图压缩 `api/ImageApi.java:107-137`（`WriteReplyActivity` 的私有 `prepareImage` 是它的重复实现）。
+- 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（本条）→ C7 → C8 → C9 → C10 → C27。
 

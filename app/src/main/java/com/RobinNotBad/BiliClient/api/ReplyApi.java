@@ -411,6 +411,32 @@ public class ReplyApi {
     }
 
     /**
+     * 纯逻辑：现在能不能发送评论。
+     *
+     * <p>带图评论要走「压缩 → 上传图床 → 拿 image_url → 拼 pictures 再发评论」这条链，
+     * 图还没传完就点发送的话，调用方拼出来的 pictures 只含**已经成功**的那几张，
+     * 评论会「少图发出且没有任何提示」（见 {@code activity/reply/WriteReplyActivity.kt}）。
+     * 所以发送前必须先看还有几张图片在上传。
+     *
+     * @param pendingUploads 仍在上传中的图片张数
+     * @return true 表示可以发送
+     */
+    public static boolean canSendReply(int pendingUploads) {
+        return pendingUploads <= 0;
+    }
+
+    /**
+     * 纯逻辑：还有图片在上传时的提示文案。
+     *
+     * @param pendingUploads 仍在上传中的图片张数
+     * @return 提示文案；没有图片在上传时返回空串
+     */
+    public static String uploadPendingTip(int pendingUploads) {
+        if (pendingUploads <= 0) return "";
+        return "还有 " + pendingUploads + " 张图片正在上传，请稍候";
+    }
+
+    /**
      * 删除评论
      *
      * @param oid  oid
