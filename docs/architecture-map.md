@@ -292,7 +292,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 - **巨型类**：`activity/player/PlayerActivity.kt` 127 KB、`service/DownloadService.kt` 65 KB、`activity/video/ShortVideoPlayerActivity.kt` 35 KB。改播放/下载相关功能前先想清楚在哪个位置插入。
 - **Application 静态状态已收敛为一套**：26.10.02 起只有 `BiliTerminal.context` / `BiliTerminal.instance`（`BiliTerminal.kt` 伴生对象 `@JvmField`，`:43-44`），`BiliTerminalApp` 已整文件删除。**新代码一律用 `BiliTerminal`**。
-- **测试覆盖仍偏低**：`app/src/test/` 27 个文件（26 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **204 个用例**，对 364 个源文件（26.10.04 批次 4 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`NetWorkUtilTest`、`PerformanceManagerTest`、`ApkVerifierTest`、`SettingsKeysTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
+- **测试覆盖仍偏低**：`app/src/test/` 27 个文件（26 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **207 个用例**，对 364 个源文件（26.10.04 批次 5 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`NetWorkUtilTest`、`PerformanceManagerTest`、`ApkVerifierTest`、`SettingsKeysTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
 - **主题色表带缓存，失效点只有一处**：`ColorScheme.getCurrentTheme()`（26.09.11 起）缓存当前色表，**只由 `AppearanceManager.setTheme()` 经 `ColorScheme.invalidateCache()` 置空**。这是刻意的——36 个属性 getter 全走它，而列表滚动时一个 item 要调多次，此前每次都重读 SharedPreferences（热路径重复 IO）。**若将来给主题 key 增加第二个写入路径（比如直接 `SharedPreferencesUtil.putString(SettingsKeys.THEME, …)`），必须同步调用 `ColorScheme.invalidateCache()`，否则改主题后色表不跟着变且在 `onResume` 重建后依然错**。守卫测试：`ColorSchemeTest.themeCache_isInvalidatedOnEverySetTheme`、`colorGetters_doNotTouchSharedPreferencesAfterFirstRead`。
 - **主题体系有 3 个"裸 Activity"不参与**：`SplashActivity`、`GetIntentActivity` 不继承 `BaseActivity`（开屏/外链恒定 B站粉），`PlayerActivity` 自己 `setTheme` 但**不调 `applyWindowTheme`、也不参与 `onResume` 主题检测**。改主题相关行为时别以为全局都生效了。
 - **文案硬编码**：遗留页面标题/Toast 直接写中文字符串（Manifest 里 `android:label` 也是中文），只有设置页用 `desc_*` 资源。改文案按现有风格来，别顺手抽 `strings.xml`。
@@ -433,6 +433,16 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 - **别被同名假阳性骗了**：`activity/settings/SettingMainActivity.kt:118` 的 `"player"` 是设置页**分组 id / 跳转标记**，与 SharedPreferences 键只是字面量碰巧相同，**不是** `SettingsKeys.PLAYER`（该处已加注释）。
 - `SettingsKeysTest` 把两个键名字符串钉死。理由：键名是**磁盘协议**，改了不报错、只让用户设置静默回默认值（覆盖安装升级时才会被发现）。
 - 其余键（`mid`、`player_show_viewpoints` 等）仍散着字面量，尚未收敛；新增键请直接加进 `SettingsKeys`。
+
+### 7.13 `session_svr` 会话管理接口（26.10.04 批次 5 新增）
+
+- 私信会话的「移除」与「置顶」都走 `https://api.vc.bilibili.com/session_svr/v1/session_svr/` 下的接口，封装在 `api/PrivateMsgApi.java`：`removeSession(long talkerId, int sessionType)`、`setSessionTop(long talkerId, int sessionType, boolean top)`，两者共用私有 `postSessionAction(url, talkerId, sessionType, extra)`（`talker_id`/`session_type`/`csrf_token`/`csrf`/`build=0`/`mobi_app=web`，csrf 走 `NetWorkUtil.currentCsrf()`）。参数名与响应结构照 `updateAck` 的既有写法。
+- **`set_top` 的 `op_type` 与直觉相反：0 = 置顶、1 = 取消置顶。** 已抽成纯函数 `PrivateMsgApi.opTypeForTop(boolean)` 并配单测（`api/PrivateMsgApiTest.kt`），写反的后果是"点置顶实际取消置顶"——不报错、极难发现。
+- **服务端没有布尔型"是否置顶"字段**：只有会话项里的 `top_ts`（微秒级时间戳，未置顶为 0）。模型侧是 `model/PrivateMsgSession.topTs` + `isTop()`；`parseSessionsList` 用 `optLong("top_ts", 0)`（缺字段按未置顶），`getNewSessionsList` 同步解析。
+- **移除会话 ≠ 删除聊天记录**：`remove_session` 只把会话从列表里拿掉，对方再发消息会重新出现。UI 的二次确认文案必须说清这一点，否则用户以为记录没了。
+- 会话类型常量在 `PrivateMsgApi`：`SESSION_TYPE_USER = 1`、`SESSION_TYPE_FAN_GROUP = 2`（本项目目前只处理用户私信，粉丝团未接）。
+- 返回码翻译统一走 `PrivateMsgApi.sessionErrorMsg(int)`（0→空串、-101→未登录、-400→"请求错误，会话可能已不存在"、其余保留错误码）。
+- UI 落点：`adapter/message/PrivateMsgSessionsAdapter.kt` 的会话项**长按弹 `AlertDialog` 菜单**（置顶/取消置顶、删除会话、查看用户主页）；`activity/message/MessageActivity.kt` 的会话加载已抽成 `loadSessions()`，adapter 通过构造参数 `onSessionsChanged` 回调它重新拉列表（服务端才是唯一真相）。
 
 ---
 
@@ -759,7 +769,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 **不可单测**（内部发网络 / 依赖 Context / 弹 UI）：`DynamicApi.analyzeDynamic`、`MessageApi` 全部解析（SpannableString）、`PrivateMsgApi.getPrivateMsgList`、`LikeCoinFavApi.getVideoStats`。
 
-**测试覆盖现状（26.10.04 批次 4 实测）**：`app/src/test/` 26 个测试类 / 204 个用例；api 层只有 4 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`，另有 `PlayerApiPbpTest`、`ReplyApiTest` 覆盖部分纯逻辑）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口；`PerformanceManagerTest` 覆盖档位换算与图片/分页参数（见 §7.10）；`ApkVerifierTest` 覆盖更新包校验的判定规则（见 §7.11）；`SettingsKeysTest` 把 `player`/`play_qn` 两个磁盘键名钉死（见 §7.12）。
+**测试覆盖现状（26.10.04 批次 5 实测）**：`app/src/test/` 26 个测试类 / 207 个用例；api 层只有 4 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`，另有 `PlayerApiPbpTest`、`ReplyApiTest` 覆盖部分纯逻辑）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口；`PerformanceManagerTest` 覆盖档位换算与图片/分页参数（见 §7.10）；`ApkVerifierTest` 覆盖更新包校验的判定规则（见 §7.11）；`SettingsKeysTest` 把 `player`/`play_qn` 两个磁盘键名钉死（见 §7.12）；`PrivateMsgApiTest` 另覆盖会话列表解析（含 `top_ts`）与 `opTypeForTop` 的 0/1 映射（见 §7.13）。
 
 ### API 层的坑
 

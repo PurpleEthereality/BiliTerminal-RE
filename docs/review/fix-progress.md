@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1435,4 +1435,56 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 调研报告 §12.5（E4/E5/E6 三行改「已实现（26.10.04 批次 4）」）、§12.6（单测数字 → 26 类 / 204 例）、§12.7（批次 4 完成，8 批顺序第 4 批标 ✅）。
 - `docs/architecture-map.md` 新增 §7.11「更新包校验」+ §7.12「设置 key 的唯一来源」。
 - 下一批（批次 5，按调研报告 §12.7 的 8 批顺序）：C12 C13 C14 C16。
+
+---
+
+## 十五、26.10.04 批次 5（1/4）：私信会话管理（C13）
+
+对应调研报告 §12.4 的 C13「私信删除 / 置顶 / 折叠」。**范围按用户拍板收窄：只做「移除会话」+「置顶/取消置顶」，不做折叠消息（`batch_rm_dustbin`）**。批次 5 按「C13 → C12 → C14 → C16」各自独立提交，本条只记 C13。
+
+### 新增接口
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/PrivateMsgApi.java` | 新增 `public static int removeSession(long talkerId, int sessionType)` → `POST https://api.vc.bilibili.com/session_svr/v1/session_svr/remove_session`；新增 `public static int setSessionTop(long talkerId, int sessionType, boolean top)` → `POST …/session_svr/set_top`；两者共用私有 `postSessionAction(url, talkerId, sessionType, extra)`（`talker_id`/`session_type`/`csrf_token`/`csrf`/`build=0`/`mobi_app=web`，csrf 走 `NetWorkUtil.currentCsrf()`） |
+| 同上 | 新增**纯函数** `public static int opTypeForTop(boolean top)`：**`op_type` 0 = 置顶、1 = 取消置顶**（接口文档如此，与直觉相反）。抽成纯函数并配单测，因为写反的后果是"点置顶实际取消置顶"，不报错、极难发现 |
+| 同上 | 新增 `public static String sessionErrorMsg(int code)`：0→空串、-101→"还没有登录喵~"、-400→"请求错误，会话可能已不存在"、其余保留错误码 |
+| 同上 | 新增会话类型常量 `SESSION_TYPE_USER = 1`、`SESSION_TYPE_FAN_GROUP = 2` |
+| 同上 | `parseSessionsList` 与 `getNewSessionsList` 都补解析 `top_ts`（`optLong("top_ts", 0)`，缺字段按未置顶） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/PrivateMsgSession.java` | 新增 `public long topTs = 0;` 与 `public boolean isTop() { return topTs > 0; }`——服务端**没有布尔型的"是否置顶"字段**，只能判非零 |
+
+### UI
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/message/PrivateMsgSessionsAdapter.kt` | 构造参数新增 `onSessionsChanged: (() -> Unit)? = null`。**长按菜单**（原来长按＝直接跳用户主页，现改为弹 `AlertDialog` 菜单）：置顶会话 / 取消置顶、删除会话、查看用户主页（跳主页能力保留为菜单项，没丢）；删除走二次确认（文案明确"不会删除聊天记录"）。两个操作都 `CenterThreadPool.run` + `CenterThreadPool.runOnUiThread` 回 UI 提示，成功后调 `onSessionsChanged` 重新拉列表；删除时额外本地 `removeAt` + `notifyItemRemoved` 做即时反馈 |
+| 同上 | 会话名渲染加置顶标记：`displayName = if (isTop()) "[置顶] ${user.name}" else user.name`；未读徽章的 `SpannableStringBuilder`/span 起点同步改用 `displayName.length`（原来用 `user.name.length`，加前缀后必须跟着改，否则徽章会插在名字中间） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/message/MessageActivity.kt` | 把 `onCreate` 里的会话加载逻辑抽成 `private fun loadSessions()`（含 `MessageApi.getUnread()` + `getSessionsList(20)` + 未读排序 + `getUsersInfo` + 建 adapter + 回 UI 更新未读数/`MESSAGE_UPDATE_NUM`），并把 adapter 的回调接成 `{ loadSessions() }`；`swipeRefreshLayout` 由局部变量提升为字段；`scrollView` 请求焦点的三行留在 `onCreate` 里一次性执行 |
+
+### 单测
+
+`app/src/test/java/com/RobinNotBad/BiliClient/api/PrivateMsgApiTest.kt` +3 例（该文件原有 6 例，`sessionJson` 助手新增 `topTs` 参数）：
+1. `parseSessionsList_解析置顶时间`——`top_ts` 非零 → `isTop` 为真；为 0 → 假；缺字段 → 按未置顶。
+2. `opTypeForTop_0是置顶_1是取消置顶`——锁死反直觉的 0/1 映射（防以后被"修正"成 `top ? 1 : 0`）。
+3. `sessionErrorMsg_成功为空串_其余给出可读提示`。
+
+**验证**：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → BUILD SUCCESSFUL in 40s；`app/build/test-results/testDebugUnitTest` **26 个 XML / 207 个用例 / 0 失败 / 0 错误**（批次 4 后 26 类 / 204 例，本批 +3 例）。
+
+### 真机验证清单（JVM 单测覆盖不到的部分，发布前逐条走一遍）
+
+1. 私信列表长按会话 → 弹「会话操作」，三个菜单项都在。
+2. 选「置顶会话」→ 提示「已置顶」，列表刷新后该会话名开头出现 `[置顶]`；进 B 站 App / 网页确认服务端也真的置顶了（**这条专门验 `op_type` 没写反**）。
+3. 再长按同一会话，菜单第一项应变成「取消置顶」→ 执行后 `[置顶]` 标记消失、服务端也不再置顶。
+4. 选「删除会话」→ 二次确认弹窗出现；确认后该会话从列表消失，但**点进网页版仍有聊天记录**（接口语义如此，不是 bug）。
+5. 删除后让对方发一条新消息 → 会话应重新出现在列表中。
+6. 未登录状态下执行任意一项 → 应提示「还没有登录喵~」，不崩溃。
+7. 断网执行 → 应走 `MsgUtil.err` 的异常提示，不崩溃。
+8. 「查看用户主页」菜单项仍能正常跳转（原有能力不能退化）。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C13 行改为「删除 + 置顶/取消置顶已实现（26.10.04 批次 5）」并注明折叠消息不做。
+- 接口依据：仓库自带快照 `bilibili-API/docs/message/private_msg.md`（移除会话 :1075-1107、置顶 :1136-1165、会话列表字段 `top_ts` :12）。
+- `docs/architecture-map.md` §7.13「session_svr 会话管理接口」。
+- 本批剩余：C12（私信发图）→ C14（新私信通知）→ C16（追番更新提醒），各自独立提交。
 

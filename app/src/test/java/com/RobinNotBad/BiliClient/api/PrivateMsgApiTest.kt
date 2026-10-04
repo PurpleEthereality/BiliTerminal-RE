@@ -18,11 +18,13 @@ class PrivateMsgApiTest {
         talkerId: Long,
         unread: Int = 0,
         accountInfo: String = "",
-        lastMsg: String = ""
+        lastMsg: String = "",
+        topTs: Long = -1
     ): String = buildString {
         append("""{"talker_id":$talkerId,"unread_count":$unread""")
         if (accountInfo.isNotEmpty()) append(""","account_info":$accountInfo""")
         if (lastMsg.isNotEmpty()) append(""","last_msg":$lastMsg""")
+        if (topTs >= 0) append(""","top_ts":$topTs""")
         append("}")
     }
 
@@ -95,5 +97,38 @@ class PrivateMsgApiTest {
     @Test
     fun parseSessionsList_null输入_返回空列表() {
         assertTrue("null 输入应返回空列表", PrivateMsgApi.parseSessionsList(null).isEmpty())
+    }
+
+    @Test
+    fun parseSessionsList_解析置顶时间() {
+        val root = rootWith(
+            sessionJson(5001L, topTs = 1780000000000000L),
+            sessionJson(5002L, topTs = 0L),
+            sessionJson(5003L)
+        )
+
+        val list = PrivateMsgApi.parseSessionsList(root)
+
+        assertEquals(1780000000000000L, list[0].topTs)
+        assertTrue("top_ts 非零 = 已置顶", list[0].isTop)
+        assertEquals(0L, list[1].topTs)
+        assertTrue("top_ts 为 0 = 未置顶", !list[1].isTop)
+        assertEquals("缺字段按未置顶处理", 0L, list[2].topTs)
+        assertTrue(!list[2].isTop)
+    }
+
+    @Test
+    fun opTypeForTop_0是置顶_1是取消置顶() {
+        // 接口的 op_type 与直觉相反，写反的后果是"点置顶实际取消置顶"，不报错、极难发现
+        assertEquals("置顶必须传 0", 0, PrivateMsgApi.opTypeForTop(true))
+        assertEquals("取消置顶必须传 1", 1, PrivateMsgApi.opTypeForTop(false))
+    }
+
+    @Test
+    fun sessionErrorMsg_成功为空串_其余给出可读提示() {
+        assertEquals("", PrivateMsgApi.sessionErrorMsg(0))
+        assertTrue(PrivateMsgApi.sessionErrorMsg(-101).contains("登录"))
+        assertTrue(PrivateMsgApi.sessionErrorMsg(-400).contains("请求错误"))
+        assertTrue(PrivateMsgApi.sessionErrorMsg(12345).contains("12345"))
     }
 }

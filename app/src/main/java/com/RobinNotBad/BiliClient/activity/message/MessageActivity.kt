@@ -27,13 +27,14 @@ import java.util.Collections
 
 class MessageActivity : InstanceActivity() {
     private lateinit var sessionsView: RecyclerView
+    private lateinit var swipeRefreshLayout: SwipeRefreshLayout
 
     @SuppressLint("SetTextI18n", "InflateParams")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         asyncInflate(R.layout.activity_message) { _, _ ->
-            val swipeRefreshLayout = findViewById<SwipeRefreshLayout>(R.id.swipeRefreshLayout)
+            swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout)
             swipeRefreshLayout.isEnabled = false
             swipeRefreshLayout.isRefreshing = true
 
@@ -81,54 +82,61 @@ class MessageActivity : InstanceActivity() {
             sessionsView = findViewById(R.id.sessions_list)
             sessionsView.isNestedScrollingEnabled = false
 
-            CenterThreadPool.run {
-                try {
-                    val stats = MessageApi.getUnread()
-                    val sessionsList = PrivateMsgApi.getSessionsList(20)
-                    Collections.sort(sessionsList) { o1, o2 ->
-                        val o1Unread = o1.unread > 0
-                        val o2Unread = o2.unread > 0
-                        if (o1Unread && !o2Unread) {
-                            -1
-                        } else if (!o1Unread && o2Unread) {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    val uidList = ArrayList<Long>()
-                    for (item in sessionsList) {
-                        uidList.add(item.talkerUid)
-                    }
-                    val userMap = PrivateMsgApi.getUsersInfo(uidList)
-                    val adapter = PrivateMsgSessionsAdapter(this, sessionsList, userMap)
-                    runOnUiThread {
-                        swipeRefreshLayout.isRefreshing = false
-                        try {
-                            (findViewById<TextView>(R.id.reply_text)).text = "回复我的" +
-                                    (if ((stats.getInt("reply") > 0)) ("(" + stats.getInt("reply") + "未读)") else "")
-                            (findViewById<TextView>(R.id.like_text)).text =
-                                "收到的赞" + (if ((stats.getInt("like") > 0)) ("(" + stats.getInt("like") + "未读)") else "")
-                            (findViewById<TextView>(R.id.at_text)).text =
-                                "@我" + (if ((stats.getInt("at") > 0)) ("(" + stats.getInt("at") + "未读)") else "")
-                            sessionsView.layoutManager = CustomLinearManager(this)
-                            sessionsView.adapter = adapter
-                            SharedPreferencesUtil.putInt(SharedPreferencesUtil.MESSAGE_UPDATE_NUM, 0)
-                        } catch (e: Exception) {
-                            MsgUtil.err(e)
-                        }
+            loadSessions()
 
-                        val scrollView = findViewById<View>(R.id.scrollView)
-                        scrollView.isFocusable = true
-                        scrollView.isFocusableInTouchMode = true
-                        scrollView.requestFocus()
-                    }
-                } catch (e: Exception) {
-                    runOnUiThread { MsgUtil.err(e) }
-                }
-            }
+            val scrollView = findViewById<View>(R.id.scrollView)
+            scrollView.isFocusable = true
+            scrollView.isFocusableInTouchMode = true
+            scrollView.requestFocus()
 
             // 教程改由 BaseActivity 按 Tutorials 注册表集中触发
+        }
+    }
+
+    /**
+     * 拉会话列表并刷新界面。置顶/删除会话后由适配器回调再次调用（服务端才是唯一真相）。
+     */
+    private fun loadSessions() {
+        CenterThreadPool.run {
+            try {
+                val stats = MessageApi.getUnread()
+                val sessionsList = PrivateMsgApi.getSessionsList(20)
+                Collections.sort(sessionsList) { o1, o2 ->
+                    val o1Unread = o1.unread > 0
+                    val o2Unread = o2.unread > 0
+                    if (o1Unread && !o2Unread) {
+                        -1
+                    } else if (!o1Unread && o2Unread) {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                val uidList = ArrayList<Long>()
+                for (item in sessionsList) {
+                    uidList.add(item.talkerUid)
+                }
+                val userMap = PrivateMsgApi.getUsersInfo(uidList)
+                val adapter = PrivateMsgSessionsAdapter(this, sessionsList, userMap) { loadSessions() }
+                runOnUiThread {
+                    swipeRefreshLayout.isRefreshing = false
+                    try {
+                        (findViewById<TextView>(R.id.reply_text)).text = "回复我的" +
+                                (if ((stats.getInt("reply") > 0)) ("(" + stats.getInt("reply") + "未读)") else "")
+                        (findViewById<TextView>(R.id.like_text)).text =
+                            "收到的赞" + (if ((stats.getInt("like") > 0)) ("(" + stats.getInt("like") + "未读)") else "")
+                        (findViewById<TextView>(R.id.at_text)).text =
+                            "@我" + (if ((stats.getInt("at") > 0)) ("(" + stats.getInt("at") + "未读)") else "")
+                        sessionsView.layoutManager = CustomLinearManager(this)
+                        sessionsView.adapter = adapter
+                        SharedPreferencesUtil.putInt(SharedPreferencesUtil.MESSAGE_UPDATE_NUM, 0)
+                    } catch (e: Exception) {
+                        MsgUtil.err(e)
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread { MsgUtil.err(e) }
+            }
         }
     }
 }
