@@ -28,6 +28,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -47,6 +48,18 @@ public class DynamicApi {
 
     /** 表情文本形如 [doge]，长度上限按 B 站惯例取 32。 */
     private static final Pattern EMOTE_PATTERN = Pattern.compile("\\[[^\\[\\]]{1,32}\\]");
+
+    /**
+     * 编辑动态接口的固定 meta。query 与 body 里各要一份，两份内容必须一致。
+     * 与 PiliPlus 的 {@code DynamicsHttp.editDyn} 对齐。
+     */
+    private static final String EDIT_DYN_META = "{\"app_meta\":{\"from\":\"create.dynamic.web\",\"mobi_app\":\"web\"}}";
+
+    /**
+     * 编辑动态接口附在 query 上的设备参数。这个参数在别的接口里通常是请求头，
+     * 但编辑动态这条接口上游是原样放进 query 一起签名的，这里照做。
+     */
+    private static final String EDIT_DYN_DEVICE_JSON = "{\"platform\":\"web\",\"device\":\"pc\",\"spmid\":\"333.1368\"}";
 
     /**
      * 发送纯文本动态
@@ -134,6 +147,94 @@ public class DynamicApi {
      */
     public static long publishComplex(@NonNull JSONArray contents, JSONArray pics, JSONObject option, JSONObject topic, int scene, Map<String, Object> otherArgs) throws IOException, JSONException {
         return publishComplex(contents, pics, option, topic, scene, null, otherArgs);
+    }
+
+    /**
+     * 编辑自己已经发过的动态。
+     *
+     * <p>报文与 PiliPlus 的 {@code DynamicsHttp.editDyn} 对齐：POST
+     * {@code https://api.bilibili.com/x/dynamic/feed/edit/dyn}，query 经 WBI 签名，
+     * body 形如 {@code {"dyn_req": {...}, "dyn_id_str": "<动态id>"}}。
+     * 与发布（{@link #publishComplex}）的区别：URL 不同、query 要签名、body 外层多一个
+     * {@code dyn_id_str}、且 {@code dyn_req} 里多带 {@code upload_id}。
+     *
+     * <p>注意本接口没有 {@code timer_pub_time}：定时发布得走发布接口。
+     *
+     * @param dynId    要编辑的动态 id
+     * @param contents 正文（用 {@link #buildContents} 构造）
+     * @param pics     图片（可为 null；文本动态传 null 即可）
+     * @param option   选项（可为 null）
+     * @param topic    话题（可为 null）
+     * @param scene    动态类型，纯文本为 1
+     * @return 服务端 code，0 为成功
+     */
+    public static int editDynamic(long dynId, @NonNull JSONArray contents, JSONArray pics, JSONObject option, JSONObject topic, int scene) throws IOException, JSONException {
+        long mid = SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0);
+        String uploadId = buildUploadId(mid, System.currentTimeMillis() / 1000, 1000 + (int) (Math.random() * 9000));
+        String url = "https://api.bilibili.com/x/dynamic/feed/edit/dyn"
+                + "?platform=web"
+                + "&csrf=" + NetWorkUtil.currentCsrf()
+                + "&x-bili-device-req-json=" + URLEncoder.encode(EDIT_DYN_DEVICE_JSON, "UTF-8")
+                + "&w_dyn_req.upload_id=" + uploadId
+                + "&w_dyn_req.meta=" + URLEncoder.encode(EDIT_DYN_META, "UTF-8");
+        String signedUrl = ConfInfoApi.signWBI(url);
+
+        JSONObject reqBody = new JSONObject()
+                .put("content", new JSONObject().put("contents", contents))
+                .put("scene", scene)
+                .put("meta", new JSONObject().put("app_meta", new JSONObject()
+                        .put("from", "create.dynamic.web")
+                        .put("mobi_app", "web")))
+                .put("upload_id", uploadId);
+        if (pics != null && pics.length() > 0) reqBody.put("pics", pics);
+        if (option != null && option.length() > 0) reqBody.put("option", option);
+        if (topic != null) reqBody.put("topic", topic);
+
+        JSONObject body = new JSONObject()
+                .put("dyn_req", reqBody)
+                .put("dyn_id_str", String.valueOf(dynId));
+
+        Logu.v("editDynamic reqBody=" + body);
+        Response resp = Objects.requireNonNull(NetWorkUtil.postJson(signedUrl, body.toString()));
+        ResponseBody responseBody = resp.body();
+        if (responseBody == null) return -1;
+        JSONObject result = new JSONObject(responseBody.string());
+        return result.optInt("code", -1);
+    }
+
+    /**
+     * 拼上传 id，格式与上游一致：{@code mid_秒级时间戳_四位随机数}。
+     * 抽出来是为了能单测格式，而不用真的请求网络。
+     */
+    public static String buildUploadId(long mid, long seconds, int random) {
+        return mid + "_" + seconds + "_" + random;
+    }
+
+    /**
+     * 编辑动态失败时给用户看的文案。
+     *
+     * @param code 服务端 code
+     * @return code 为 0 时返回空串
+     */
+    public static String editErrorMsg(int code) {
+        switch (code) {
+            case 0:
+                return "";
+            case -101:
+            case -102:
+            case -111:
+                return "登录凭证已失效，请重新登录";
+            case -400:
+                return "编辑的内容不合规范，请修改后再试";
+            case -403:
+                return "没有权限编辑这条动态";
+            case -404:
+                return "动态不存在，可能已经被删除了";
+            case -509:
+                return "操作过于频繁，请稍后再试";
+            default:
+                return "编辑失败（错误码 " + code + "）";
+        }
     }
 
     /**
@@ -788,6 +889,9 @@ public class DynamicApi {
                 supportItemTypes.add(three_point_items.getJSONObject(i).getString("type"));
             }
             dynamic.canDelete = supportItemTypes.contains("THREE_POINT_DELETE");
+            // 能不能编辑由服务端下发的三点菜单决定：只有自己的动态带 THREE_POINT_EDIT。
+            // 不能用 canDelete 顶替——删除与编辑是两个独立开关。
+            dynamic.canEdit = supportItemTypes.contains("THREE_POINT_EDIT");
         }
 
         // 新版动态API：解析 module_tag（置顶标记）

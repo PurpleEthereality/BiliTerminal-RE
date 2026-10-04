@@ -20,6 +20,7 @@ public class Dynamic implements Serializable {
     public Object major_object;
     public Dynamic dynamic_forward;
     public boolean canDelete;
+    public boolean canEdit;  // 是否可编辑（服务端三点菜单里有 THREE_POINT_EDIT 才行）
     public boolean isTop;  // 是否置顶
 
     // 投票相关

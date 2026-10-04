@@ -88,12 +88,12 @@ class UserDynamicAdapter(
                 dynamicHolder.cell_dynamic_child.visibility = View.GONE
             }
 
-            val onDeleteLongClick = DynamicHolder.getDeleteListener(
-                context as Activity,
+            val onManageClick = DynamicHolder.getManageListener(
+                context as BaseActivity,
                 dynamicList, realPosition, this
             )
-            dynamicHolder.item_dynamic_delete!!.setOnLongClickListener(onDeleteLongClick)
-            if (dynamic.canDelete)
+            dynamicHolder.item_dynamic_delete!!.setOnLongClickListener(onManageClick)
+            if (dynamic.canDelete || dynamic.canEdit)
                 dynamicHolder.item_dynamic_delete!!.visibility = View.VISIBLE
         }
         if (holder is UserInfoHolder) {

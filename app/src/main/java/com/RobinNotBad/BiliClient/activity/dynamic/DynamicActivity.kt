@@ -1,6 +1,7 @@
 package com.RobinNotBad.BiliClient.activity.dynamic
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
 import android.text.TextUtils
@@ -77,6 +78,26 @@ class DynamicActivity : RefreshMainActivity() {
                         }
                     }
                 }
+            }
+        }
+
+        /**
+         * 编辑动态的结果接收器。
+         *
+         * <p>请求本身由 SendDynamicActivity 发（组 contents、判 @ 与表情它都现成），
+         * 这里只把「改完的新正文」交还给发起方，用来刷新界面上那一条动态。
+         * 收到的 extras 里没有 edit_dyn_id 时什么都不做，避免误伤其他返回路径。
+         */
+        fun getEditDynamicLauncher(activity: BaseActivity): ActivityResultLauncher<Intent> {
+            return activity.registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                // 不管成功失败都要清掉槽位，否则下一次编辑会调到上一次的回调
+                val callback = activity.pendingDynamicEdit
+                activity.pendingDynamicEdit = null
+                if (result.resultCode != Activity.RESULT_OK) return@registerForActivityResult
+                val data = result.data
+                if (data == null || data.getLongExtra("edit_dyn_id", -1L) <= 0L) return@registerForActivityResult
+                val newText = data.getStringExtra("text") ?: return@registerForActivityResult
+                callback?.invoke(newText)
             }
         }
     }

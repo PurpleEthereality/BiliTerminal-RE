@@ -72,9 +72,16 @@ class DynamicInfoFragment : BaseFragment() {
         val dynamicView = View.inflate(requireContext(), R.layout.cell_dynamic, scrollView)
         val holder = DynamicHolder(dynamicView, (activity as BaseActivity?)!!, false)
         holder.showDynamic(requireContext(), dynamic!!, false)
-        val onDeleteLongClick = DynamicHolder.getDeleteListener(requireActivity(), dynamic!!)
-        holder.item_dynamic_delete?.setOnLongClickListener(onDeleteLongClick)
-        if (dynamic!!.canDelete) holder.item_dynamic_delete?.visibility = View.VISIBLE
+        val onManageClick = DynamicHolder.getManageListener(
+            requireActivity() as BaseActivity, dynamic!!,
+            onEdited = { newText ->
+                // 详情页只有这一条动态，改完直接把这一张卡片重画一遍
+                dynamic!!.content = newText
+                holder.showDynamic(requireContext(), dynamic!!, false)
+            }
+        )
+        holder.item_dynamic_delete?.setOnLongClickListener(onManageClick)
+        if (dynamic!!.canDelete || dynamic!!.canEdit) holder.item_dynamic_delete?.visibility = View.VISIBLE
 
         if (dynamic!!.dynamic_forward != null) {
             Log.e("debug", "有子动态！")

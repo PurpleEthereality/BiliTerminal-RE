@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1837,4 +1837,66 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 调研报告 §12.4 的 C6 行已改写；`docs/architecture-map.md` 新增 §7.18。
 - 第 2 步的落点（未做）：`api/ReplyApi.uploadReplyImage`（`app/src/main/java/com/RobinNotBad/BiliClient/api/ReplyApi.java:218/231`）与小图压缩 `api/ImageApi.java:107-137`（`WriteReplyActivity` 的私有 `prepareImage` 是它的重复实现）。
 - 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（本条）→ C7 → C8 → C9 → C10 → C27。
+
+---
+
+## 二十二、26.10.04 批次 6（4/8）：动态编辑与管理菜单（C7）
+
+### 为什么做
+
+调研台账的 C7 原本只写「想要实现」，理由是本地没有编辑接口的记录；后来的结论是**查 PiliPlus 源码**：它走 `POST https://api.bilibili.com/x/dynamic/feed/edit/dyn`（WBI 签名），快照里没有这个接口不代表服务端没有。用户为此拍板「你看看piliplus是怎么实现的，对齐他」，所以本条按 PiliPlus 的 `DynamicsHttp.editDyn` 对齐实现。
+
+顺带解决另一个问题：列表里「管理」这条动态原来只有**两次长按（间隔 <10 秒）删除**一种入口——删除是危险操作却用双击防误触，而编辑、置顶这类操作根本没有位置放。C7 把它换成**长按弹 `AlertDialog` 菜单**，菜单项按服务端下发的 `three_point_items` 动态生成，C8 的置顶后面可以直接往这个菜单里加。
+
+### 改动表
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/DynamicApi.java` | 新增 `editDynamic(long dynId, JSONArray contents, JSONArray pics, JSONObject option, JSONObject topic, int scene)`：`/x/dynamic/feed/edit/dyn` + `signWBI`；新增纯函数 `buildUploadId(mid, seconds, random)`、`editErrorMsg(code)`；新增常量 `EDIT_DYN_META`/`EDIT_DYN_DEVICE_JSON`；`analyzeDynamic` 里新增 `dynamic.canEdit = supportItemTypes.contains("THREE_POINT_EDIT")` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/Dynamic.java` | 新增 `public boolean canEdit`（编辑与删除是两个独立开关，不能互相顶替） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/DynamicHolder.kt` | 三个 `getDeleteListener` 全部替换为 `getManageListener`（列表 4/5 参重载 + 详情 2/3 参重载）；新增 `showManageMenu`（`AlertDialog` 菜单，按 `canEdit`/`canDelete` 拼项）、`launchEdit`、`confirmDelete`；`showDynamic` 里「管理」入口点一下等于长按（弹同一个菜单，不另维护回调） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/DynamicAdapter.kt` | 改调 `getManageListener`，可见条件 `canDelete \|\| canEdit` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/UserDynamicAdapter.kt` | 同上 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/dynamic/DynamicInfoFragment.kt` | 同上；编辑成功后原地重画这张卡片 |
+| `app/src/main/res/layout/cell_dynamic.xml` | `item_dynamic_delete` 文案「删除」→「管理」 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/base/BaseActivity.kt` | 新增 `editDynamicLauncher` 与 `pendingDynamicEdit: ((String) -> Unit)?` 回调槽 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/dynamic/DynamicActivity.kt` | 新增 `getEditDynamicLauncher(activity)`：结果回来时先取走并清空回调槽，非 `RESULT_OK`/无 `edit_dyn_id`/无 `text` 直接忽略 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/dynamic/send/SendDynamicActivity.kt` | 新增编辑模式：读 `edit_dyn_id`，预填正文、**跳过 `TerminalContext` 的转发卡片**、隐藏投票与带图入口；`submitEdit(text)` 在页内直接调 `editDynamic`，成功回传 `edit_dyn_id` + 新正文 |
+
+### 取舍
+
+- **复用发布页而不是新开编辑页**：正文编辑、@ 识别（`Pattern.compile("@(\\S+)\\s")` + `DynamicApi.mentionAtFindUser`）、表情拆分（`EmoteApi.getEmoteTexts` + `buildContents`）在 `SendDynamicActivity` 里已经齐全，新页只会造出第二份真相。
+- **编辑模式必须绕开 `TerminalContext.getForwardContent()`**：该字段只在 `SendDynamicActivity.onDestroy` 里清，若上一次转发没走完就被清掉，编辑页会把旧转发卡片画出来，还会把 `addPic` 误判成不可用。所以编辑分支里 `forwardContent = null`。
+- **编辑不带投票、不带图**：编辑接口接受 `pics`/`option`，但本项目投票走 `attach_card`、图片要重新上传，语义与发布不完全一致，不在本条范围内，因此直接隐藏这两个入口（宁可少功能，不要让用户以为能改）。
+- **回调走 `Activity` 上的一个槽位**：`ActivityResultLauncher` 只能在 Activity 上注册一次，没有 per-holder 的注册点，而「编辑完怎么刷新这一条」只有发起方（适配器/详情页）知道。槽位在结果回来时**先取走再清空**，避免下一次编辑调到上一次的回调。
+- **编辑是有损的**：`Dynamic` 没有原始正文，只能用 `content.toString()` 预填；WEB 节点只存 `orig_text`（URL 丢了）、@ 与表情退化成文本形式，保存后按纯文本重发。这是已知取舍，进真机清单。
+- **没顺手做**（保持独立）：`DynamicApi.deleteDynamic` 仍是老的 `rm_dynamic`（新版是 `/x/dynamic/feed/operate/remove`，本条不动）；`DynamicActivity.kt:187/:204` 的 `Log.e("debug", …)` 仍在。
+
+### 单测
+
+新建 `app/src/test/java/com/RobinNotBad/BiliClient/api/DynamicApiTest.kt` 6 例：`buildUploadId_joinsMidSecondsAndRandomWithUnderline`、`buildUploadId_isDeterministicForSameInput`、`editErrorMsg_successIsEmpty`、`editErrorMsg_mapsEveryAuthFailureToRelogin`（-101/-102/-111）、`editErrorMsg_explainsKnownBusinessErrors`（-400/-403/-404/-509）、`editErrorMsg_unknownCodeStillShowsTheCode`。
+
+### 验证
+
+`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → BUILD SUCCESSFUL；`app/build/test-results/testDebugUnitTest` **31 个 XML / 252 个用例 / 0 失败 / 0 错误**（C6b 后 246 例，本次 +6 例）。
+
+### 真机验证清单
+
+1. 自己的纯文本动态 → 长按列表项（或点「管理」）弹菜单，有「编辑动态」与「删除动态」两项。
+2. 别人的动态（或已超时可编辑期的）→ 菜单里**不出现**「编辑动态」；一条都没有时提示「没有可操作的项」。
+3. 编辑一条带 @ 的动态 → 编辑页能打开、正文预填正确；保存后列表里的正文**立刻变成新内容**（本地先替换，不回拉服务端）。
+4. 编辑一条带表情/网页链接的动态 → 预填文本里表情显示成 `[xxx]`、链接只剩标题文字；保存后服务端正文也变成这个纯文本形式（**已知有损**）。
+5. 编辑时把正文清空 → 提示「正文不能为空」，不发请求。
+6. 编辑页里确认没有图片入口与投票入口。
+7. 编辑成功后返回列表，下拉刷新 → 服务端返回的正文与刚才提交的一致（说明 `signWBI` 的 query 签名与 body 都被接受）。
+8. 编辑失败（如凭证过期）→ 弹「登录凭证已失效，请重新登录」，页面**不退出**、可以改完再发。
+9. 删除那条走菜单 → 仍然二次确认「删除后无法恢复，确定删除这条动态吗？」，成功后从列表移除。
+10. 详情页（动态详情）里做编辑 → 保存后详情页原地重画；删除 → 带着结果退出，返回列表时那一条也已消失。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C7 行已改写为「已实现（对齐 PiliPlus）」，C8 行同步说明删除入口已改为管理菜单；`docs/architecture-map.md` 新增 §7.19。
+- 接口依据：PiliPlus `DynamicsHttp.editDyn`（`/x/dynamic/feed/edit/dyn`）；本地快照 `bilibili-API/docs/opus/features.md:25` 与 `data.module_more.three_point_items[]` 证明服务端会下发 `THREE_POINT_EDIT`。
+- 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（§二十一）→ C7（本条）→ C8 → C9 → C10 → C27。
+
 

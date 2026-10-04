@@ -167,7 +167,7 @@
         android:layout_marginStart="4dp"
         android:gravity="center_vertical"
         android:textColor="?android:attr/textColorPrimary"
-        android:text="删除"
+        android:text="管理"
         android:alpha="0.7"
         app:drawableStartCompat="@drawable/icon_delete"
         app:layout_constraintStart_toEndOf="@+id/item_dynamic_share"

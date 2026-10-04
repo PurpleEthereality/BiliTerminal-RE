@@ -18,6 +18,7 @@ import com.RobinNotBad.BiliClient.activity.EmoteActivity
 import com.RobinNotBad.BiliClient.activity.base.BaseActivity
 import com.RobinNotBad.BiliClient.adapter.dynamic.DynamicHolder
 import com.RobinNotBad.BiliClient.adapter.video.VideoCardHolder
+import com.RobinNotBad.BiliClient.api.DynamicApi
 import com.RobinNotBad.BiliClient.api.EmoteApi
 import com.RobinNotBad.BiliClient.api.ImageApi
 import com.RobinNotBad.BiliClient.model.Dynamic
@@ -32,6 +33,8 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import org.json.JSONArray
 import java.io.Serializable
+import java.util.HashMap
+import java.util.regex.Pattern
 
 class SendDynamicActivity : BaseActivity() {
 
@@ -51,6 +54,14 @@ class SendDynamicActivity : BaseActivity() {
     private val imageUris = mutableListOf<Uri>()
     /** 防止连点发送导致重复上传/重复发布。 */
     private var sending: Boolean = false
+
+    /**
+     * 编辑模式的目标动态 id；> 0 表示这条动态是「编辑」而不是「发布」。
+     *
+     * <p>编辑与发布共用这个页面：编辑只改正文（B 站的编辑接口只吃 text/pic，
+     * 投票与转发卡片都改不了），成功后把新正文回传给发起方刷新列表。
+     */
+    private var editDynId: Long = -1L
 
     private val emoteLauncher: ActivityResultLauncher<Intent> = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val code = result.resultCode
@@ -102,13 +113,23 @@ class SendDynamicActivity : BaseActivity() {
             addOptionBtn = findViewById(R.id.add_option_btn)
             removeVoteBtn = findViewById(R.id.remove_vote_btn)
 
+            // 编辑模式：预填原正文，并且不理会 TerminalContext——它只在 onDestroy 清，
+            // 里面可能残留上一次转发的内容，会把旧卡片画到编辑页上
+            editDynId = intent.getLongExtra("edit_dyn_id", -1L)
+            val editing = editDynId > 0L
+            if (editing) {
+                editText.setText(intent.getStringExtra("edit_text").orEmpty())
+                editText.setSelection(editText.text.length)
+            }
+
             val extraCard = findViewById<FrameLayout>(R.id.forwardCard)
             var video: VideoInfo? = null
             var forward: Dynamic? = null
-            if (TerminalContext.getInstance().getForwardContent() is VideoInfo) {
-                video = TerminalContext.getInstance().getForwardContent() as VideoInfo
+            val forwardContent = if (editing) null else TerminalContext.getInstance().getForwardContent()
+            if (forwardContent is VideoInfo) {
+                video = forwardContent
             } else {
-                forward = TerminalContext.getInstance().getForwardContent() as Dynamic?
+                forward = forwardContent as Dynamic?
             }
             if (forward != null) {
                 val childCard = View.inflate(this, R.layout.cell_dynamic, extraCard)
@@ -120,8 +141,10 @@ class SendDynamicActivity : BaseActivity() {
             }
 
             // 转发场景不允许带图：转发的是别人的内容，再挂自己的图语义不成立，B 站也不接受
-            val normalPublish = forward == null && video == null
+            val normalPublish = !editing && forward == null && video == null
             addPic.visibility = if (normalPublish) View.VISIBLE else View.GONE
+            // 编辑不带投票：编辑接口改不了 attach_card，留着入口只会让用户以为能改
+            if (editing) addVote.visibility = View.GONE
 
             addPic.setOnClickListener {
                 pickImageLauncher.launch(Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" })
@@ -168,6 +191,12 @@ class SendDynamicActivity : BaseActivity() {
                     return@setOnClickListener
                 }
                 val text = editText.text.toString()
+
+                // 编辑模式：直接在页内调编辑接口，不走 DynamicActivity 的发布链路
+                if (editing) {
+                    submitEdit(text)
+                    return@setOnClickListener
+                }
 
                 // 处理投票草稿：投票区开着但内容不合法时，collectVoteDraft 已经提示过了，
                 // 这里必须中止发送——否则会把投票悄悄丢掉、只发出正文
@@ -227,6 +256,59 @@ class SendDynamicActivity : BaseActivity() {
 
             findViewById<View>(R.id.emote).setOnClickListener {
                 emoteLauncher.launch(Intent(this, EmoteActivity::class.java).putExtra("from", EmoteApi.BUSINESS_DYNAMIC))
+            }
+        }
+    }
+
+    /**
+     * 编辑模式下的提交。
+     *
+     * <p>只提交正文：B 站的动态编辑接口接受 content/pic，但本项目里投票走 attach_card、
+     * 图片要重新上传（编辑接口的 pics 语义与发布不完全一致），都不在本次范围内，
+     * 所以编辑页把这两个入口藏掉了。
+     *
+     * <p>@ 与表情的组装方式与发布完全一致，直接复用 [DynamicApi.buildContents]。
+     */
+    private fun submitEdit(text: String) {
+        if (text.isBlank()) {
+            MsgUtil.showMsg("正文不能为空")
+            return
+        }
+        val dynId = editDynId
+        sending = true
+        MsgUtil.showMsg("正在保存…")
+        CenterThreadPool.run {
+            try {
+                val atUids = HashMap<String, Long>()
+                val matcher = Pattern.compile("@(\\S+)\\s").matcher(text)
+                while (matcher.find()) {
+                    val matchedString = matcher.group(1)
+                    val uid: Long
+                    if (DynamicApi.mentionAtFindUser(matchedString).also { uid = it } != -1L) {
+                        atUids[matchedString] = uid
+                    }
+                }
+                val contents = DynamicApi.buildContents(text, atUids.ifEmpty { null },
+                    EmoteApi.getEmoteTexts(EmoteApi.BUSINESS_DYNAMIC))
+                val code = DynamicApi.editDynamic(dynId, contents, null, null, null, 1)
+                runOnUiThread {
+                    if (code == 0) {
+                        val result = Intent()
+                        result.putExtra("edit_dyn_id", dynId)
+                        result.putExtra("text", text)
+                        setResult(RESULT_OK, result)
+                        MsgUtil.showMsg("修改成功~")
+                        finish()
+                    } else {
+                        sending = false
+                        MsgUtil.showMsg(DynamicApi.editErrorMsg(code).ifEmpty { "修改失败（$code）" })
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    sending = false
+                    MsgUtil.err(e)
+                }
             }
         }
     }

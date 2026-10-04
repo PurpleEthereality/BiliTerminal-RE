@@ -13,6 +13,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.ActivityResultLauncher
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.RobinNotBad.BiliClient.BiliTerminal
@@ -44,6 +45,7 @@ import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 import com.bumptech.glide.request.RequestOptions
 import java.io.IOException
+import java.util.ArrayList
 import java.util.Collections
 import java.util.HashSet
 
@@ -79,111 +81,130 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
         }
 
         @JvmStatic
-        fun getDeleteListener(
-            dynamicActivity: Activity, dynamicList: List<Dynamic>,
+        fun getManageListener(
+            activity: BaseActivity, dynamicList: List<Dynamic>,
             finalPosition: Int, adapter: RecyclerView.Adapter<RecyclerView.ViewHolder>
         ): View.OnLongClickListener {
-            return getDeleteListener(dynamicActivity, dynamicList, finalPosition, adapter, false)
+            return getManageListener(activity, dynamicList, finalPosition, adapter, false)
         }
 
         @JvmStatic
-        fun getDeleteListener(
-            dynamicActivity: Activity, dynamicList: List<Dynamic>,
+        fun getManageListener(
+            activity: BaseActivity, dynamicList: List<Dynamic>,
             finalPosition: Int, adapter: RecyclerView.Adapter<RecyclerView.ViewHolder>, showRecentUp: Boolean
         ): View.OnLongClickListener {
-            return object : View.OnLongClickListener {
-                private var longClickPosition = -1
-                private var longClickTime = -1L
-
-                override fun onLongClick(view: View): Boolean {
-                    if (dynamicList[finalPosition].canDelete) {
-                        val currentTime = System.currentTimeMillis()
-                        if (longClickPosition == finalPosition && currentTime - longClickTime < 10000) {
-                            CenterThreadPool.run {
-                                try {
-                                    val result = DynamicApi.deleteDynamic(dynamicList[finalPosition].dynamicId)
-                                    if (result == 0) {
-                                        val mutableList = dynamicList as MutableList<Dynamic>
-                                        mutableList.removeAt(finalPosition)
-                                        dynamicActivity.runOnUiThread {
-                                            val offset = if (showRecentUp) 2 else 1
-                                            adapter.notifyItemRemoved(finalPosition + offset)
-                                            adapter.notifyItemRangeChanged(
-                                                finalPosition + offset,
-                                                dynamicList.size - finalPosition
-                                            )
-                                            longClickPosition = -1
-                                            MsgUtil.showMsg("删除成功~")
-                                        }
-                                    } else {
-                                        var msg = "操作失败：" + result
-                                        when (result) {
-                                            500404 -> msg = "已经删除过了哦~"
-                                            500406 -> msg = "不是自己的动态！"
-                                        }
-                                        val finalMsg = msg
-                                        dynamicActivity.runOnUiThread { MsgUtil.showMsg(finalMsg) }
-                                    }
-                                } catch (e: IOException) {
-                                    dynamicActivity.runOnUiThread { MsgUtil.err(e) }
-                                }
-                            }
-                        } else {
-                            longClickPosition = finalPosition
-                            longClickTime = currentTime
-                            MsgUtil.showMsg("再次长按删除")
-                        }
-                    }
-                    return true
-                }
+            return View.OnLongClickListener {
+                showManageMenu(
+                    activity, dynamicList[finalPosition],
+                    onEdited = { newText ->
+                        // 编辑接口只回 code、不回新动态，所以本地先把正文换掉。
+                        // 只换正文（不重建 Span）是因为正文之外的东西本来也没法只靠一段字符串还原，
+                        // 下次刷新会从服务端取回真正的内容。
+                        dynamicList[finalPosition].content = newText
+                        adapter.notifyItemChanged(finalPosition + if (showRecentUp) 2 else 1)
+                    },
+                    onDeleted = { removeDynamicFromList(dynamicList, finalPosition, adapter, showRecentUp) }
+                )
+                true
             }
         }
 
         @JvmStatic
-        fun getDeleteListener(dynamicActivity: Activity, dynamic: Dynamic): View.OnLongClickListener {
-            return object : View.OnLongClickListener {
-                private var longClickTime = -1L
+        fun getManageListener(activity: BaseActivity, dynamic: Dynamic): View.OnLongClickListener {
+            return getManageListener(activity, dynamic, null)
+        }
 
-                override fun onLongClick(view: View): Boolean {
-                    if (dynamic.canDelete) {
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - longClickTime < 10000) {
-                            CenterThreadPool.run {
-                                try {
-                                    val result = DynamicApi.deleteDynamic(dynamic.dynamicId)
-                                    if (result == 0) {
-                                        dynamicActivity.runOnUiThread {
-                                            dynamicActivity.setResult(
-                                                Activity.RESULT_OK,
-                                                if (dynamicActivity.intent.extras != null)
-                                                    Intent().putExtras(dynamicActivity.intent.extras!!)
-                                                else
-                                                    Intent()
-                                            )
-                                            dynamicActivity.finish()
-                                            MsgUtil.showMsg("删除成功~")
-                                        }
-                                    } else {
-                                        var msg = "操作失败：" + result
-                                        when (result) {
-                                            500404 -> msg = "已经删除过了哦~"
-                                            500406 -> msg = "不是自己的动态！"
-                                        }
-                                        val finalMsg = msg
-                                        dynamicActivity.runOnUiThread { MsgUtil.showMsg(finalMsg) }
-                                    }
-                                } catch (e: IOException) {
-                                    dynamicActivity.runOnUiThread { MsgUtil.err(e) }
+        @JvmStatic
+        fun getManageListener(
+            activity: BaseActivity, dynamic: Dynamic, onEdited: ((String) -> Unit)?
+        ): View.OnLongClickListener {
+            return View.OnLongClickListener {
+                showManageMenu(
+                    activity, dynamic, onEdited,
+                    onDeleted = {
+                        // 详情页沿用「改动完就带着结果退出去」的既有约定
+                        activity.setResult(
+                            Activity.RESULT_OK,
+                            if (activity.intent.extras != null) Intent().putExtras(activity.intent.extras!!)
+                            else Intent()
+                        )
+                        activity.finish()
+                    }
+                )
+                true
+            }
+        }
+
+        /**
+         * 动态的「管理」菜单，替代原先的「两次长按删除」。
+         *
+         * <p>只在服务端下发的三点菜单允许时才给出对应项：`canEdit` 对应 THREE_POINT_EDIT、
+         * `canDelete` 对应 THREE_POINT_DELETE，两个开关是独立的，不能互相顶替。
+         *
+         * @param onEdited  编辑成功后怎么刷新界面（可为 null，表示只弹提示）
+         * @param onDeleted 删除成功后怎么从界面里拿掉这条动态
+         */
+        @JvmStatic
+        fun showManageMenu(
+            activity: BaseActivity, dynamic: Dynamic,
+            onEdited: ((String) -> Unit)?, onDeleted: () -> Unit
+        ) {
+            val actions = ArrayList<Pair<String, () -> Unit>>()
+            if (dynamic.canEdit) actions.add("编辑动态" to { launchEdit(activity, dynamic, onEdited) })
+            if (dynamic.canDelete) actions.add("删除动态" to { confirmDelete(activity, dynamic, onDeleted) })
+            if (actions.isEmpty()) {
+                MsgUtil.showMsg("没有可操作的项")
+                return
+            }
+            AlertDialog.Builder(activity)
+                .setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
+                .show()
+        }
+
+        private fun launchEdit(activity: BaseActivity, dynamic: Dynamic, onEdited: ((String) -> Unit)?) {
+            val text = dynamic.content?.toString().orEmpty()
+            if (text.isEmpty()) {
+                MsgUtil.showMsg("这条动态没有能编辑的正文")
+                return
+            }
+            // ActivityResultLauncher 只能在 Activity 上注册一次，没有 per-holder 的回调注册点，
+            // 所以借用 Activity 上留的一个槽位，把「改完怎么刷新」传进去，由 Launcher 回调取走
+            activity.pendingDynamicEdit = onEdited
+            val intent = Intent(activity, SendDynamicActivity::class.java)
+            intent.putExtra("edit_dyn_id", dynamic.dynamicId)
+            intent.putExtra("edit_text", text)
+            activity.editDynamicLauncher.launch(intent)
+        }
+
+        private fun confirmDelete(activity: BaseActivity, dynamic: Dynamic, onDeleted: () -> Unit) {
+            AlertDialog.Builder(activity)
+                .setTitle("删除动态")
+                .setMessage("删除后无法恢复，确定删除这条动态吗？")
+                .setPositiveButton("删除") { _, _ ->
+                    CenterThreadPool.run {
+                        try {
+                            val result = DynamicApi.deleteDynamic(dynamic.dynamicId)
+                            if (result == 0) {
+                                activity.runOnUiThread {
+                                    onDeleted()
+                                    MsgUtil.showMsg("删除成功~")
                                 }
+                            } else {
+                                var msg = "操作失败：" + result
+                                when (result) {
+                                    500404 -> msg = "已经删除过了哦~"
+                                    500406 -> msg = "不是自己的动态！"
+                                }
+                                val finalMsg = msg
+                                activity.runOnUiThread { MsgUtil.showMsg(finalMsg) }
                             }
-                        } else {
-                            longClickTime = currentTime
-                            MsgUtil.showMsg("再次长按删除")
+                        } catch (e: IOException) {
+                            activity.runOnUiThread { MsgUtil.err(e) }
                         }
                     }
-                    return true
                 }
-            }
+                .setNegativeButton("取消", null)
+                .show()
         }
     }
 
@@ -670,10 +691,13 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
         if (item_dynamic_share != null && clickable)
             item_dynamic_share!!.setOnClickListener(onRelayClick)
 
-        val onDeleteClick = View.OnClickListener { MsgUtil.showMsg("长按删除") }
+        // 「管理」入口：点一下或长按都弹同一个菜单。
+        // 菜单要的回调（怎么刷新列表、怎么退出页面）只有适配器/详情页知道，
+        // 它们通过 setOnLongClickListener 把监听器挂上来；这里只把点击转给同一个监听器，
+        // 不另维护一份回调，免得点一下和长按弹出两套行为。
         if (item_dynamic_delete != null) {
-            item_dynamic_delete!!.setOnClickListener(onDeleteClick)
             item_dynamic_delete!!.visibility = View.GONE
+            item_dynamic_delete!!.setOnClickListener { item_dynamic_delete!!.performLongClick() }
         }
 
         if (likeCount != null) {

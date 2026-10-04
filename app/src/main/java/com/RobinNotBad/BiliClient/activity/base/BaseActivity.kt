@@ -57,6 +57,17 @@ open class BaseActivity : AppCompatActivity() {
     @JvmField var window_height: Int = 0
     @JvmField var old_context: Context? = null
     @JvmField val relayDynamicLauncher: ActivityResultLauncher<Intent> = DynamicActivity.getRelayDynamicLauncher(this)
+    @JvmField val editDynamicLauncher: ActivityResultLauncher<Intent> = DynamicActivity.getEditDynamicLauncher(this)
+
+    /**
+     * 编辑动态的结果回调槽。
+     *
+     * <p>ActivityResultLauncher 只能在 Activity 上注册一次，没有 per-holder 的回调注册点，
+     * 而「编辑完怎么刷新这条动态」只有发起方（列表适配器 / 详情页）知道。
+     * 于是发起前把回调放这里，结果回来时由 [editDynamicLauncher] 取走并清空。
+     */
+    @JvmField var pendingDynamicEdit: ((String) -> Unit)? = null
+
     @JvmField var force_single_column: Boolean = false
 
     // 记录本 Activity 创建时的「外观版本号」，用于返回前台时检测配色/圆角/字体任一项变更并即时重建。
