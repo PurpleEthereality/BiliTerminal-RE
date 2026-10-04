@@ -1,9 +1,7 @@
 package com.RobinNotBad.BiliClient.service
 
 import android.annotation.SuppressLint
-import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -14,12 +12,12 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.RobinNotBad.BiliClient.BiliTerminal
-import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.base.InstanceActivity
 import com.RobinNotBad.BiliClient.activity.video.local.DownloadListActivity
 import com.RobinNotBad.BiliClient.activity.video.local.LocalListActivity
 import com.RobinNotBad.BiliClient.api.PlayerApi
 import com.RobinNotBad.BiliClient.helper.sql.DownloadSqlHelper
+import com.RobinNotBad.BiliClient.service.download.DownloadNotifier
 import com.RobinNotBad.BiliClient.service.download.DownloadPathSpec
 import com.RobinNotBad.BiliClient.service.download.DownloadProgressMath
 import com.RobinNotBad.BiliClient.service.download.DownloadProgressStore
@@ -48,7 +46,6 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.Timer
-import java.util.TimerTask
 
 class DownloadService : Service() {
 
@@ -338,48 +335,26 @@ class DownloadService : Service() {
     lateinit var completionBuilder: NotificationCompat.Builder
     lateinit var notifyManager: NotificationManager
 
+    /** 通知逻辑统一见 service/download/DownloadNotifier.kt。
+     *  这里只放"持有者"：notifier 是 Service 的实例字段，随 Service 一起创建与回收。
+     *  绝不能塞进 companion——object 会跨批次抓住第一个 Service 的 Context 与 Timer。
+     *  上面几个 Builder / Manager / Timer 之所以还声明在这里，就是为了让状态只有一处。 */
+    private lateinit var notifier: DownloadNotifier
+
     private var exitMessage: String? = null
 
     private var toastTimer: Timer? = null
-    private var notifyTimer: Timer? = null
+
+    // 由 DownloadNotifier 读写（进度通知的幂等守卫），故不再是 private
+    internal var notifyTimer: Timer? = null
 
     override fun onCreate() {
         super.onCreate()
 
         Logu.d("onCreate")
 
-        notifyManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, "哔哩终端下载服务",
-                NotificationManager.IMPORTANCE_DEFAULT)
-            channel.description = "哔哩终端下载服务"
-            channel.setSound(null, null)
-            channel.enableVibration(false)
-
-            notifyManager.createNotificationChannel(channel)
-        }
-
-        val intent = Intent(this, DownloadListActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
-        statusBuilder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(R.mipmap.icon)
-            .setContentTitle("下载视频中")
-            .setProgress(100, 0, false)
-            .setContentIntent(pendingIntent)
-            .setSound(null)
-            .setVibrate(null)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-
-        completionBuilder = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setSmallIcon(R.mipmap.icon)
-            .setContentTitle("下载完成")
-            .setContentIntent(pendingIntent)
-            .setOngoing(false)
-            .setSound(null)
-            .setVibrate(null)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        notifier = DownloadNotifier(this)
+        notifier.init()
     }
 
     override fun onBind(intent: Intent): IBinder? {
@@ -409,7 +384,7 @@ class DownloadService : Service() {
         }
 
         exitCode = DownloadPathSpec.ERR_UNKNOWN
-        startNotifyProgress()
+        notifier.startNotifyProgress()
 
         CenterThreadPool.run {
             try {
@@ -613,7 +588,7 @@ class DownloadService : Service() {
             }
         } catch (e: JSONException) {
             DownloadRepository.setState(downloadSection.id, "error")
-            notifyCompletion("下载链接获取失败：\n" + downloadSection.name_short, downloadSection.id.toInt())
+            notifier.notifyCompletion("下载链接获取失败：\n" + downloadSection.name_short, downloadSection.id.toInt())
             section = null
             refreshDownloadList()
             return false
@@ -781,7 +756,7 @@ class DownloadService : Service() {
                 }
             }
 
-            notifyCompletion("下载成功：\n" + downloadSection.name_short, downloadSection.id.toInt())
+            notifier.notifyCompletion("下载成功：\n" + downloadSection.name_short, downloadSection.id.toInt())
 
             // 移除进度映射
             removeDownloadProgress(downloadSection.id)
@@ -901,52 +876,6 @@ class DownloadService : Service() {
             }
         }
         return true
-    }
-
-    private fun startNotifyProgress() {
-        // 幂等（审计 M11-d）：重复进入时不能无条件新建 Timer，否则旧 Timer 既没 cancel
-        // 又丢掉了引用，泄漏一个线程并让它每秒继续往通知栏写。
-        if (notifyTimer != null) return
-        notifyTimer = Timer()
-        notifyTimer!!.schedule(object : TimerTask() {
-            override fun run() {
-                try {
-                    // 周期性采样所有并行下载的聚合速度
-                    DownloadService.sampleSpeed()
-
-                    if (section == null || notifyTimer == null)
-                        return
-
-                    val overall = DownloadService.computeOverallProgress(
-                        DownloadRepository.getAll() ?: emptyList()
-                    )
-                    statusBuilder.setContentText(
-                        "总进度 " + (overall * 100).toInt() + "% · " + (section?.name_short ?: "下载中")
-                    )
-                    statusBuilder.setProgress(100, (overall * 100).toInt(), false)
-                    notifyManager.notify(FOREGROUND_ID, statusBuilder.build())
-                } catch (e: Throwable) {
-                    // TimerTask 抛出的未捕获异常会永久终止整个 Timer，进度通知从此静默失效且无任何提示。
-                    // 这里必须吞掉异常让 Timer 继续跑，但要留下日志便于定位。
-                    Logu.e("DownloadService", "刷新下载通知失败：${e.message}")
-                }
-            }
-        }, 500, 1000)
-    }
-
-    private fun notifyExit(content: String) {
-        MsgUtil.showMsg(content)
-        notifyManager.cancel(FOREGROUND_ID)
-        completionBuilder.setContentTitle("下载结束")
-        completionBuilder.setContentText(content)
-        completionBuilder.setProgress(0, 0, false)
-        notifyManager.notify(2, completionBuilder.build())
-    }
-
-    private fun notifyCompletion(content: String, id: Int) {
-        MsgUtil.showMsg(content)
-        completionBuilder.setContentText(content)
-        notifyManager.notify(id % 100 + 100, completionBuilder.build())
     }
 
     private fun refreshDownloadList() {
@@ -1416,7 +1345,7 @@ class DownloadService : Service() {
             section = null
 
             CenterThreadPool.run {
-                notifyExit(exitMessage!!)
+                notifier.notifyExit(exitMessage!!)
                 if (exitCode != DownloadPathSpec.NORMAL) {
                     DownloadRepository.setState(id, "none")
                     // 注意：这里绝不能删整个任务目录。单 P 任务的目录（FileUtil.getVideoDownloadPath(title, null)）
