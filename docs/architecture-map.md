@@ -380,6 +380,17 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 **与 PiliPlus 的差异**：PiliPlus 有 5 档 `SkipType`（`alwaysSkip` / `skipOnce` / `skipManually` / `showOnly` / `disable`，**默认 `skipOnce`**），并把片段画到进度条上（`segment_progress_bar.dart`）。本项目只做「开启 = 跳过一次 + 可撤回」这一档（用户要求默认关闭），也没有进度条片段标记。
 若将来要补 `alwaysSkip`（用户拖回去也继续跳），把 `maybeAutoSkipOpEd` 里的 `handled` 判断去掉即可——落点是右端点，不会自我循环。
 
+### 7.8 高能进度条 pbp 接口的两代响应结构（26.10.04 修复）
+
+接口 `https://bvc.bilivideo.com/pbp/data`（弹幕密度曲线）。**它改过响应结构，而旧实现不会报错，只会静默画出一条空线**，所以这里的两代结构都必须留着。
+
+- **旧形态**：数据摊在根上 —— `{"step_sec":3,"events":{"default":[...]}}`。
+- **新形态**：多包一层 —— `{"modules":[{"params":{"data":{...同上的字段...}}}]}`；有些链路外面还套 `{code,message,data}`。
+- **请求侧**（照 PiliPlus `_getDmTrend()` 对齐）：除了 `cid` 还要带 `aid`/`bvid`，并固定带 **`r=loader`**；**Referer 必须落在具体视频页**（`/video/{bvid}`，没有 bvid 就用 `/video/av{aid}`），站点根会被风控挡掉。
+- **纯解析**：`api/PlayerApi.parseHighEnergyData(JSONObject)`（static，零网络、**不写日志**——`Logu` 走 `android.util.Log`，在 JVM 单测里会抛 not-mocked）。它按「根上的 modules → data 里的 modules → data 本身 → 根自己」四个候选依次找，**优先返回真正带 `events.default` 的那个**；都不带才退回第一个候选（至少留下 `step_sec`/`debug` 便于排查）。配套 `app/src/test/.../api/PlayerApiPbpTest.kt` 9 例。
+- **`buildPbpReferer(bvid, aid)`** 也是纯函数（bvid > av号 > 站点根），单测覆盖。
+- 网络侧 `getHighEnergyData(cid, aid, bvid)` 用 `new ArrayList<>(NetWorkUtil.webHeaders)` 复制一份请求头、只替换 `Referer`，**不动全局表**（全局表是 volatile copy-on-write 快照，见 `util/NetWorkUtil.java:521` 的注释）。调用点 `activity/player/PlayerActivity.kt` 的 `loadHighEnergyData()` 从 Intent 里取可选的 `bvid`——`PlayerData` 没有该字段，所以多数入口会落到 av 号 Referer。
+
 ---
 
 ## 8. UI 基建速查（新增页面临摹用）

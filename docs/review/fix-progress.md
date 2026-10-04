@@ -1053,3 +1053,57 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
   （实测 ~1.5 MB/s，对比本机直连 GitHub ~35KB/s）。
 - Gitee 上两个 tag（`26.10.03.1` / `26.10.03.2`）目前都完整保留；若中转以后开启"只留最近 N 个"的清理，
   注意第一版 `config.json` 指向的是 `26.10.03.1` 的直链，会被连带清掉。
+
+---
+
+## 九、高能进度条接口变更适配（2026-10-04）
+
+### 现象
+
+设置里开着「显示高能进度条」时，进度条下方的弹幕密度曲线变空。
+
+### 根因
+
+`https://bvc.bilivideo.com/pbp/data`（pbp）改了响应结构，而旧实现不会报错：
+
+- 旧实现只认「数据摊在根上」的 `{"step_sec":…,"events":{"default":[…]}}`；
+- 新结构把数据包进了 `{"modules":[{"params":{"data":{…}}}]}`。
+
+`events` 取不到就落成空数组，`hasValidData()` 为 false，前端既不画线也不报错——**静默变成一条直线**，
+是最难定位的那类回归。另外请求侧也缺了两样：`r=loader` 参数与「落在具体视频页上」的 Referer（站点根会被风控挡掉）。
+
+### 依据
+
+以 PiliPlus（`bggRGjQaUbCoE/PiliPlus` @ `2515ecf`，`lib/pages/video/controller.dart` 的 `_getDmTrend()`）的现行实现为准：
+它带 `aid`/`bvid`/`cid`/`r=loader`，`referer` 用 `https://www.bilibili.com/video/$bvid`，
+并且**先试 `res.data['modules'][0]['params']['data']`、失败才回退 `res.data`**。
+
+`bilibili-API-collect` 的镜像文档（`pskdje/bilibili-API-collect` `docs/video/pbp.md`）**仍是旧格式**——
+它的 last-modified 正好是该仓库被关停的 2026-01-28，所以照抄它就会落后，这也是本问题的来源。
+
+### 修复
+
+`api/PlayerApi.java`：
+
+- 新增 `parseHighEnergyData(JSONObject)`（static 纯解析，零网络、不写日志）。
+  按「根上的 modules → `data` 里的 modules → `data` 本身 → 根自己」四个候选依次找，
+  **优先返回真正带 `events.default` 的那个**；都不带才退回第一个候选，至少留下 `step_sec`/`debug` 便于排查。
+  这样「外壳在、数据仍留在根上」的中间态也不会画空线。
+- 新增 `buildPbpReferer(bvid, aid)`（纯函数，优先级 bvid > av 号 > 站点根）。
+- `getHighEnergyData(long cid, long aid, String bvid)`：补 `bvid` 与 `r=loader` 参数；
+  请求头用 `new ArrayList<>(NetWorkUtil.webHeaders)` 复制后只替换 `Referer`，**不原地改全局快照**。
+  保留二参重载委托给三参版本，不破坏既有调用点。
+- `activity/player/PlayerActivity.kt` 的 `loadHighEnergyData()` 从 Intent 读可选的 `bvid`
+  （`PlayerData` 没有该字段，多数入口会落到 av 号 Referer）。
+
+### 验证
+
+- 新增 `app/src/test/.../api/PlayerApiPbpTest.kt` **9 例**：旧扁平结构 / 新 modules 外壳 / `data` 里套 modules /
+  `modules` 为空但数据仍在根上 / 无 events / `step_sec` 缺失兜底 / 错误码返回 null / null 响应 / Referer 三级回退。
+- `:app:testDebugUnitTest`：**21 个 XML，165 用例，0 失败**（原 156 + 新增 9）。
+- `:app:assembleDebug`：BUILD SUCCESSFUL。
+- 待真机确认：拿一个真实 cid 看曲线是否恢复（本机 pwsh 无外网，无法直接打接口）。
+
+### 交叉引用
+
+架构记录见 `docs/architecture-map.md` §7.8。
