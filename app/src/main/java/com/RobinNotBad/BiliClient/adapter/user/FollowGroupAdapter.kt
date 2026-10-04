@@ -31,6 +31,7 @@ class FollowGroupAdapter(
     val groupList: MutableList<GroupItem> = ArrayList()
     val expandedMap: MutableMap<Int, Boolean> = HashMap()
     private var expandListener: OnGroupExpandListener? = null
+    private var groupLongClickListener: ((FollowTag) -> Unit)? = null
 
     fun interface OnGroupExpandListener {
         fun onGroupExpand(tagid: Int)
@@ -38,6 +39,11 @@ class FollowGroupAdapter(
 
     fun setOnGroupExpandListener(listener: OnGroupExpandListener?) {
         this.expandListener = listener
+    }
+
+    /** 长按分组标题（分组增删改的入口，26.10.04 批次 7 的 C21） */
+    fun setOnGroupLongClickListener(listener: ((FollowTag) -> Unit)?) {
+        this.groupLongClickListener = listener
     }
 
     fun addGroup(tag: FollowTag, users: MutableList<UserInfo>) {
@@ -212,6 +218,10 @@ class FollowGroupAdapter(
                 animateRotation(holder.expandIcon, targetRotation)
 
                 holder.itemView.setOnClickListener { toggleGroup(group.tag.tagid) }
+                holder.itemView.setOnLongClickListener {
+                    groupLongClickListener?.invoke(group.tag)
+                    true
+                }
             }
         } else if (holder is UserHolder) {
             val user = getUserForPosition(position)

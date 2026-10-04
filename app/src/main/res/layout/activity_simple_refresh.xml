@@ -181,6 +181,32 @@
 
         </LinearLayout>
 
+        <!-- 分组管理条：同样默认隐藏，只有关注列表的「分组模式」（自己的关注 + 设置开关打开）才点亮。
+             一个「+ 新建分组」按钮；改名/删除走分组标题的长按菜单。 -->
+        <LinearLayout
+            android:id="@+id/groupBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="@dimen/activity_padding_horizontal"
+            android:paddingVertical="2dp"
+            android:orientation="horizontal"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:id="@+id/groupCreate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:minHeight="@dimen/touch_min"
+                android:paddingVertical="4dp"
+                android:background="?attr/selectableItemBackground"
+                android:text="+ 新建分组"
+                android:textSize="13sp"
+                android:textColor="?android:attr/textColorSecondary" />
+
+        </LinearLayout>
+
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
             android:id="@+id/swipeRefreshLayout"
             android:layout_width="match_parent"

@@ -14,6 +14,7 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 
 public class FollowApi {
@@ -93,6 +94,92 @@ public class FollowApi {
                 userList.add(new UserInfo(uid, name, avatar, sign, 0, 0, 0, true, "", 0, "", 0));
             }
             return 0;
+        }
+    }
+
+    // ==================== 分组增删改（26.10.04 批次 7 的 C21） ====================
+
+    /** 分组名最长 16 字符（服务端限制，超了会回 22103） */
+    public static final int TAG_NAME_MAX_LENGTH = 16;
+
+    /**
+     * 分组名的本地预校验（不联网）。
+     *
+     * @return 空串表示通过，否则是要展示给用户的中文提示
+     */
+    public static String checkTagName(String name) {
+        if (name == null) return "分组名不能为空";
+        String trimmed = name.trim();
+        if (trimmed.isEmpty()) return "分组名不能为空";
+        if (trimmed.length() > TAG_NAME_MAX_LENGTH) return "分组名最多 " + TAG_NAME_MAX_LENGTH + " 个字";
+        return "";
+    }
+
+    /**
+     * 创建关注分组。
+     *
+     * @return 服务端 code（0 成功）
+     */
+    public static int createFollowTag(String name) throws IOException, JSONException {
+        NetWorkUtil.FormData formData = new NetWorkUtil.FormData()
+                .put("tag", name == null ? "" : name.trim())
+                .put("csrf", NetWorkUtil.currentCsrf());
+        return postTag("https://api.bilibili.com/x/relation/tag/create", formData);
+    }
+
+    /**
+     * 重命名关注分组。
+     *
+     * @return 服务端 code（0 成功）
+     */
+    public static int renameFollowTag(int tagid, String name) throws IOException, JSONException {
+        NetWorkUtil.FormData formData = new NetWorkUtil.FormData()
+                .put("tagid", tagid)
+                .put("name", name == null ? "" : name.trim())
+                .put("csrf", NetWorkUtil.currentCsrf());
+        return postTag("https://api.bilibili.com/x/relation/tag/update", formData);
+    }
+
+    /**
+     * 删除关注分组（分组里的关注不会被取关，只是回到默认分组）。
+     *
+     * @return 服务端 code（0 成功）
+     */
+    public static int deleteFollowTag(int tagid) throws IOException, JSONException {
+        NetWorkUtil.FormData formData = new NetWorkUtil.FormData()
+                .put("tagid", tagid)
+                .put("csrf", NetWorkUtil.currentCsrf());
+        return postTag("https://api.bilibili.com/x/relation/tag/del", formData);
+    }
+
+    private static int postTag(String url, NetWorkUtil.FormData formData) throws IOException, JSONException {
+        JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, formData.toString(), NetWorkUtil.webHeaders).body()).string());
+        return result.optInt("code", -1);
+    }
+
+    /** 分组增删改的错误码文案（纯函数，供 UI 直接显示） */
+    public static String tagErrorMsg(int code) {
+        switch (code) {
+            case 0:
+                return "";
+            case -101:
+                return "还没有登录喵~";
+            case -111:
+                return "登录凭证已失效，请重新登录";
+            case -400:
+                return "请求出错了，请稍后再试";
+            case 22101:
+                return "分组名里有不允许的字符";
+            case 22102:
+                return "分组数量已达上限";
+            case 22103:
+                return "分组名太长了，最多 " + TAG_NAME_MAX_LENGTH + " 个字";
+            case 22104:
+                return "这个分组不存在，可能已经被删了";
+            case 22106:
+                return "已经有同名的分组了";
+            default:
+                return "操作失败（错误码 " + code + "）";
         }
     }
 }

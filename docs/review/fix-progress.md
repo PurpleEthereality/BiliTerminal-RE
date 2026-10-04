@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八/§二十九
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八/§二十九/§三十
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -2285,6 +2285,62 @@ C20 没有新增纯函数（`buildResources`/`resourceErrorMsg` 已在 C19 测�
 - `docs/architecture-map.md` 新增 §7.25「收藏夹多选删除」，并说明 `manageBar` 是 `activity_simple_refresh.xml` 里第三个默认隐藏分组。
 - 接口依据：`bilibili-API/docs/fav/action.md:366-418`（`x/v3/fav/resource/batch-del` 参数与错误码）；`resources` 格式与错误码文案见 C19（§二十八 / §7.24）。
 - 批次 7 进度：C18（§二十七）→ C19（§二十八）→ C20（本条）→ C21 关注分组增删改。
+
+---
+
+## 三十、26.10.04 批次 7（4/4）：关注分组增删改（C21）
+
+### 为什么做
+
+调研报告 §12.4 的 C21 列为**想要实现**（:408 功能对照表里「关注分组增删改 ❌」）。本项目早就有了「关注分组模式」（设置里开启后按分组折叠展示关注），但只能看——分组一旦在手机/网页端建好就不能改。手表上没有键盘，但**创建/重命名只需要一次短文本输入**，而 `InputDialogActivity` 已经是现成的输入页（本地列表、回复等处都在用），删除只需一次确认。故范围限定为**分组本身的创建 / 重命名 / 删除**，不做分组内成员的增删（那是另一套「从关注列表勾选后加入分组」的交互，收益低）。
+
+### 改动
+
+| 文件 | 改动 |
+| --- | --- |
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/FollowApi.java` | 新增 `TAG_NAME_MAX_LENGTH = 16`；纯函数 `checkTagName(name)`（空/全空白、trim 后超 16 字）与 `tagErrorMsg(code)`（22101/22102/22103/22104/22106）；写接口 `createFollowTag(name)` → `POST x/relation/tag/create`、`renameFollowTag(tagid, name)` → `.../tag/update`、`deleteFollowTag(tagid)` → `.../tag/del`，三者统一经私有 `postTag(url, formData)` 取 `code` |
+| `app/src/main/res/layout/activity_simple_refresh.xml` | 新增默认 `gone` 的 `groupBar`（一行「+ 新建分组」），第四个复用该基类布局的可选分组 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/user/FollowGroupAdapter.kt` | 新增 `setOnGroupLongClickListener(listener)`；`GroupHolder` 在点击展开之外加长按回调（传 `group.tag`） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/user/FollowUsersActivity.kt` | `setupGroupBar()`（仅分组模式点亮）；`pendingInputCallback` + `inputLauncher`（`registerForActivityResult`）；`showCreateGroupDialog()`/`showRenameGroupDialog(tag)`/`showDeleteGroupDialog(tag)`/`showGroupMenu(tag)`/`isEditableTag(tag)`；`loadGroupMode()` 挂长按回调并**去掉 `count > 0` 过滤** |
+| `app/src/test/java/com/RobinNotBad/BiliClient/api/FollowApiTest.kt` | 新增 5 例：`checkTagName` 空/正常/16 字边界（含外包空格仍超长）、`tagErrorMsg` 已知码与未知码 |
+
+### 取舍
+
+- **复用 `InputDialogActivity` 而不是新建输入页**：它已支持 `title`/`initial_text`/`hint` 三个 extra 且回传 `input_text`，重命名时直接预填旧名字；照抄 `LocalListActivity` 的 `pendingInputCallback` + `registerForActivityResult` 范式即可，零新 Activity、零新布局。
+- **入口是长按分组标题，不是每组加按钮**：分组行本来就窄（手表上更窄），加按钮会把分组名挤没；长按弹「重命名 / 删除」两项菜单，与 C3/C7/C19 的菜单化风格一致。新建按钮放在列表上方的 `groupBar`（整行，好点）。
+- **本地先做名称预校验**：`checkTagName` 挡掉空名字与超 16 字，避免为一个必然失败的名字发请求；服务端的 22101/22103/22106 仍全部映射成中文文案兜底。
+- **系统分组不可编辑**：`isEditableTag(tag) = tag.tagid > 0`。默认分组（`tagid = 0`）与特别关注（`-10`）是服务端固定分组，长按只提示「默认分组和特别关注不能改名或删除」——不发请求也不给菜单。
+- **去掉 `loadGroupMode()` 里 `tag.count > 0` 的过滤**：这是本次的隐式 bug——刚建好的分组 `count` 为 0，若不列出，用户建完看不到它、更没法改名/删除，「创建」功能等于半残。空分组现在照常列出，展开为空。
+- **成功后整页重拉而不是局部改**：分组增删改会改变行数与展开状态，重拉最省心；`RefreshListActivity.setAdapter()` 只是给 `recyclerView` 赋值（没有「只能设一次」的守卫），重建 adapter 安全。
+- **改名时名字没变不发请求**：`name.trim() == tag.name` 时直接返回，避免无意义的写请求触发风控。
+
+### 单测
+
+新增 `app/src/test/java/com/RobinNotBad/BiliClient/api/FollowApiTest.kt` **5 例**（只测纯函数，不碰 android）：`checkTagName_rejectsNullAndBlank`、`checkTagName_acceptsNormalNames`、`checkTagName_lengthBoundaryIs16`、`tagErrorMsg_mapsKnownCodes`、`tagErrorMsg_unknownCodeKeepsTheCode`。测试总数 **35 个测试类 / 295 个用例**。
+
+### 验证
+
+本次只改既有布局文件、**没有新增 `res/` 文件**，按 AGENTS.md 不需要 clean 两连：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → **BUILD SUCCESSFUL in 1m 6s**（99 tasks）。`app/build/test-results/testDebugUnitTest` **35 个 XML / 295 个用例 / 0 失败 / 0 错误 / 0 跳过**。乱码自检 `git diff | Select-String '鐐|璇|鍒|锛|銆|鎴|鏂|锟'` 计数 0；`git status --porcelain` 只有 4 个已改文件 + 新增的 `FollowApiTest.kt`。
+
+### 真机验证清单
+
+1. 设置里打开「我的关注列表分组」后进入关注列表：列表上方出现「+ 新建分组」整行；粉丝列表、普通关注列表（未开分组模式）**没有这一行**。
+2. 点「+ 新建分组」：弹出输入页标题「新建分组」、提示「请输入分组名（最多 16 个字）」；输入「测试分组」确认后 toast「分组已创建」，列表里立刻出现该分组（**关注数为 0 也要显示**）。
+3. 什么都不输入直接确认：提示「分组名不能为空」，不弹 toast 说创建失败。
+4. 输入 17 个汉字：提示「分组名最多 16 个字」，不发请求。
+5. 建一个重名分组：提示「已经有同名的分组了」（22106）。
+6. 长按刚建的分组标题：弹出菜单「重命名分组 / 删除分组 / 取消」，标题是该分组名。
+7. 选「重命名分组」：输入页预填旧名字；改成「改过的名字」确认后 toast「已重命名为「改过的名字」」；**原名不改直接确认**时不发请求、无提示。
+8. 选「删除分组」：确认框文案「确定删除「改过的名字」吗？\n分组里的关注不会取关，只是回到默认分组。」；确认后 toast「分组已删除」，列表里该分组消失；网页端核对分组确实没了。
+9. 长按**默认分组**或**特别关注**：只提示「默认分组和特别关注不能改名或删除」，不弹菜单。
+10. 已存在的分组展开仍然能正常加载成员、翻页正常；未登录时三个写接口都提示「还没有登录喵~」（-101），登录过期提示「登录凭证已失效，请重新登录」（-111）。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C21 行改为「已实现（26.10.04 批次 7）」；§12.6 测试数改 35 类 / 295 例；§12.7 的「想要实现 36（…剩 11）」改剩 10，「26.10.04 批次 7 落地」行改 4/4；批次顺序 ⑦ 标为**批次 7 全部完成**。
+- `docs/architecture-map.md` 新增 §7.26「关注分组增删改」，并把测试数改为 35 个测试类 / 295 个用例（api 层 10 个类被覆盖）。
+- 接口依据：`bilibili-API/docs/user/relation.md:2398-2458`（`x/relation/tag/create`，`tag` 最长 16 字符、错误码 22101/22102/22103/22106）、`:2460-2508`（`.../tag/update`，错误码含 22104）、`:2512-2560`（`.../tag/del`）；输入页复用见 `app/src/main/java/com/RobinNotBad/BiliClient/activity/InputDialogActivity.kt` 与 `app/src/main/java/com/RobinNotBad/BiliClient/activity/video/local/LocalListActivity.kt:46`、`:62-69`、`:302-336`。
+- 批次 7 进度：C18（§二十七）→ C19（§二十八）→ C20（§二十九）→ **C21（本条）**，批次 7 全部完成；下一批 ⑧ E2 拆分 DownloadService + F4 漫画。
 
 
 
