@@ -26,6 +26,11 @@ public class VideoCard implements Parcelable, Serializable {
      * 注意别和 PlayerData.progress 混淆，后者单位是毫秒；换算只在传给播放器时做一次。
      */
     public int progress = 0;
+    /**
+     * 视频总时长，<b>单位是秒</b>。只有稍后再看列表（x/v2/history/toview/web 的 duration 字段）
+     * 会填，用来把「已看完」和「没看完」分开；其它来源保持 0（未知）。
+     */
+    public long duration = 0;
 
     public VideoCard(String title, String upName, String view, String cover, long aid, String bvid, String type) {
         this.title = title;
@@ -72,6 +77,7 @@ public class VideoCard implements Parcelable, Serializable {
         // 新增字段只能追加在末尾，且读/写顺序必须严格一致（顺序错位不会崩，只会静默串数据）
         epid = in.readLong();
         progress = in.readInt();
+        duration = in.readLong();
     }
 
     public static final Creator<VideoCard> CREATOR = new Creator<>() {
@@ -105,5 +111,6 @@ public class VideoCard implements Parcelable, Serializable {
         // 与构造器里的读取顺序一一对应
         parcel.writeLong(epid);
         parcel.writeInt(progress);
+        parcel.writeLong(duration);
     }
 }

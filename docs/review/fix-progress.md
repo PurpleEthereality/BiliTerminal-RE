@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -2115,6 +2115,62 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 调研报告 §12.4 的 C27 行改为「已实现（范围限定：仅『查看』）」；`docs/architecture-map.md` 新增 §7.22「笔记，仅查看」。
 - 接口依据：`bilibili-API/docs/note/list.md:3-71`（`x/note/list/archive`）、`bilibili-API/docs/note/info.md:57-172`（`x/note/info`，错误码 79502/79503）、`bilibili-API/docs/note/readme.md:19-158`（delta 正文结构与真实示例）。
 - 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（§二十一）→ C7（§二十二）→ C8（§二十三）→ C9（§二十四）→ C10（§二十五）→ C27（本条）。**批次 6 八项至此全部完成**；下一批为批次 7（C18 C19 C20 C21），其后批次 8（E2 DownloadService + F4 漫画）。
+
+---
+
+## 二十七、26.10.04 批次 7（1/4）：稍后再看「未看完」分类（C18）
+
+### 为什么做
+
+稍后再看列表混着「没看过的」「看了一半的」「已经看完的」。原先只能从头往下翻，想找「上次没看完的那几个」要靠记忆。调研报告 §12.4 的 C18 建议加分类，本次按用户拍板的范围落地：**只加一个「全部 / 未看完」筛选**，不做排序、不做自动清理。
+
+### 改动
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/WatchLaterApi.java` | `getWatchLaterList` 解析时补 `card.progress = optInt("progress", 0)`、`card.duration = optLong("duration", 0)`；新增纯函数 `isUnfinished(long, long)` 与 `filterUnfinished(List<VideoCard>, boolean)` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/VideoCard.java` | 新增 `public long duration = 0;`（只本接口会填）；`Parcel` 构造器与 `writeToParcel` **成对**追加在末尾 |
+| `app/src/main/res/layout/activity_simple_refresh.xml` | 新增**默认 `android:visibility="gone"`** 的 `filterBar`（两个等宽 `TextView`：`filterAll`「全部」/ `filterUnfinished`「未看完」），放在 `SwipeRefreshLayout` 外面 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/user/WatchLaterActivity.kt` | 重写：`allList`（接口全量）+ `shownList`（交给 adapter 的引用）；`onCreate` 里点亮 `filterBar`、接管两个 chip 的点击、抓默认字色；`loadWatchLater()` 拉一次数据；`applyFilter()` 只重填 `shownList` + `notifyDataSetChanged()`；删除时两张表同改 |
+| `app/src/test/java/com/RobinNotBad/BiliClient/api/WatchLaterApiTest.kt` | **新增**：7 例纯函数单测 |
+
+### 取舍
+
+- **判据用接口自带的 `progress`/`duration`，不查观看记录**：稍后再看接口本来就返回这两个字段（`bilibili-API/docs/historytoview/toview.md:175/183`），再打一次历史接口纯属浪费。`progress <= 0` 判为「没播过」而不是「未看完」——否则「全部未看」的视频会全挤进「未看完」，筛选就没用了。
+- **总时长未知（0）时不判「已看完」**：老数据或特殊稿件可能没 `duration`，此时只按 `progress > 0` 判定。宁可放进「未看完」，也不要让用户找不到自己看了一半的稿件。
+- **筛选条放列表外，不做 adapter 头部项**：`activity_simple_refresh.xml` 是**所有** `RefreshListActivity` 共用的布局，新增分组默认 `gone`，只有本页点亮，其它页面零感知。做成 adapter 头部项会改变业务 adapter 的 `viewType`/`adapterPosition` 语义——本项目已有「头部占位导致通知起点 `+1`」的坑（`docs/architecture-map.md` §7.9），不值得为一个页面再引入一次。
+- **切档不重新请求**：数据一次拿全，切档只在本地重填。手表上网络慢，来回请求不如直接用内存里的那份；代价是「稍后再看」改动（在视频页添加/删除）后要重新进页面才会刷新，与原有行为一致。
+- **删除后两张表同步**：`shownList` 里存的是 `allList` 的**同一个对象引用**，按对象 `allList.remove(card)`、按位 `shownList.removeAt(position)`。只删一张表的话，切档时已删条目会"复活"。
+- **不改删除手势**：仍是原来的「4 秒内连点两次长按才删」。C18 只加分类，删除体验另行处理。
+- **选中色不写死**：选中档位用 `ColorScheme.PRIMARY`（跟随外观设置的主题色），另一档用 `onCreate` 时从 `filterAll.currentTextColor` 抓到的默认次要色。
+
+### 单测
+
+`api/WatchLaterApiTest.kt` **7 例**：`isUnfinished_requiresPositiveProgress`（0 / 负数）、`isUnfinished_treatsUnknownDurationAsUnfinished`（duration 0 / 负数）、`isUnfinished_comparesProgressWithDuration`（小于 / 等于 / 大于）、`filterUnfinished_toleratesNullAndEmpty`（null / 空表 × 两档）、`filterUnfinished_skipsNullElements`（含 null 元素）、`filterUnfinished_returnsOnlyUnfinishedInOriginalOrder`（顺序保持 + 同引用）、`filterUnfinished_falseReturnsCopyOfWholeList`（false 档是拷贝，改副本不动原表）。网络部分不测（与既有 api 测试一致）。
+
+### 验证
+
+本次只改既有布局文件、**没有新增 `res/` 文件**，按 AGENTS.md 不需要 clean 两连：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → **BUILD SUCCESSFUL in 1m 10s**（99 tasks；pwsh 因 javac 的过时 API 注记报 `[exit code: 1]`，属已知假阳性）。`app/build/test-results/testDebugUnitTest` **34 个 XML / 285 个用例 / 0 失败 / 0 错误**（C27 后 33/278，本次 +7 例）。乱码自检 `git diff | Select-String '鐐|璇|鍒|锛|銆|鎴|鏂|锟'` 计数 0；diff 只涉及 4 个已跟踪文件 + 1 个新测试文件。
+
+### 真机验证清单
+
+1. 进入「稍后再看」，顶部出现「全部 / 未看完」两个筛选项；**其它列表页（关注动态、历史记录等）看不到这一行**。
+2. 默认选中「全部」，列表与升级前完全一致（条数、顺序、缩略图）。
+3. 点「未看完」：只剩 `progress > 0` 且未看完的稿件；「从未播放」和「已看完」的都不出现。
+4. 两个筛选项的字色跟随主题：选中项是主题色，另一项是次要色；切档立即生效、无网络请求（可断网验证：断网后切档仍能筛）。
+5. 某一档结果为空时显示空态提示，不是白屏；切回另一档能恢复列表。
+6. 「未看完」档下连点两次长按删除一条，列表立即少一行且**不报错、不跳位**。
+7. 删除后切到「全部」再切回「未看完」，**刚删的那条不会复活**。
+8. 删到「未看完」档为空时显示空态；此时「全部」档仍能看到其它稿件。
+9. 手表小屏上两个筛选项可点（`minHeight=touch_min`），不误触列表项。
+10. 从稍后再看返回视频页/首页再进来，列表正常刷新，筛选条仍在。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C18 行改为「已实现（26.10.04 批次 7）」；§12.6 测试数改 34 类 / 285 例；§12.7 的「想要实现 36（…剩 14）」改剩 13 并新增「26.10.04 批次 7 落地」行；批次顺序 ⑦ 标为进行中（1/4）。
+- `docs/architecture-map.md` 新增 §7.23「稍后再看『未看完』分类」，并把测试数改为 34 个测试类 / 285 个用例（api 层 9 个类被覆盖）。
+- 接口依据：`bilibili-API/docs/historytoview/toview.md:124-334`（列表接口，字段表 `:148`/`:173`/`:175` `duration`/`:183` `progress`/`:184` `add_at`）。
+- 批次 7 进度：C18（本条）→ C19 收藏夹排序/复制/移动 → C20 收藏夹多选删除 → C21 关注分组增删改。
 
 
 

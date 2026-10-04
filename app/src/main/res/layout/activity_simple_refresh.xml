@@ -47,6 +47,47 @@
         android:layout_below="@id/top"
         android:orientation="vertical">
 
+        <!-- 列表筛选条：默认隐藏，只有需要分类的页面（如「稍后再看」的 全部/未看完）才在代码里
+             设成 VISIBLE 并接管点击。和 loadMoreTip 一样放在列表外，避免改变业务 adapter 的
+             viewType 或 adapterPosition 语义。 -->
+        <LinearLayout
+            android:id="@+id/filterBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="@dimen/activity_padding_horizontal"
+            android:paddingVertical="2dp"
+            android:orientation="horizontal"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:id="@+id/filterAll"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:minHeight="@dimen/touch_min"
+                android:paddingVertical="4dp"
+                android:background="?attr/selectableItemBackground"
+                android:text="全部"
+                android:textSize="13sp"
+                android:textColor="?android:attr/textColorSecondary" />
+
+            <TextView
+                android:id="@+id/filterUnfinished"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:minHeight="@dimen/touch_min"
+                android:paddingVertical="4dp"
+                android:background="?attr/selectableItemBackground"
+                android:text="未看完"
+                android:textSize="13sp"
+                android:textColor="?android:attr/textColorSecondary" />
+
+        </LinearLayout>
+
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
             android:id="@+id/swipeRefreshLayout"
             android:layout_width="match_parent"
