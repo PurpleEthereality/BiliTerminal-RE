@@ -44,11 +44,15 @@ class SeriesInfoActivity : RefreshListActivity() {
         seriesMid = intent.getLongExtra("mid", 0)
         seriesId = intent.getIntExtra("sid", 0)
         seriesName = intent.getStringExtra("name") ?: "系列详情"
+        seriesCover = intent.getStringExtra("cover") ?: ""
+        seriesIntro = intent.getStringExtra("intro") ?: ""
+        seriesTotal = intent.getStringExtra("total") ?: ""
 
         setPageName(seriesName)
 
         loadData(1)
         setOnRefreshListener { loadData(1) }
+        setOnEmptyRetry { loadData(1) }
         setOnLoadMoreListener {
             loadData(it)
         }

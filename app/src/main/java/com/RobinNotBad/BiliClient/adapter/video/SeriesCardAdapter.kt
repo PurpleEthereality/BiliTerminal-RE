@@ -35,11 +35,16 @@ class SeriesCardAdapter(
             intent.putExtra("mid", series.mid)
             intent.putExtra("sid", series.id)
             intent.putExtra("name", series.title)
+            // 详情页头部的封面/简介/总数此前恒为空：这三个字段在列表数据里本来就有，
+            // 只是没传过去，导致详情页永远显示占位图、"这里没有简介哦"、"共"。
+            intent.putExtra("cover", series.cover)
+            intent.putExtra("intro", series.intro)
+            intent.putExtra("total", series.total)
             context.startActivity(intent)
         }
     }
 
     override fun getItemCount(): Int {
-        return if (seasonList != null) seasonList.size else 0
+        return seasonList.size
     }
 }

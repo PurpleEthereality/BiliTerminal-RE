@@ -19,6 +19,7 @@ import com.RobinNotBad.BiliClient.model.Collection
 import com.RobinNotBad.BiliClient.model.VideoCard
 import com.RobinNotBad.BiliClient.model.VideoInfo
 import com.RobinNotBad.BiliClient.util.GlideUtil
+import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.StringUtil
 import com.RobinNotBad.BiliClient.util.TerminalContext
 import com.RobinNotBad.BiliClient.util.ToolsUtil
@@ -29,26 +30,31 @@ import com.bumptech.glide.load.resource.bitmap.RoundedCorners
 import com.bumptech.glide.request.RequestOptions
 
 class CollectionInfoActivity : RefreshListActivity() {
-    private var collection: Collection? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val fromAid = intent.getLongExtra("fromVideo", -1)
-        val seasonId = intent.getIntExtra("season_id", -1)
-        val mid = intent.getLongExtra("mid", -1)
         setPageName("合集详情")
+        // 失败后可点空态重试（失败结果不入缓存，重建即重新请求）
+        setOnEmptyRetry { recreate() }
 
         TerminalContext.getInstance().getVideoInfoByAidOrBvId(fromAid, null).observe(this) { result ->
             result.onSuccess { videoInfo ->
-                collection = videoInfo.collection
+                val collection = videoInfo.collection
+                if (collection == null) {
+                    // 视频不属于任何合集时 collection 为 null，此前直接 collection!! 会在这里崩溃
+                    showEmptyView()
+                    setRefreshing(false)
+                    return@onSuccess
+                }
 
                 val adapter: RecyclerView.Adapter<RecyclerView.ViewHolder>
-                if (collection!!.sections == null && collection!!.cards != null) {
-                    adapter = CardAdapter(this, collection!!)
-                } else if (collection!!.sections != null) {
-                    adapter = SectionAdapter(this, collection!!, recyclerView)
-                    val sections = collection!!.sections!!
+                if (collection.sections == null && collection.cards != null) {
+                    adapter = CardAdapter(this, collection)
+                } else if (collection.sections != null) {
+                    adapter = SectionAdapter(this, collection, recyclerView)
+                    val sections = collection.sections!!
                     var pos = 1
                     for (section in sections) {
                         pos++
@@ -65,8 +71,16 @@ class CollectionInfoActivity : RefreshListActivity() {
                     return@onSuccess
                 }
 
+                hideEmptyView()
                 setAdapter(adapter)
                 setRefreshing(false)
+            }.onFailure { error ->
+                // 此前只写了 onSuccess：请求失败时既没有提示，setRefreshing(false) 也永不执行，
+                // 页面会一直转圈。注意原代码还多读了 season_id / mid 两个 extra，
+                // 但全库没有任何地方 putExtra 它们（唯一入口只传 fromVideo），属于死变量，已删除。
+                showEmptyView()
+                setRefreshing(false)
+                MsgUtil.err(error)
             }
         }
     }

@@ -874,12 +874,12 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 > 来源：原 `docs/review/cleanup-scan.md` §7「顺带发现的真实缺陷」。该报告已删除，此节为其唯一存续处。
 > 行号按 **26.10.03（c98aa7f）** 工作区重新核实，与旧报告行号有漂移。
 
-- [ ] `activity/settings/AnnouncementsActivity.kt:27-30`：catch 只有 `report(e)` + `MsgUtil.showMsg(...)`，**无 `setRefreshing(false)`** → 下拉刷新永久卡死（违反 `AGENTS.md` 硬约定）。**注**：同批的 `activity/message/NoticeActivity.kt` 已在 `:80/:88/:104/:132/:145/:155` 全面复位，故本项只剩 AnnouncementsActivity 一处。
-- [ ] `activity/video/collection/CollectionInfoActivity.kt:42-71`：只有 `result.onSuccess{...}`，**无 `onFailure` 分支**。
-- [ ] `activity/video/PopularActivity.kt:103-105`：catch 只 `runOnUiThread { MsgUtil.err(e) }`，不复位 `refreshing`。
-- [ ] `activity/video/series/SeriesInfoActivity.kt:35-37`：`seriesCover`/`seriesIntro`/`seriesTotal` **声明后从不赋值**（`onCreate` L43-46 只取 type/mid/sid/name）→ 简介恒「这里没有简介哦」、浏览量恒「共」、封面恒占位图、封面点击恒不触发。原 `activity2-report.md` M-24 已指出，仍未修。
-- [ ] `activity/video/collection/CollectionInfoActivity.kt:38-39`：同类「复制粘贴忘接线」。
-- [ ] `activity/article/OpusInfoActivity.kt:89-95`：空函数体的幽灵 `@Subscribe(threadMode = ThreadMode.ASYNC, sticky = true, priority = 1) fun onEvent(event: ReplyEvent) {}`，且 `onDestroy()` 只有 super，**漏了 `TerminalContext.leaveDetailPage()`**（`DynamicInfoActivity:82-85`、`LiveInfoActivity:255-258` 都调了）。
+- [x] `activity/settings/AnnouncementsActivity.kt:27-30`：catch 只有 `report(e)` + `MsgUtil.showMsg(...)`，**无 `setRefreshing(false)`** → 下拉刷新永久卡死（违反 `AGENTS.md` 硬约定）。**注**：同批的 `activity/message/NoticeActivity.kt` 已在 `:80/:88/:104/:132/:145/:155` 全面复位，故本项只剩 AnnouncementsActivity 一处。**26.10.04 批次 1 已修**：顺带核实该页**从未调用 `setOnRefreshListener`**（`activity/base/RefreshListActivity.kt:53` 默认 `isEnabled=false`），所以它此前根本不能下拉刷新；已重写成 `loadAnnouncements()` + `setOnRefreshListener` + `setOnEmptyRetry`，失败时复位转圈并给出可点重试的空态。
+- [x] `activity/video/collection/CollectionInfoActivity.kt:42-71`：只有 `result.onSuccess{...}`，**无 `onFailure` 分支**。**26.10.04 批次 1 已修**：补 `onFailure`（复位转圈 + `MsgUtil.err` + 空态），另加 `videoInfo.collection == null` 防御（原来 `collection!!` 在「视频不属于任何合集」时直接崩）。
+- [x] `activity/video/PopularActivity.kt:103-105`：catch 只 `runOnUiThread { MsgUtil.err(e) }`，不复位 `refreshing`。**26.10.04 批次 1 已修**：同时复位 `refreshing` 与 `swipeRefreshLayout`；顺带清掉 3 处 `Log.e("debug", …)` 与 `import android.util.Log`。
+- [x] `activity/video/series/SeriesInfoActivity.kt:35-37`：`seriesCover`/`seriesIntro`/`seriesTotal` **声明后从不赋值**（`onCreate` L43-46 只取 type/mid/sid/name）→ 简介恒「这里没有简介哦」、浏览量恒「共」、封面恒占位图、封面点击恒不触发。原 `activity2-report.md` M-24 已指出，仍未修。**26.10.04 批次 1 已修**：`adapter/video/SeriesCardAdapter.kt` 补 `cover`/`intro`/`total` 三个 `putExtra`，详情页读回，并补 `setOnEmptyRetry { loadData(1) }`。
+- [x] `activity/video/collection/CollectionInfoActivity.kt:38-39`：同类「复制粘贴忘接线」。**26.10.04 批次 1 已修**：`season_id`/`mid` 两个 extra **全库无任何 `putExtra` 方**（唯一入口 `activity/video/info/VideoInfoFragment.kt:571-572` 只传 `fromVideo`），确认死变量后删除。
+- [x] `activity/article/OpusInfoActivity.kt:89-95`：空函数体的幽灵 `@Subscribe(threadMode = ThreadMode.ASYNC, sticky = true, priority = 1) fun onEvent(event: ReplyEvent) {}`。**26.10.04 批次 1 已修**：改为 `replyFragment?.notifyReplyInserted(event)`，与 `activity/dynamic/DynamicInfoActivity.kt:77-80` 对齐（发评论后评论列表即时插入）。**勘误**：原条目后半句「`onDestroy()` 漏了 `TerminalContext.leaveDetailPage()`」**不成立** —— 全库不存在 `leaveDetailPage()` 方法，`TerminalContext` 只有 `enterVideoDetailPage`/`enterArticleDetailPage`/`enterOpusDetailPage`/`enterDynamicDetailPage`/`enterLiveDetailPage`，该半句作废。
 - [ ] `activity/settings/TestActivity.kt:105`：硬编码具体专栏 id `781871626480254985L`。同文件另有 `:177-179` POST `api.deepseek.com`（Debug-only 页面，优先级低）。
 - [ ] `activity/settings/TutorialManagerActivity.kt:120,128,298,311,328,343`：仍在读写新教程系统共用的 `tutorial_ver_$tag` 键，**会污染新系统已读状态**（改教程前先读 `docs/tutorial-system-redesign.md`）。
 - [x] `DownloadService.start()` 竞态 —— 26.10.02 修复轮次已改 `@JvmStatic @Volatile` + `@Synchronized`（见上方 P0 剩余 Critical）。
@@ -1120,17 +1120,17 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 | 台账编号 | 事项 | 结论 | 本报告对应位置 |
 |---|---|---|---|
 | A1 | csrf 实时化铺开到 11 个 api 类 | 想要实现 | 源自调研报告 §5.1（本报告未单列） |
-| A2 | `AnnouncementsActivity` 下拉刷新卡死 | 想要实现 | §五 P0 界面卡死 第 1 条 |
-| A3 | `PopularActivity` 不复位 refreshing | 想要实现 | §五 P0 界面卡死 第 3 条 |
-| A4 | `CollectionInfoActivity` 缺 onFailure + 死变量 | 想要实现 | §五 P0 界面卡死 第 2、5 条 |
-| A5 | `SeriesInfoActivity` 空字段 | 想要实现 | §五 P0 界面卡死 第 4 条 |
-| A6 | `OpusInfoActivity` 幽灵订阅 + 漏 `leaveDetailPage()` | 想要实现 | §五 P0 界面卡死 第 6 条 |
+| A2 | `AnnouncementsActivity` 下拉刷新卡死 | **已实现（26.10.04 批次 1）** | §五 P0 界面卡死 第 1 条 |
+| A3 | `PopularActivity` 不复位 refreshing | **已实现（26.10.04 批次 1）** | §五 P0 界面卡死 第 3 条 |
+| A4 | `CollectionInfoActivity` 缺 onFailure + 死变量 | **已实现（26.10.04 批次 1）** | §五 P0 界面卡死 第 2、5 条 |
+| A5 | `SeriesInfoActivity` 空字段 | **已实现（26.10.04 批次 1）** | §五 P0 界面卡死 第 4 条 |
+| A6 | `OpusInfoActivity` 幽灵订阅 | **已实现（26.10.04 批次 1）** | §五 P0 界面卡死 第 6 条（原「漏 `leaveDetailPage()`」半句已勘误作废） |
 | A7 | `SetupUIActivity` WebView 输入校验 | 暂缓 | §五 P0 功能正确性 末条 |
 | A8 | `TutorialManagerActivity` 教程键污染 | 暂缓 | §五 P0 界面卡死 第 8 条 |
 | A9 | `TestActivity` 硬编码专栏 id | 无计划 | §五 P0 界面卡死 第 7 条 |
 | A10 | 评论点踩死视图（`adapter/ReplyAdapter.kt:495`） | 想要实现 | 新增（本报告未列） |
-| A11 | 禁右滑主题被 `setTheme` 覆盖失效 | 想要实现 | 新增（与 issue #1 同源） |
-| A12 | `AsyncLayoutInflaterX` 生命周期 | 想要实现 | §五 P2 第 4 条 |
+| A11 | 禁右滑主题被 `setTheme` 覆盖失效 | **核实为已实现，原条作废** | 已由 issue #1 修复（见 §七），提交 `25e6886`、`20e69c1` |
+| A12 | `AsyncLayoutInflaterX` 生命周期 | **核实为已实现，原条作废** | 提交 `d676a77`；`BaseActivity.kt:353-358` 已调 `cancel()` |
 | C6b | 评论发图无进度 / 无反馈 | 想要实现 | 新增（发图本体已实现） |
 | E1 | 拆分 `PlayerActivity`（实测 3494 行） | 暂缓 | §五 P2 第 1 条 |
 | E2 | 拆分 `DownloadService` | 想要实现 | §五 P2 第 2 条 |
@@ -1151,6 +1151,42 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 单元测试实测 **21 个测试类 / 165 个用例**（原述 16 类 / 112 例）。
 - JVM 单测可用 `org.json`（`app/build.gradle` 已有 `testImplementation 'org.json:json:20231013'`），但**纯解析函数禁止调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 
-### 建议落地顺序（未拍板，仅供参考）
+### 建议落地顺序（26.10.04 已由项目所有者确认为 8 批）
 
-**A 组缺陷**（多为 10 分钟~半天，先还技术债）→ **性能三项**（B5 限推荐/热门/搜索三页 / B2 / B3）→ **私信与通知链**（C13 / C14 / C16）→ **动态与评论增强**（C3 置顶 / C8 置顶 / C4 / C7 / C9 / C10）→ **收藏与关注整理**（C18~C21）→ **大件**（F4 漫画）；E 组（E2~E6）作为穿插收尾。
+1. **A 组快修**：A2 A3 A4 A5 A6（+ 核实 A11 A12 已实现）→ **已完成，见 §十一**
+2. **A1** csrf 实时化铺开到 11 个 api 类 + **A10** 评论点踩
+3. **B1 B2 B3** + **B5**（限推荐/热门/搜索三页）+ **B8**
+4. **E4 E5 E6**
+5. **C12 C13 C14 C16**（私信与通知链）
+6. **C3 C4 C6b C7 C8 C9 C10 C27**
+7. **C18 C19 C20 C21**（收藏与关注整理）
+8. **E2** 拆分 `DownloadService` + **F4** 漫画（追漫列表 / 漫画详情 / 长条阅读器）
+
+**依赖约束**：C3 / C7 / C8 / C9 / C10 / C13 / C19 / C20 等写操作必须排在 **A1 csrf 实时化**之后，否则风控会 412。**E3 补单测贯穿每一批**，不单列。
+
+---
+
+## 十一、26.10.04 批次 1：A 组快修落地记录
+
+> 依据 §十「建议落地顺序」第 1 批。范围经源码核实后由 7 项缩为 **5 项**：A11、A12 经核实**早已实现**，原条目作废（依据见 §十「已核实为『已经实现』」与调研报告 §12.2）。
+
+### 修复明细
+
+| 台账编号 | 文件 | 改动 |
+|---|---|---|
+| A2 | `activity/settings/AnnouncementsActivity.kt` | 全量重写（原 33 行）：新增 `loadAnnouncements()` 统一装载；`setOnRefreshListener` + `setOnEmptyRetry`；`try/catch` 双路径都 `setRefreshing(false)`，失败时 `showEmptyView()` 并提示。**顺带发现**：该页此前**从未调用 `setOnRefreshListener`**，而 `activity/base/RefreshListActivity.kt:53` 默认把 `swipeRefreshLayout.isEnabled` 置为 `false`，所以它此前根本不能下拉刷新。 |
+| A3 | `activity/video/PopularActivity.kt` | catch 分支同时复位 `refreshing` 与 `swipeRefreshLayout.setRefreshing(false)`；清理 3 处遗留 `Log.e("debug", …)` 与 `import android.util.Log`。 |
+| A4 | `activity/video/collection/CollectionInfoActivity.kt` | 补 `onFailure`（复位转圈 + `MsgUtil.err` + 空态）；`collection` 由字段改为局部变量并做 null 防御（原来 `collection!!` 在「视频不属于任何合集」时直接崩）；删除 `season_id`/`mid` 两个死 extra（全库无 `putExtra` 方）；onCreate 补 `setOnEmptyRetry { recreate() }`。 |
+| A5 | `adapter/video/SeriesCardAdapter.kt` + `activity/video/series/SeriesInfoActivity.kt` | 跳转补 `cover`/`intro`/`total` 三个 `putExtra`，详情页读回；补 `setOnEmptyRetry { loadData(1) }`；顺带修掉 `getItemCount()` 的 `Condition is always 'true'` 编译警告。 |
+| A6 | `activity/article/OpusInfoActivity.kt` | 空函数体的幽灵 `@Subscribe` 改为 `replyFragment?.notifyReplyInserted(event)`，与 `activity/dynamic/DynamicInfoActivity.kt:77-80` 对齐。**勘误**：原条目「漏 `leaveDetailPage()`」不成立——全库不存在该方法。 |
+
+### 验证
+
+- `:app:testDebugUnitTest`：**21 个 XML，165 用例，0 失败**（未新增测试，本批为纯接线修复）。
+- `:app:assembleDebug`：BUILD SUCCESSFUL。
+- 本批未增删 `res/` 文件，故单次 gradle 调用即可，无需 clean 分两次。
+
+### 交叉引用
+
+- 调研报告 §12.2（A 组台账，已按本批结果更新）。
+- 本报告 §五「P0 界面卡死 / 未接线」6 条已全部勾除。

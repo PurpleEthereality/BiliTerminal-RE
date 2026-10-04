@@ -88,6 +88,10 @@ class OpusInfoActivity : BaseActivity() {
 
     @Subscribe(threadMode = ThreadMode.ASYNC, sticky = true, priority = 1)
     fun onEvent(event: ReplyEvent) {
+        // 与 activity/dynamic/DynamicInfoActivity.kt 对齐：发评论后把新评论插进评论列表。
+        // 此前这里是空函数体，文章/Opus 页发完评论看不到自己的评论（动态页可以）。
+        // ReplyFragment.notifyReplyInserted 内部会按 oid 过滤 + 切主线程，重复插入不是问题。
+        replyFragment?.notifyReplyInserted(event)
     }
 
     override fun onDestroy() {

@@ -2,7 +2,6 @@ package com.RobinNotBad.BiliClient.activity.video
 
 import android.annotation.SuppressLint
 import android.os.Bundle
-import android.util.Log
 import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -33,7 +32,6 @@ class PopularActivity : InstanceActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_simple_main_refresh)
         setMenuClick()
-        Log.e("debug", "进入热门页")
 
         recyclerView = findViewById(R.id.recyclerView)
         ImageAutoLoadScrollListener.install(recyclerView)
@@ -48,7 +46,6 @@ class PopularActivity : InstanceActivity() {
 
     @SuppressLint("NotifyDataSetChanged")
     private fun loadPopular() {
-        Log.e("debug", "刷新")
         page = 1
         if (firstRefresh) {
             recyclerView.layoutManager = CustomLinearManager(this)
@@ -65,7 +62,6 @@ class PopularActivity : InstanceActivity() {
     }
 
     private fun addPopular() {
-        Log.e("debug", "加载下一页")
         runOnUiThread { swipeRefreshLayout.setRefreshing(true) }
         try {
             val list = ArrayList<VideoCard>()
@@ -101,7 +97,14 @@ class PopularActivity : InstanceActivity() {
                 }
             }
         } catch (e: Exception) {
-            runOnUiThread { MsgUtil.err(e) }
+            runOnUiThread {
+                // 失败时必须同时复位「转圈」和 refreshing 两个状态：
+                // 此前只弹了错误提示，swipeRefreshLayout 会一直转，refreshing 也永远是 true，
+                // 于是 onScrolled 里的 !refreshing 判定让「加载更多」被永久锁死。
+                refreshing = false
+                swipeRefreshLayout.setRefreshing(false)
+                MsgUtil.err(e)
+            }
         }
     }
 }

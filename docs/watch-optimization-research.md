@@ -601,17 +601,17 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | 编号 | 事项 | 结论 | 依据 / 备注 |
 |---|---|---|---|
 | A1 | csrf 实时化铺开到 11 个 api 类 | 想要实现 | §5.1；目前只有 `api/HistoryApi.java` 改成实时派生，其余仍读启动快照 |
-| A2 | `AnnouncementsActivity` 下拉刷新卡死 | 想要实现 | catch 分支缺 `setRefreshing(false)`（§5.2） |
-| A3 | `PopularActivity` 不复位 refreshing | 想要实现 | catch 只 `MsgUtil.err(e)`（§5.2） |
-| A4 | `CollectionInfoActivity` 缺 onFailure + 死变量 | 想要实现 | `activity/video/collection/CollectionInfoActivity.kt:42-71` 只有 `onSuccess`；`:37-39` 的 `seasonId`/`mid` 是死变量；唯一入口 `activity/video/info/VideoInfoFragment.kt:571-572` 只传 `fromVideo` |
-| A5 | `SeriesInfoActivity` 封面/简介/总数恒空 | 想要实现 | 数据其实在上游：`adapter/video/SeriesCardAdapter.kt:29-38`（源自 `api/SeriesApi.java:138-141`），但跳转只 putExtra `type`/`mid`/`sid`/`name`；`activity/video/series/SeriesInfoActivity.kt:35-37` 声明后 `:43-46` 不读，`:139-141`/`:150` 却拿去渲染。修法 = 补 putExtra + 读回，约 20 分钟，不需要新接口 |
-| A6 | `OpusInfoActivity` 幽灵空 `@Subscribe` + 漏 `leaveDetailPage()` | 想要实现 | 空函数体订阅是死代码；`onDestroy` 未调 `leaveDetailPage()`（对照 `DynamicInfoActivity` / `LiveInfoActivity` 均已调用） |
+| A2 | `AnnouncementsActivity` 下拉刷新卡死 | **已实现（26.10.04 批次 1）** | catch 分支缺 `setRefreshing(false)`（§5.2）；顺带发现该页**从未接下拉刷新**（`RefreshListActivity.kt:53` 默认 disabled），已一并接上 `setOnRefreshListener` + `setOnEmptyRetry` |
+| A3 | `PopularActivity` 不复位 refreshing | **已实现（26.10.04 批次 1）** | catch 只 `MsgUtil.err(e)`（§5.2）；已同时复位 `refreshing` 与转圈，并清掉 3 处 `Log.e("debug", …)` |
+| A4 | `CollectionInfoActivity` 缺 onFailure + 死变量 | **已实现（26.10.04 批次 1）** | `:42-71` 只有 `onSuccess`；`:37-39` 的 `seasonId`/`mid` 是死变量（全库无 putExtra 方）；已补 `onFailure` + `collection` 空值防御（原来 `collection!!` 在无合集视频上会崩）+ `setOnEmptyRetry` |
+| A5 | `SeriesInfoActivity` 封面/简介/总数恒空 | **已实现（26.10.04 批次 1）** | `adapter/video/SeriesCardAdapter.kt` 增加 `cover`/`intro`/`total` 三个 putExtra，详情页读回 + 补 `setOnEmptyRetry` |
+| A6 | `OpusInfoActivity` 幽灵空 `@Subscribe` | **已实现（26.10.04 批次 1）** | 空函数体订阅已改为 `replyFragment?.notifyReplyInserted(event)`（与 `DynamicInfoActivity.kt:77-80` 对齐）。**勘误**：原依据「漏 `leaveDetailPage()`」不成立——全库不存在该方法（`TerminalContext` 只有 `enterXxxDetailPage`），该半句作废 |
 | A7 | `SetupUIActivity` WebView 输入校验 | 暂缓 | `activity/settings/setup/SetupUIActivity.kt:79,86,92` |
 | A8 | `TutorialManagerActivity` 读写 `tutorial_ver_$tag` 污染新教程系统 | 暂缓 | 与 `tutorial/Tutorials.kt` 的已读记账互相覆盖 |
 | A9 | `TestActivity:105` 硬编码专栏 id | 无计划 | 仅调试页，收益极低 |
 | A10 | 评论点踩死视图 | 想要实现 | `adapter/ReplyAdapter.kt:495` |
-| A11 | 禁右滑主题被 `setTheme` 覆盖失效 | 想要实现 | issue #1 |
-| A12 | `AsyncLayoutInflaterX` 生命周期 | 想要实现 | `cancel()` 无任何调用点 |
+| A11 | 禁右滑主题被 `setTheme` 覆盖失效 | **核实为已实现，原条作废** | 已由 issue #1 修复：`activity/base/BaseActivity.kt:78-82` 按「禁用返回键」改用 noSwipe 主题，`ui/appearance/ColorScheme.kt:527`/`:544` 提供 `themeResId(theme, noSwipe)` 与 7 套 `*.NoSwipe.AppCompat`；`activity/player/PlayerActivity.kt:414-419` 同样处理。提交 `25e6886`、`20e69c1` |
+| A12 | `AsyncLayoutInflaterX` 生命周期 | **核实为已实现，原条作废** | `activity/base/BaseActivity.kt:66-70` 持有 `pendingAsyncInflater`，`:353-358 onDestroy()` 调用 `cancel()`；`util/AsyncLayoutInflaterX.java:261 public void cancel()`、`:78-84` 已 cancel/已销毁时丢弃结果。提交 `d676a77` |
 
 ### 12.3 B 组：性能 / 体积 / 启动
 
