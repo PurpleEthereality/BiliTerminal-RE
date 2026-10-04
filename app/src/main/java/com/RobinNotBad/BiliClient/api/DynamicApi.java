@@ -203,6 +203,66 @@ public class DynamicApi {
     }
 
     /**
+     * 置顶 / 取消置顶一条自己的动态。
+     *
+     * <p>两个接口只差路径上的一段：{@link #topPath}。正文都是 {@code {"dyn_str": "<id>"}}，
+     * csrf 走 query；服务端还要求 Cookie 里 {@code buvid3} 非空（登录时 {@code api/CookiesApi.java} 会补齐）。
+     *
+     * @param dynId 动态 id
+     * @param top   true 置顶、false 取消置顶
+     * @return 服务端 code，0 为成功
+     */
+    public static int setDynamicTop(long dynId, boolean top) throws IOException, JSONException {
+        String url = "https://api.bilibili.com/x/dynamic/feed/" + topPath(top)
+                + "?csrf=" + NetWorkUtil.currentCsrf();
+        JSONObject body = new JSONObject().put("dyn_str", String.valueOf(dynId));
+        Response resp = Objects.requireNonNull(NetWorkUtil.postJson(url, body.toString()));
+        ResponseBody responseBody = resp.body();
+        if (responseBody == null) return -1;
+        JSONObject result = new JSONObject(responseBody.string());
+        return result.optInt("code", -1);
+    }
+
+    /**
+     * 置顶与取消置顶的接口路径片段。抽出来是为了能单测，而不用真的请求网络。
+     */
+    public static String topPath(boolean top) {
+        return top ? "space/set_top" : "space/rm_top";
+    }
+
+    /**
+     * 置顶 / 取消置顶成功后的提示文案。
+     */
+    public static String topSuccessMsg(boolean top) {
+        return top ? "置顶成功~" : "已取消置顶~";
+    }
+
+    /**
+     * 置顶 / 取消置顶失败时给用户看的文案。
+     *
+     * @param code 服务端 code
+     * @return code 为 0 时返回空串
+     */
+    public static String topErrorMsg(int code) {
+        switch (code) {
+            case 0:
+                return "";
+            case -101:
+                return "还没有登录喵~";
+            case -102:
+            case -111:
+                return "登录凭证已失效，请重新登录";
+            case 4100001:
+                return "动态 id 不对，请刷新后重试";
+            case -404:
+                return "动态不存在，可能已经被删除了";
+            default:
+                return "操作失败（错误码 " + code + "）";
+        }
+    }
+
+
+    /**
      * 拼上传 id，格式与上游一致：{@code mid_秒级时间戳_四位随机数}。
      * 抽出来是为了能单测格式，而不用真的请求网络。
      */

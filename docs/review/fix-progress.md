@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1898,5 +1898,54 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 调研报告 §12.4 的 C7 行已改写为「已实现（对齐 PiliPlus）」，C8 行同步说明删除入口已改为管理菜单；`docs/architecture-map.md` 新增 §7.19。
 - 接口依据：PiliPlus `DynamicsHttp.editDyn`（`/x/dynamic/feed/edit/dyn`）；本地快照 `bilibili-API/docs/opus/features.md:25` 与 `data.module_more.three_point_items[]` 证明服务端会下发 `THREE_POINT_EDIT`。
 - 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（§二十一）→ C7（本条）→ C8 → C9 → C10 → C27。
+
+---
+
+## 二十三、26.10.04 批次 6（5/8）：动态置顶与取消置顶（C8）
+
+### 为什么做
+
+`model/Dynamic.java` 的 `isTop` 从动态解析里就有（读 `module_tag.text == "置顶"`），但**全库没有一处 UI 读它**，用户既看不到「这条是置顶」也改不了置顶状态。C7 刚把列表项入口换成了「管理」菜单，正好把置顶放进去——这也是 C7 那条改动预留的位置。
+
+### 改动表
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/DynamicApi.java` | 新增 `setDynamicTop(long dynId, boolean top)`（`POST /x/dynamic/feed/space/set_top` 或 `/rm_top`，正文 `{"dyn_str":"<id>"}`、csrf 走 query）；新增纯函数 `topPath(boolean)`、`topSuccessMsg(boolean)`、`topErrorMsg(int)` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/DynamicHolder.kt` | `showManageMenu` 增加 `onChanged` 参数；新增置顶菜单项（按 `isTop` 切「置顶动态/取消置顶」，门槛 `canDelete`）与 `toggleTop(activity, dynamic, onChanged)`；列表版监听器把 `onChanged` 接成 `notifyItemChanged` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/dynamic/DynamicInfoFragment.kt` | 详情版监听器加 `onChanged`，置顶成功后原地重画这张卡片 |
+
+### 取舍
+
+- **置顶入口的门槛用 `canDelete`**：客户端拿不到「这条是不是我的」之外更可靠的信号（别人的动态不下发 `THREE_POINT_DELETE`，且置顶只对自己的空间有意义），所以用同一个开关当门槛，并写在注释里。
+- **成功后本地翻 `isTop` 并刷新那一条**：服务端只回 `code`，不回新动态；不刷新的话用户再次长按看到的还是旧文案。首页/空间里的「置顶」标记来自服务端 `module_tag`，下拉刷新会回到真实状态。
+- **不做「置顶到空间顶部」那种二次确认**：置顶可逆、且再置顶会顶掉原来那条是服务端行为，菜单里已经是显式点选，不再多一层弹窗。
+- **不换删除接口**：新版是 `/x/dynamic/feed/operate/remove`，与本条无关，`deleteDynamic` 仍是老的 `rm_dynamic`。
+
+### 单测
+
+`api/DynamicApiTest.kt` +5 例：`topPath_switchesBetweenSetAndRemoveTop`、`topSuccessMsg_matchesTheDirection`、`topErrorMsg_successIsEmpty`、`topErrorMsg_explainsKnownCodes`（-101 / -102 / -111 / 4100001 / -404）、`topErrorMsg_unknownCodeStillShowsTheCode`。
+
+### 验证
+
+`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → BUILD SUCCESSFUL；`app/build/test-results/testDebugUnitTest` **31 个 XML / 257 个用例 / 0 失败 / 0 错误**（C7 后 252 例，本次 +5 例）。
+
+### 真机验证清单
+
+1. 自己的动态长按（或点「管理」）→ 菜单里有「置顶动态」；别人的动态**没有**这一项。
+2. 点「置顶动态」→ 弹「置顶成功~」，该条刷新后带「置顶」标记。
+3. 再长按同一条 → 菜单文案变成「取消置顶」。
+4. 点「取消置顶」→ 弹「已取消置顶~」，标记消失。
+5. 置顶 A 再置顶 B → A 的置顶被顶掉（服务端只保留一条），下拉刷新后与页面显示一致。
+6. 在**别人的空间**（用户动态页）长按自己的动态 → 菜单与上面一致，不崩。
+7. 断网 / 凭证过期时点置顶 → 弹「操作过于频繁」「登录凭证已失效，请重新登录」之类的文案，**本地 `isTop` 不变**。
+8. 详情页里做置顶 → 原地重画且标记正确。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C8 行改为「已全部实现」；`docs/architecture-map.md` §7.19 补了置顶这一段。
+- 接口依据：`bilibili-API/docs/dynamic/action.md:233-292`（set_top）、`:294-317`（rm_top），两处正文参数都只有 `dyn_str`。
+- 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（§二十一）→ C7（§二十二）→ C8（本条）→ C9 → C10 → C27。
+
 
 

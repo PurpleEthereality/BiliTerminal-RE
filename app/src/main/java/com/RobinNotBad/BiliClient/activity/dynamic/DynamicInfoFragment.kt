@@ -78,6 +78,10 @@ class DynamicInfoFragment : BaseFragment() {
                 // 详情页只有这一条动态，改完直接把这一张卡片重画一遍
                 dynamic!!.content = newText
                 holder.showDynamic(requireContext(), dynamic!!, false)
+            },
+            onChanged = {
+                // 置顶状态变了：重画这张卡片，让「置顶」标记跟上
+                holder.showDynamic(requireContext(), dynamic!!, false)
             }
         )
         holder.item_dynamic_delete?.setOnLongClickListener(onManageClick)

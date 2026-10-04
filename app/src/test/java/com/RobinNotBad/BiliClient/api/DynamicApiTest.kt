@@ -51,4 +51,38 @@ class DynamicApiTest {
         assertTrue(msg.contains("12345"))
         assertTrue(msg.contains("失败"))
     }
+
+    @Test
+    fun topPath_switchesBetweenSetAndRemoveTop() {
+        assertEquals("space/set_top", DynamicApi.topPath(true))
+        assertEquals("space/rm_top", DynamicApi.topPath(false))
+    }
+
+    @Test
+    fun topSuccessMsg_matchesTheDirection() {
+        assertEquals("置顶成功~", DynamicApi.topSuccessMsg(true))
+        assertEquals("已取消置顶~", DynamicApi.topSuccessMsg(false))
+    }
+
+    @Test
+    fun topErrorMsg_successIsEmpty() {
+        assertTrue(DynamicApi.topErrorMsg(0).isEmpty())
+    }
+
+    @Test
+    fun topErrorMsg_explainsKnownCodes() {
+        assertTrue(DynamicApi.topErrorMsg(-101).contains("登录"))
+        for (code in intArrayOf(-102, -111)) {
+            assertTrue(DynamicApi.topErrorMsg(code).contains("重新登录"))
+        }
+        assertTrue(DynamicApi.topErrorMsg(4100001).contains("id"))
+        assertTrue(DynamicApi.topErrorMsg(-404).contains("已经"))
+    }
+
+    @Test
+    fun topErrorMsg_unknownCodeStillShowsTheCode() {
+        val msg = DynamicApi.topErrorMsg(999)
+        assertTrue(msg.contains("999"))
+        assertTrue(msg.contains("失败"))
+    }
 }

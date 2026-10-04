@@ -93,6 +93,7 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
             activity: BaseActivity, dynamicList: List<Dynamic>,
             finalPosition: Int, adapter: RecyclerView.Adapter<RecyclerView.ViewHolder>, showRecentUp: Boolean
         ): View.OnLongClickListener {
+            val offset = if (showRecentUp) 2 else 1
             return View.OnLongClickListener {
                 showManageMenu(
                     activity, dynamicList[finalPosition],
@@ -101,8 +102,9 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
                         // 只换正文（不重建 Span）是因为正文之外的东西本来也没法只靠一段字符串还原，
                         // 下次刷新会从服务端取回真正的内容。
                         dynamicList[finalPosition].content = newText
-                        adapter.notifyItemChanged(finalPosition + if (showRecentUp) 2 else 1)
+                        adapter.notifyItemChanged(finalPosition + offset)
                     },
+                    onChanged = { adapter.notifyItemChanged(finalPosition + offset) },
                     onDeleted = { removeDynamicFromList(dynamicList, finalPosition, adapter, showRecentUp) }
                 )
                 true
@@ -118,9 +120,17 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
         fun getManageListener(
             activity: BaseActivity, dynamic: Dynamic, onEdited: ((String) -> Unit)?
         ): View.OnLongClickListener {
+            return getManageListener(activity, dynamic, onEdited, null)
+        }
+
+        @JvmStatic
+        fun getManageListener(
+            activity: BaseActivity, dynamic: Dynamic,
+            onEdited: ((String) -> Unit)?, onChanged: (() -> Unit)?
+        ): View.OnLongClickListener {
             return View.OnLongClickListener {
                 showManageMenu(
-                    activity, dynamic, onEdited,
+                    activity, dynamic, onEdited, onChanged,
                     onDeleted = {
                         // 详情页沿用「改动完就带着结果退出去」的既有约定
                         activity.setResult(
@@ -140,17 +150,25 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
          *
          * <p>只在服务端下发的三点菜单允许时才给出对应项：`canEdit` 对应 THREE_POINT_EDIT、
          * `canDelete` 对应 THREE_POINT_DELETE，两个开关是独立的，不能互相顶替。
+         * 「置顶 / 取消置顶」只对自己的动态有意义，而「自己的动态」在客户端能拿到的唯一可靠信号
+         * 就是 `canDelete`（别人的动态不会下发 THREE_POINT_DELETE），所以用它当门槛。
          *
-         * @param onEdited  编辑成功后怎么刷新界面（可为 null，表示只弹提示）
+         * @param onEdited  编辑成功后怎么把新正文刷到界面上（可为 null，表示只弹提示）
+         * @param onChanged 置顶状态变掉后怎么刷新这一条（可为 null）
          * @param onDeleted 删除成功后怎么从界面里拿掉这条动态
          */
         @JvmStatic
         fun showManageMenu(
             activity: BaseActivity, dynamic: Dynamic,
-            onEdited: ((String) -> Unit)?, onDeleted: () -> Unit
+            onEdited: ((String) -> Unit)?, onChanged: (() -> Unit)?, onDeleted: () -> Unit
         ) {
             val actions = ArrayList<Pair<String, () -> Unit>>()
             if (dynamic.canEdit) actions.add("编辑动态" to { launchEdit(activity, dynamic, onEdited) })
+            if (dynamic.canDelete) {
+                actions.add((if (dynamic.isTop) "取消置顶" else "置顶动态") to {
+                    toggleTop(activity, dynamic, onChanged)
+                })
+            }
             if (dynamic.canDelete) actions.add("删除动态" to { confirmDelete(activity, dynamic, onDeleted) })
             if (actions.isEmpty()) {
                 MsgUtil.showMsg("没有可操作的项")
@@ -174,6 +192,33 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
             intent.putExtra("edit_dyn_id", dynamic.dynamicId)
             intent.putExtra("edit_text", text)
             activity.editDynamicLauncher.launch(intent)
+        }
+
+        /**
+         * 置顶 / 取消置顶。
+         *
+         * <p>服务端在空间里只保留一条置顶（再置顶会顶掉原来那条），所以这里只需按当前状态取反。
+         * 成功后本地立刻翻 `isTop` 并刷新——首页/空间列表的「置顶」标记来自服务端下发的
+         * `module_tag`，不刷新的话用户下一次长按菜单还是旧文案。
+         */
+        private fun toggleTop(activity: BaseActivity, dynamic: Dynamic, onChanged: (() -> Unit)?) {
+            val top = !dynamic.isTop
+            CenterThreadPool.run {
+                try {
+                    val code = DynamicApi.setDynamicTop(dynamic.dynamicId, top)
+                    activity.runOnUiThread {
+                        if (code == 0) {
+                            dynamic.isTop = top
+                            onChanged?.invoke()
+                            MsgUtil.showMsg(DynamicApi.topSuccessMsg(top))
+                        } else {
+                            MsgUtil.showMsg(DynamicApi.topErrorMsg(code).ifEmpty { "操作失败（$code）" })
+                        }
+                    }
+                } catch (e: Exception) {
+                    activity.runOnUiThread { MsgUtil.err(e) }
+                }
+            }
         }
 
         private fun confirmDelete(activity: BaseActivity, dynamic: Dynamic, onDeleted: () -> Unit) {
