@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
-> 更新日期：2026-09-24
-> 基线：`docs/review/00-summary.md`（基于 26.08.27 快照，共 286 个问题）
+> 更新日期：2026-10-04
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -868,6 +868,21 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - [x] 圆屏适配开启后顶栏 ClassCastException 崩溃：`BaseActivity.setRound()` 硬编码 RelativeLayout.LayoutParams（26.09.11 已修，第二十八轮）
 - [x] `NoSuchMethodError: View.hasOnLongClickListeners()`：部分手表框架裁掉了该 API，`onStart` 必崩（26.09.13 已修，第二十九轮，改反射探测 + 降级）
 - [ ] WebView 输入校验缺失：`SetupUIActivity.kt:79,86,92`
+
+### P0 界面卡死 / 未接线（26.10.04 由旧报告迁移，逐条已重核源码）
+
+> 来源：原 `docs/review/cleanup-scan.md` §7「顺带发现的真实缺陷」。该报告已删除，此节为其唯一存续处。
+> 行号按 **26.10.03（c98aa7f）** 工作区重新核实，与旧报告行号有漂移。
+
+- [ ] `activity/settings/AnnouncementsActivity.kt:27-30`：catch 只有 `report(e)` + `MsgUtil.showMsg(...)`，**无 `setRefreshing(false)`** → 下拉刷新永久卡死（违反 `AGENTS.md` 硬约定）。**注**：同批的 `activity/message/NoticeActivity.kt` 已在 `:80/:88/:104/:132/:145/:155` 全面复位，故本项只剩 AnnouncementsActivity 一处。
+- [ ] `activity/video/collection/CollectionInfoActivity.kt:42-71`：只有 `result.onSuccess{...}`，**无 `onFailure` 分支**。
+- [ ] `activity/video/PopularActivity.kt:103-105`：catch 只 `runOnUiThread { MsgUtil.err(e) }`，不复位 `refreshing`。
+- [ ] `activity/video/series/SeriesInfoActivity.kt:35-37`：`seriesCover`/`seriesIntro`/`seriesTotal` **声明后从不赋值**（`onCreate` L43-46 只取 type/mid/sid/name）→ 简介恒「这里没有简介哦」、浏览量恒「共」、封面恒占位图、封面点击恒不触发。原 `activity2-report.md` M-24 已指出，仍未修。
+- [ ] `activity/video/collection/CollectionInfoActivity.kt:38-39`：同类「复制粘贴忘接线」。
+- [ ] `activity/article/OpusInfoActivity.kt:89-95`：空函数体的幽灵 `@Subscribe(threadMode = ThreadMode.ASYNC, sticky = true, priority = 1) fun onEvent(event: ReplyEvent) {}`，且 `onDestroy()` 只有 super，**漏了 `TerminalContext.leaveDetailPage()`**（`DynamicInfoActivity:82-85`、`LiveInfoActivity:255-258` 都调了）。
+- [ ] `activity/settings/TestActivity.kt:105`：硬编码具体专栏 id `781871626480254985L`。同文件另有 `:177-179` POST `api.deepseek.com`（Debug-only 页面，优先级低）。
+- [ ] `activity/settings/TutorialManagerActivity.kt:120,128,298,311,328,343`：仍在读写新教程系统共用的 `tutorial_ver_$tag` 键，**会污染新系统已读状态**（改教程前先读 `docs/tutorial-system-redesign.md`）。
+- [x] `DownloadService.start()` 竞态 —— 26.10.02 修复轮次已改 `@JvmStatic @Volatile` + `@Synchronized`（见上方 P0 剩余 Critical）。
 
 ### P1 架构清理
 

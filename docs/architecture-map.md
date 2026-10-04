@@ -1,8 +1,8 @@
 # ReBiliClient 架构通读（为改功能准备）
 
-> 通读日期：当前 `main` 分支工作区（`versionName 26.09.08`）
+> 通读日期：当前 `main` 分支工作区（`versionName 26.10.03`），26.10.04 复核
 > 目的：改功能前先摸清**真实**架构。本文结论均基于逐文件读源码核实；`AGENTS.md` 已按本文事实重写。
-> 配套阅读：`docs/review/00-summary.md`（286 条问题清单）、`docs/review/fix-progress.md`（修复进度）、`docs/tutorial-system-redesign.md`（教程系统重做，进行中）
+> 配套阅读：`docs/review/fix-progress.md`（修复进度 + 待办总台账）、`docs/tutorial-system-redesign.md`（教程系统重做，进行中）
 
 ---
 
@@ -15,8 +15,8 @@
 | `network/api/`（Retrofit + kotlinx-serialization） | 目录**空**，0 个文件 |
 | `di/`（Hilt） | 目录**空**，0 个文件 |
 | `data/repository/` | 目录**空**，0 个文件 |
-| `ui/*`（ViewModel/MVVM） | 只有 `ui/appearance/`（26.09.11 新增，4 个文件：`AppearanceManager.kt` / `ColorScheme.kt` / `CornerStyle.kt` / `FontStyle.kt`）+ `ui/widget/`（12 个文件）。`ui/theme/` **已并入 `ui/appearance/`**（原 `ThemeManager.kt` → `ColorScheme.kt`）；其余 `ui/base`、`ui/player`、`ui/video/viewmodel` 等子目录**已全部删除** |
-| `BiliTerminalApp.kt`（@HiltAndroidApp）为入口 | **死代码**。Manifest 指向 `.BiliTerminal`（26.09.10 起是 Kotlin，原先为 `.java`），该类从未被实例化 |
+| `ui/*`（ViewModel/MVVM） | 只有 `ui/appearance/`（26.09.11 新增，现 5 个文件：`AppearanceManager.kt` / `ColorScheme.kt` / `CornerStyle.kt` / `FontStyle.kt` / `AppearanceApplier.kt`）+ `ui/widget/`（12 个文件）。`ui/theme/` **已并入 `ui/appearance/`**（原 `ThemeManager.kt` → `ColorScheme.kt`）；其余 `ui/base`、`ui/player`、`ui/video/viewmodel` 等子目录**已全部删除** |
+| `BiliTerminalApp.kt`（@HiltAndroidApp）为入口 | **该类已于 26.10.02 整体删除**。Manifest 指向 `.BiliTerminal`（26.09.10 起是 Kotlin，原先为 `.java`）；它从未被实例化，只因 `SplashActivity` 的 UETool 逻辑引用其静态方法与常量而残留，那些已移入 `BiliTerminal.kt` 伴生对象 |
 
 **核实方式**：全工程 `grep '@AndroidEntryPoint|@HiltViewModel|@Inject|@Module|@InstallIn'` → **0 命中**；空目录统计 → **24 个**（26.09.11 已全部删除）。
 
@@ -284,8 +284,8 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 ### 7.3 结构性风险（改功能时容易放大）
 
 - **巨型类**：`activity/player/PlayerActivity.kt` 127 KB、`service/DownloadService.kt` 65 KB、`activity/video/ShortVideoPlayerActivity.kt` 35 KB。改播放/下载相关功能前先想清楚在哪个位置插入。
-- **两套 Application 静态状态并存**：`BiliTerminal.context/instance`（活的）与 `BiliTerminalApp.context/appInstance`（死的）。**新代码一律用 `BiliTerminal`**，别碰 `BiliTerminalApp`（除 `SplashActivity` 里 UETool 那几行历史遗留）。
-- **测试覆盖极低**：`app/src/test/` 17 个文件（16 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **112 个用例**，对 363 个源文件。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`NetWorkUtilTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
+- **Application 静态状态已收敛为一套**：26.10.02 起只有 `BiliTerminal.context` / `BiliTerminal.instance`（`BiliTerminal.kt` 伴生对象 `@JvmField`，`:43-44`），`BiliTerminalApp` 已整文件删除。**新代码一律用 `BiliTerminal`**。
+- **测试覆盖仍偏低**：`app/src/test/` 20 个文件（19 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **147 个用例**，对 364 个源文件（26.10.04 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`NetWorkUtilTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
 - **主题色表带缓存，失效点只有一处**：`ColorScheme.getCurrentTheme()`（26.09.11 起）缓存当前色表，**只由 `AppearanceManager.setTheme()` 经 `ColorScheme.invalidateCache()` 置空**。这是刻意的——36 个属性 getter 全走它，而列表滚动时一个 item 要调多次，此前每次都重读 SharedPreferences（热路径重复 IO）。**若将来给主题 key 增加第二个写入路径（比如直接 `SharedPreferencesUtil.putString(SettingsKeys.THEME, …)`），必须同步调用 `ColorScheme.invalidateCache()`，否则改主题后色表不跟着变且在 `onResume` 重建后依然错**。守卫测试：`ColorSchemeTest.themeCache_isInvalidatedOnEverySetTheme`、`colorGetters_doNotTouchSharedPreferencesAfterFirstRead`。
 - **主题体系有 3 个"裸 Activity"不参与**：`SplashActivity`、`GetIntentActivity` 不继承 `BaseActivity`（开屏/外链恒定 B站粉），`PlayerActivity` 自己 `setTheme` 但**不调 `applyWindowTheme`、也不参与 `onResume` 主题检测**。改主题相关行为时别以为全局都生效了。
 - **文案硬编码**：遗留页面标题/Toast 直接写中文字符串（Manifest 里 `android:label` 也是中文），只有设置页用 `desc_*` 资源。改文案按现有风格来，别顺手抽 `strings.xml`。
@@ -420,8 +420,7 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 
 ### 8.4b 重复项合并后的公共落点（26.09.11 新增，别再手抄）
 
-做「重复代码合并」时把 6 类重复收敛成了下列单一落点。**要写这几件事时直接用它们，不要重新手抄一份**；
-合并的来龙去脉与逐项证据见 `docs/review/cleanup-progress.md`。
+做「重复代码合并」时把 6 类重复收敛成了下列单一落点。**要写这几件事时直接用它们，不要重新手抄一份**。
 
 | 落点 | 取代了 | 说明 |
 |---|---|---|
@@ -457,7 +456,7 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 
 ### 8.6 新增一个设置项的完整链路
 
-设置项 key 有**两套定义处**，新增时统一加在 `util/SettingsKeys.kt`（`SharedPreferencesUtil` 里那 38 个常量是历史遗留，不要重复声明）：
+设置项 key 有**两套定义处**，新增时统一加在 `util/SettingsKeys.kt`（`SharedPreferencesUtil` 里那 36 个常量是历史遗留，不要重复声明）：
 
 1. `util/SettingsKeys.kt` 加 `const val XXX = "xxx"`。
 2. 对应设置页加条目：`activity/settings/SettingGroupActivity.kt`（字符串驱动，按 `desc_*` 惯例加资源；这是**唯一**该动 `strings.xml` 的地方）。
@@ -484,7 +483,7 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 | `ColorScheme.kt` | 配色：7 套主题（**只读模块**，原 `ui/theme/ThemeManager.kt`） | `theme_selector` | 7 套 |
 | `CornerStyle.kt` | 卡片圆角 | `ui_corner_radius` | `square`（默认）/ `rounded` |
 | `FontStyle.kt` | 自定义字体（用户从文件管理器选字体文件） | `ui_font_path` | 有 / 无（默认无） |
-| `CustomFont.kt` | 把自定义字体套到视图上 | — | — |
+| `AppearanceApplier.kt` | 把外观（自定义字体等）落到视图树上：`applyToContentView`，由 `BaseActivity.kt:377` 调用 | — | — |
 
 **分层约定（别打破）**
 - **模块**（`CornerStyle`/`FontStyle`）只放：候选值常量、显示名、纯函数（规整、档位→数值）、读取。
@@ -494,8 +493,8 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 **版本号机制**：`AppearanceManager.version()` 是一个存在 SharedPreferences 的 Int，
 任何外观写入都 +1。Activity 只需记住自己创建时的版本号、`onResume` 比一次，
 就知道要不要重建——**不会随模块增加而增加比较项**（新增第 4 个模块不需要改 `BaseActivity`）。
-> 现状：`BaseActivity` 仍在比它自己的 `appliedTheme` 字符串，**尚未接入版本号**；
-> 接入随「圆角模块落地」一起做。
+> 现状（26.10.04 复核）：**已接入**——`BaseActivity.kt:93` 在 `onCreate` 记录 `appliedAppearanceVersion = AppearanceManager.version()`，
+> `onResume`（`:340`）发现版本号变化即 `recreate()`。新增外观模块不用改 `BaseActivity`。
 
 **两条不可破坏的性能约定**
 1. **未启用自定义字体 = 渲染路径零开销**：`FontStyle.typeface()` 返回 null 时
@@ -592,9 +591,9 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 ---
 
-## 9. API 层映射表（41 个类，改功能时定位用）
+## 9. API 层映射表（40 个类，改功能时定位用）
 
-按功能域分组。`api/` 下 39 个 Java + 2 个 Kotlin（`HotSearchApi.kt`、`ShortVideoFeedApi.kt`）。
+按功能域分组。`api/` 下 38 个 Java + 2 个 Kotlin（`HotSearchApi.kt`、`ShortVideoFeedApi.kt`）。
 
 ### 视频与播放
 
@@ -661,7 +660,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 ### 网络出口的 3 个例外
 
-41 个类里只有 3 处**绕过** `NetWorkUtil` 自建 Request，因此不受它的解压/重试/Cookie 管理保护：
+40 个类里只有 3 处**绕过** `NetWorkUtil` 自建 Request，因此不受它的解压/重试/Cookie 管理保护：
 
 1. `ReplyApi.java:190-208` `uploadReplyImage`（multipart，不处理 br/gzip）
 2. `UserInfoApi.java:291-303` `updateUserInfo`（自带 `decompressResponse`）
@@ -676,16 +675,16 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 **不可单测**（内部发网络 / 依赖 Context / 弹 UI）：`DynamicApi.analyzeDynamic`、`MessageApi` 全部解析（SpannableString）、`PrivateMsgApi.getPrivateMsgList`、`LikeCoinFavApi.getVideoStats`。
 
-**测试覆盖现状**：`app/src/test/` 15 个测试类 / 107 用例，api 层只有 3 个类的 3 个解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`）；`ui/appearance/` 下有 4 个测试类共 48 个用例——`ColorSchemeTest`（14）覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest`（10）覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest`（13）覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest`（11）覆盖外观版本号与唯一写入入口。
+**测试覆盖现状（26.10.04 实测）**：`app/src/test/` 19 个测试类 / 147 个用例，api 层只有 4 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口。
 
 ### API 层的坑
 
 1. **解析里发网络**：`DynamicApi.java:482` 在 `analyzeDynamic` 内调 `BangumiApi.getMdidFromEpid`；`PrivateMsgApi.java:54,70` 在解析里调 `UserInfoApi` → 无法纯测 + N+1 请求。
 2. **解析依赖 UI/Context**：`DynamicApi.java:685`（`BiliTerminal.context`）、`MessageApi.java:128/145/232/320`（SpannableString）、`LikeCoinFavApi.java:71`（弹窗）、`AppInfoApi.java:33-85`（网络 + SharedPreferences + 弹窗混在一起）。
 3. **api 类做 UI 跳转/下载**：`PlayerApi.java:44-51`（startActivity）、`53-99`（DownloadService）、`339-415`（拼 Intent）。
-4. **重复实现**：视频卡片解析 **19 处**（`RankingApi`、`RecommendApi`×4、`WatchLaterApi`、`SearchApi`×2、`SeriesApi`、`FavoriteApi`×2、`UserInfoApi`、`HistoryApi`、`BangumiApi`、`MessageApi`×3、`DynamicApi`、`VideoInfo.java`；逐处证据见 `docs/review/cleanup-scan.md`。**本节此前写的「7 份」是过时数据**）；`ReplyApi.sendReply` 两份；`DanmakuApi` 发送两份；`VideoInfoApi.getVideoInfo` 两份；解压逻辑 `NetWorkUtil` 已有一份、`UserInfoApi.java:354` 又写一份。**改一处记得 grep 其余几处。**
-5. **参数写错**：`PlayerApi.java:301` `.put("fnvar",0)`（应为 `fnver`）；`ReplyApi.java:245` `likeReply` 硬编码 `type=1`（动态/专栏评论点赞会失败）；`DanmakuApi.java:133,144` `segment_index` 从 1 开始（注释却说从 0）。
-6. **硬编码**：`AppInfoApi.java:120,139,163,186` 明文 `http://api.biliterminal.cn`；弹幕 XML 地址重复 3 处（`PlayerApi:107,243,319`）；URL 散落在方法体内，无常量表。
+4. **重复实现**：视频卡片解析 **21 处**（`RankingApi`、`RecommendApi`×4、`WatchLaterApi`、`SearchApi`×3、`SeriesApi`、`FavoriteApi`×2、`UserInfoApi`、`HistoryApi`、`BangumiApi`、`MessageApi`×3、`DynamicApi`×2、`VideoInfo.java`。**本节此前写的「7 份」是过时数据**，26.08 快照写的「19 处」也偏低——26.10.04 实测 21 处（`SearchApi.java:177` 的番剧搜索分支与 `DynamicApi.java:826` 是漏计项）；`ReplyApi.sendReply` 两份；`DanmakuApi` 发送两份；`VideoInfoApi.getVideoInfo` 两份；解压逻辑 `NetWorkUtil` 已有一份、`UserInfoApi.java:354` 又写一份。**改一处记得 grep 其余几处。**
+5. **参数写错**：`PlayerApi.java:308` `.put("fnvar",0)`（应为 `fnver`）；`DanmakuApi.java:93` `segment_index` 从 1 开始（`:80` 的 javadoc 却说从 0，调用点 `:133`/`:144`）。**（`ReplyApi.likeReply` 硬编码 `type=1` 已于 26.09 修复：`ReplyApi.java:296-297` 改为显式 `REPLY_TYPE_VIDEO` 的兼容重载，真实类型由 `ReplyAdapter.kt:328/347` 传入。）**
+6. **硬编码**：弹幕 XML 地址重复 3 处（`PlayerApi.java:110,248,326`）；URL 散落在方法体内，无常量表。**（`AppInfoApi` 的 4 处明文 `http://` 已于 26.09.13 全部改为 `https://`，见 `AppInfoApi.java:143,162,184,207` 与 §6.4。）**
 7. **全局可变状态**：`SearchApi.java:24-25` 的 `static seid/search_keyword`（多入口搜索会串）、`ConfInfoApi.java:41-43` 的 WBI 缓存、`LoginApi.java:29-30`。
 8. **SharedPreferences key 混用**：字面量 `"csrf"`（`HistoryApi:32,84`、`WatchLaterApi:49,60`、`DanmakuApi:33`）与常量 `SharedPreferencesUtil.csrf`（`EmoteApi:50`）并存。
 

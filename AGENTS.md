@@ -18,7 +18,7 @@
 
 ## 架构（三条与直觉相反的）
 
-1. **入口是 `BiliTerminal.kt`**（26.09.10 由 `BiliTerminal.java` 迁移而来），不是 `BiliTerminalApp.kt`（后者从未被实例化，死代码）。全局 Context 取 `BiliTerminal.context`——它在 companion 里用 `@JvmField` 暴露成**静态字段**，所以 Java 侧仍是 `BiliTerminal.context` 的字段读法，Kotlin 侧按需 `!!`。
+1. **入口是 `BiliTerminal.kt`**（26.09.10 由 `BiliTerminal.java` 迁移而来）。原 `BiliTerminalApp.kt` 已于 26.10.02 整体删除——它从未被实例化，只因 `SplashActivity` 的 UETool 逻辑引用其静态方法而残留；那些方法与常量已移入 `BiliTerminal.kt` 伴生对象。全局 Context 取 `BiliTerminal.context`——它在 companion 里用 `@JvmField` 暴露成**静态字段**，所以 Java 侧仍是 `BiliTerminal.context` 的字段读法，Kotlin 侧按需 `!!`。
 2. **没有 DI / Retrofit / ViewModel**——26.09.11 死代码清理后这已是**事实**而非"死依赖残留"：Hilt、Retrofit、kotlinx-serialization、Jetpack Navigation、protobuf-javalite、geetest sensebot、asynclayoutinflater、cardview、lifecycle-viewmodel-ktx 等**已全部从 `app/build.gradle` 移除**，`ksp` 与 `kotlin.plugin.serialization` 两个插件也一并去掉（`@HiltAndroidApp` 随之从 `BiliTerminalApp.kt` 摘除）。原先 24 个空目录（`di/`、`network/`、`data/`、`ui/base` 等）已删除。新功能写进 `api/` + `activity/`，沿用静态方法 + `org.json`。
 3. **只有一条链**：`activity/` → `api/`（全同步阻塞）→ `util/` → `model/`。导航由 `MenuActivity.btnNames` + `util/MenuConfig.kt` 决定。
 
@@ -91,13 +91,14 @@
 
 完整清单见 `docs/architecture-map.md` 第 7 节。仍存在的：
 
-- 视频卡片解析**重复 19 处**（`RankingApi`/`RecommendApi`×4/`WatchLaterApi`/`SearchApi`×2/`SeriesApi`/`FavoriteApi`×2/`UserInfoApi`/`HistoryApi`/`BangumiApi`/`MessageApi`×3/`DynamicApi`/`VideoInfo.java`），改一处要 grep 其余。旧文档写"7 份"，实测 19 处（见 `docs/review/cleanup-scan.md`）。
-- `PlayerApi.java:301` 的 `fnvar` 应为 `fnver`；`ReplyApi.java:245` 的 `likeReply` 硬编码 `type=1`；`DanmakuApi.java:93` 的 `segment_index` 起始值与注释不符。
+- 视频卡片解析**重复 21 处**（`RankingApi`/`RecommendApi`×4/`WatchLaterApi`/`SearchApi`×3/`SeriesApi`/`FavoriteApi`×2/`UserInfoApi`/`HistoryApi`/`BangumiApi`/`MessageApi`×3/`DynamicApi`×2/`VideoInfo.java`），改一处要 grep 其余。旧文档写「7 份」、26.08 快照写「19 处」，26.10.04 实测 21 处（`SearchApi` 的番剧搜索分支与 `DynamicApi:826` 为漏计项）。
+- `PlayerApi.java:308` 的 `fnvar` 应为 `fnver`；`DanmakuApi.java:93` 的 `segment_index` 起始值与注释不符（`:80` 的 javadoc 说从 0 开始，调用点 `:133`/`:144` 实际从 1 起）。
 - `SettingsKeys.PLAYER` / `PLAY_QN` 是**死常量**：实际代码用字面量 `"player"` / `"play_qn"`（14 处），`SharedPreferencesUtil` 里还有第三处定义，收敛未完成。
-- `AsyncLayoutInflaterX.cancel()` 从未被调用，`BaseActivity.asyncInflate` 无生命周期保护（20 个页面在用）。
-- `DownloadService.start()` 无同步，可并发写同一文件。
+- `BaseActivity.kt:282` 用 `if (this !is InstanceActivity) setTopbarExit()` 做**向下判断**——任何「让 `RefreshMainActivity` 继承 `RefreshListActivity`」的方案都会把顶栏行为从「打开菜单」变成「点击即返回」。
+- **`cell_video_list` / `cell_dynamic_video` 的 id 是跨包事实协议**：改 id 会同时打破 `PrivateMsgAdapter`、`DynamicHolder`、`NoticeHolder`、`OpusContentAdapter`。
+- **`model/` 里 `VideoFolder`/`VideoMeta`/`LocalVideo` 实现 `Parcelable`，且字段名就是磁盘 JSON 存储格式**：删改字段必须两端同步。
+- `player/` 包不是公共层：`VideoPlayerCore.kt` 已是 `IjkPlayerBridge` 的功能超集，但**还不能直接替换**——`PlayerState`/`IjkOption` 仍定义在 `IjkPlayerBridge.kt:17-36`（删旧类前先搬家），且 `VideoPlayerCore.release()` 有一次性 `released` 标志，`onViewRecycled` 后复用会**泄漏 native 播放器**。动手前先决定它的去留，含糊着抽公共层会造出第 3 套实现。
 - **手表右滑返回由 `android:windowSwipeToDismiss` 控制**，它在窗口层直接 `finish()`，**不走 `onBackPressed`**，所以只 override `onBackPressed` 拦不住。且 `onCreate` 里的 `setTheme(ColorScheme.themeResId(theme))` 会覆盖清单上声明的 `Theme.NoSwipe*` —— 要真正禁用它，必须调 `ColorScheme.themeResId(theme, noSwipe = true)` 换用 `Theme.*.NoSwipe.AppCompat`（issue #1 的根因）。
-- `docs/review/00-summary.md` 基于 26.08.27 快照（已过时），动手前先 grep 现状。
 
 ## 原生库
 

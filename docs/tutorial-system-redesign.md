@@ -1,6 +1,7 @@
 # 教程系统重做：设计与 POC
 
-> 状态：**全量迁移已完成**——10 篇教程全部走新链路（集中触发 + 内部分页 + 串行），编译通过、46 个单测全绿；旧代码（XML / TutorialHelper / TutorialActivity / 管理页）待清理。
+> 状态：**全量迁移已完成**——`tutorial/Tutorials.kt` 注册表共 **11 篇**教程，全部走新链路（集中触发 + 内部分页 + 串行）；旧代码（`res/xml/tutorial_*.xml` ×12 / `TutorialHelper` / `TutorialActivity` / 管理页）待清理（见 §五「待办」）。
+> 注：§四 / §六 里的「44 / 46 个单测」是当时的验证快照；26.10.04 实测 `app/src/test` 共 20 个文件（19 个测试类 + 1 个共享假实现）、147 个用例。
 > 关联：`docs/architecture-map.md`（教程系统旧实现见第 8 节 UI 速查）、`docs/review/fix-progress.md`
 
 ---
@@ -40,7 +41,7 @@
 ```
 tutorial/TutorialModel.kt        TutorialKind / TutorialStyle / TutorialSpan / TutorialPage / Tutorial
 tutorial/TutorialDsl.kt          tutorial { page { text().bold().color() / newline() / image() } }
-tutorial/Tutorials.kt            注册表：videoMain、videoMinor + all / forPage() / byId()
+tutorial/Tutorials.kt            注册表：11 篇（recommend / theme_notice / video_main / space / search / message / dynamic / dynamic_info / article / short_video / local），另有 all / forPage() / byId()
 tutorial/TutorialStore.kt        已读状态（tutorial_ver_<id>）
 tutorial/TutorialRenderer.kt     spans → SpannableStringBuilder（颜色解析失败回退白色）
 tutorial/TutorialPagerActivity.kt  分页展示页（POC）
@@ -56,7 +57,7 @@ res/layout/activity_tutorial_pager.xml / item_tutorial_page.xml
 
 ## 四、POC 范围与验收
 
-**范围**：视频详情页一篇（`video_main`，GUIDE，3 页：欢迎/滑动 → 新功能 → 提醒/零碎问题），走完整新链路；其余 10 篇仍走旧链路，互不干扰。
+**范围（POC 当时）**：只把视频详情页一篇（`video_main`，GUIDE，3 页：欢迎/滑动 → 新功能 → 提醒/零碎问题）切到完整新链路，其余教程暂走旧链路。**该 POC 已推进为全量迁移**——现注册表 11 篇全部走新链路，见 §五。
 > 原「视频详情-零碎问题」（`video_minor`）已按需求合并为同一篇的最后一页，注册表里只留 `video_main`。
 
 **已通过**：`assembleDebug` 编译成功；44 个单测全绿（新增 `TutorialDslTest` 6 例，覆盖 DSL 结构、kind 语义、注册表自洽、同页顺序）。
@@ -79,7 +80,7 @@ res/layout/activity_tutorial_pager.xml / item_tutorial_page.xml
 
 | 项 | 说明 |
 |---|---|
-| ✅ 全量内容迁移 | 12 个 XML → 10 篇 DSL（`Tutorials.kt`），内容里的 XML 格式化空白已清理；`tutorial_video_2` / `tutorial_space_2` 分别并入各自主教程 |
+| ✅ 全量内容迁移 | 12 个 XML → 11 篇 DSL（`Tutorials.kt`），内容里的 XML 格式化空白已清理；`tutorial_video_2` / `tutorial_space_2` 分别并入各自主教程 |
 | ✅ 单页教程处理 | `pageCount <= 1` 时隐藏页码指示器（`1/1` 无意义且占顶栏空间） |
 | ✅ 旧键迁移 | `TutorialStore.migrateLegacyKeys()`，`BiliTerminal.onCreate` 启动时执行，幂等 |
 | ✅ 孤儿补接 | `tutorial_article` → `article`，target = `OpusInfoActivity`（旧实现从未被展示） |

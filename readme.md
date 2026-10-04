@@ -4,7 +4,7 @@
 
 轻量的第三方 B 站 Android 客户端，基于哔哩终端 BiliClient 2.7.0 的改版分支
 
-[![Version](https://img.shields.io/badge/version-26.10.02-blue)](https://github.com/zisekongling/BiliTerminal-RE)
+[![Version](https://img.shields.io/badge/version-26.10.03-blue)](https://github.com/zisekongling/BiliTerminal-RE)
 [![Android](https://img.shields.io/badge/android-7.0%2B-green)]()
 [![Language](https://img.shields.io/badge/language-Kotlin%20%2F%20Java-orange)]()
 [![License](https://img.shields.io/badge/license-GPL%20v3-red)]()
@@ -39,7 +39,7 @@
 
 | 功能 | 说明 |
 | --- | --- |
-| 多主题系统 | 内置 B 站粉、知乎蓝、爱奇艺绿、紫色幻想、彩虹幻想、经典灰等多种主题，可在设置中自由切换，即时生效 |
+| 多主题系统 | 内置 B 站粉、知乎蓝、爱奇艺绿、紫色空灵、五彩斑斓、经典灰、经典终端共 7 套主题，可在设置中自由切换，即时生效（显示名以 `ui/appearance/ColorScheme.kt` 的 `getThemeDisplayName()` 为准） |
 | 经典终端主题 | 复刻老版哔哩终端的黑色背景 + 半透明卡片 + 暖白文字外观，并作为新安装用户的默认主题 |
 | 独立「外观设置」页 | 主题配色、卡片圆角、自定义字体集中管理，并已接入设置项搜索 |
 | 卡片圆角两档 | 「方角」还原原项目圆角，「圆角」为本项目主题化后的较大圆角，切换即时生效 |
@@ -182,7 +182,7 @@
 ./gradlew :app:testDebugUnitTest     # 单元测试
 
 
-> `develop` 分支用于在线开发，获取到的为最新源码，但可能包含未修复的问题。欢迎提交 pr。
+> 开发以 `main` 分支为准，功能与修复走 `feat/*`、`fix/*` 分支合并回 `main`（例如 `feat/gitee-release`、`fix/issue-1-swipe-seek-back`）。欢迎提交 pr。
 
 ---
 
