@@ -22,6 +22,8 @@ import com.RobinNotBad.BiliClient.api.PlayerApi
 import com.RobinNotBad.BiliClient.helper.sql.DownloadSqlHelper
 import com.RobinNotBad.BiliClient.service.download.DownloadPathSpec
 import com.RobinNotBad.BiliClient.service.download.DownloadProgressMath
+import com.RobinNotBad.BiliClient.service.download.DownloadProgressStore
+import com.RobinNotBad.BiliClient.service.download.DownloadProgressInfo
 import com.RobinNotBad.BiliClient.model.DownloadSection
 import com.RobinNotBad.BiliClient.model.PlayerData
 import com.RobinNotBad.BiliClient.model.SubtitleLink
@@ -70,100 +72,87 @@ class DownloadService : Service() {
         @JvmStatic @Volatile var percent: Float = -1f
         @JvmStatic @Volatile var state: String? = null
         @JvmStatic @Volatile var section: DownloadSection? = null
-        @JvmStatic var speedStr: String = ""
-        @JvmStatic var isSpeedMode: Boolean = false
+        // 速度显示字符串与"是否高速模式"由 DownloadProgressStore 持有，这里只留 @JvmStatic 门面，
+        // Java/Kotlin 侧照旧写 DownloadService.speedStr / DownloadService.isSpeedMode。
+        // 刻意保持非 volatile：UI 线程直接读、下载线程直接写是既有数据竞争，加 volatile 属于行为变更。
+        @JvmStatic
+        var speedStr: String
+            get() = DownloadProgressStore.speedStr
+            set(value) {
+                DownloadProgressStore.speedStr = value
+            }
+
+        @JvmStatic
+        var isSpeedMode: Boolean
+            get() = DownloadProgressStore.isSpeedMode
+            set(value) {
+                DownloadProgressStore.isSpeedMode = value
+            }
+
         private var firstDown: Long = -1
 
         // 本次下载批次的总体统计（总进度条、通知栏使用）
         @JvmStatic val batchStats = DownloadBatchStats()
 
-        // 全局已下载字节数（所有并行下载累计），用于聚合速度采样
-        private val totalBytesDownloaded = java.util.concurrent.atomic.AtomicLong(0)
-
         @JvmStatic var activeDownloadsCount: Int = 0
             private set
 
-        // 聚合速度采样（单线程调用）
-        private val speedSampler = SpeedSampler()
-        private val speedLock = Any()
-
-        // 下载进度追踪：key=section.id, value=进度信息（含阶段进度与已下载/总字节数）
-        data class DownloadProgressInfo(
-            val progress: Float,
-            val state: String,
-            val downloadedBytes: Long = 0,
-            val totalBytes: Long = 0
-        )
-
-        private val downloadProgressMap =
-            java.util.concurrent.ConcurrentHashMap<Long, DownloadProgressInfo>()
-
         // 被用户暂停的任务：key=section.id。暂停后该任务的下载循环会尽快退出，状态置为 paused，
         // 调度器（只取 state="none"）不会重新拾取；恢复时清除标志并置回 none。
+        // 用带 getter 的 val 暴露（Java 侧是 getPausedMap() 静态方法）：调用方直接对返回的 map
+        // add/remove（DownloadListActivity），必须仍是同一个 map 实例，不能在这里复制。
         @JvmStatic
-        val pausedMap = java.util.concurrent.ConcurrentHashMap<Long, Boolean>()
+        val pausedMap: java.util.concurrent.ConcurrentHashMap<Long, Boolean>
+            get() = DownloadProgressStore.pausedMap
+
+        // ---------- 以下为 DownloadProgressStore 的门面：实现全部搬到 service/download/ ----------
 
         @JvmStatic
-        fun isPaused(id: Long): Boolean = pausedMap.containsKey(id)
+        fun isPaused(id: Long): Boolean = DownloadProgressStore.isPaused(id)
 
-        /**
-         * 暂停单个下载任务（不影响其他并行任务）。
-         * 正在下载的线程会在下一轮 IO 循环中检测到暂停标志并退出。
-         */
         @JvmStatic
-        fun pauseDownload(id: Long) {
-            pausedMap[id] = true
-            setState(id, "paused")
-        }
+        fun pauseDownload(id: Long) = DownloadProgressStore.pauseDownload(id)
 
-        /**
-         * 恢复被暂停的下载任务，并触发调度器重新拾取。
-         */
         @JvmStatic
-        fun resumeDownload(id: Long) {
-            pausedMap.remove(id)
-            setState(id, "none")
-            start(id)
-        }
+        fun resumeDownload(id: Long) = DownloadProgressStore.resumeDownload(id)
 
         @JvmStatic
         fun getDownloadProgress(id: Long): DownloadProgressInfo? {
-            return downloadProgressMap[id]
+            return DownloadProgressStore.getDownloadProgress(id)
         }
 
         @JvmStatic
         fun getDownloadProgressMap(): java.util.concurrent.ConcurrentHashMap<Long, DownloadProgressInfo> {
-            return downloadProgressMap
+            return DownloadProgressStore.getDownloadProgressMap()
         }
 
         @JvmStatic
         fun setDownloadProgress(id: Long, progress: Float, state: String) {
-            downloadProgressMap[id] = DownloadProgressInfo(progress, state)
+            DownloadProgressStore.setDownloadProgress(id, progress, state)
         }
 
         @JvmStatic
         fun setDownloadProgress(id: Long, progress: Float, state: String,
                                 downloadedBytes: Long, totalBytes: Long) {
-            downloadProgressMap[id] =
-                DownloadProgressInfo(progress, state, downloadedBytes, totalBytes)
+            DownloadProgressStore.setDownloadProgress(id, progress, state, downloadedBytes, totalBytes)
         }
 
         @JvmStatic
         fun removeDownloadProgress(id: Long) {
-            downloadProgressMap.remove(id)
+            DownloadProgressStore.removeDownloadProgress(id)
         }
 
         @JvmStatic
-        fun getDownloadedBytes(): Long = totalBytesDownloaded.get()
+        fun getDownloadedBytes(): Long = DownloadProgressStore.getDownloadedBytes()
 
         @JvmStatic
         fun addDownloadedBytes(bytes: Long) {
-            totalBytesDownloaded.addAndGet(bytes)
+            DownloadProgressStore.addDownloadedBytes(bytes)
         }
 
         @JvmStatic
         fun resetDownloadedBytes() {
-            totalBytesDownloaded.set(0)
+            DownloadProgressStore.resetDownloadedBytes()
         }
 
         /**
@@ -171,32 +160,13 @@ class DownloadService : Service() {
          */
         @JvmStatic
         fun computeOverallProgress(sections: List<DownloadSection>): Float {
-            var activeProgressSum = 0f
-            var activeCount = 0
-            var waitingCount = 0
-            for (s in sections) {
-                val info = downloadProgressMap[s.id]
-                if (info != null) {
-                    activeProgressSum += info.progress.coerceIn(0f, 1f)
-                    activeCount++
-                } else if (s.state == "none") {
-                    waitingCount++
-                }
-            }
-            return batchStats.overallProgress(activeProgressSum, activeCount, waitingCount)
+            return DownloadProgressStore.computeOverallProgress(sections)
         }
 
         /** 当前仍在下载中的项目剩余字节数合计（用于预估剩余时间） */
         @JvmStatic
         fun getActiveRemainingBytes(sections: List<DownloadSection>): Long {
-            var remaining = 0L
-            for (s in sections) {
-                val info = downloadProgressMap[s.id]
-                if (info != null && info.totalBytes > 0) {
-                    remaining += (info.totalBytes - info.downloadedBytes).coerceAtLeast(0)
-                }
-            }
-            return remaining
+            return DownloadProgressStore.getActiveRemainingBytes(sections)
         }
 
         // 下载结果码（含"任务被暂停不算失败"）统一见 DownloadPathSpec
@@ -468,21 +438,13 @@ class DownloadService : Service() {
         /** 在批次开始时重置速度采样，避免把上一批次的字节计入 */
         @JvmStatic
         fun resetSpeedSampling() {
-            synchronized(speedLock) {
-                speedSampler.reset(System.currentTimeMillis())
-                speedStr = ""
-            }
+            DownloadProgressStore.resetSpeedSampling()
         }
 
         /** 周期性采样全局已下载字节数，得到所有并行下载的聚合速度 */
         @JvmStatic
         fun sampleSpeed() {
-            synchronized(speedLock) {
-                val speed = speedSampler.sample(getDownloadedBytes(), System.currentTimeMillis())
-                if (speed != null) {
-                    speedStr = formatDownloadSpeed(speed)
-                }
-            }
+            DownloadProgressStore.sampleSpeed()
         }
     }
 
@@ -717,7 +679,7 @@ class DownloadService : Service() {
             // 只重置「本进程没有线程在下载」的遗留记录：downloadProgressMap 里有条目的，
             // 说明有活跃下载线程正在写这个 section，改回 "none" 会让调度器二次拾取、
             // 双线程写同一文件（审计 S6）。同时顺手清掉它的残留进度，避免列表显示假进度。
-            if (s.state == "downloading" && !downloadProgressMap.containsKey(s.id)) {
+            if (s.state == "downloading" && !DownloadProgressStore.hasProgress(s.id)) {
                 setState(s.id, "none")
                 removeDownloadProgress(s.id)
             }
