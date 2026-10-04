@@ -337,6 +337,15 @@
                 android:text="视频摘要" />
         </LinearLayout>
 
+        <!-- 笔记：私有笔记一个稿件只有一篇，点进去直接看那篇 -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/note"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:minHeight="@dimen/touch_min"
+            android:text="笔记" />
+
     </LinearLayout>
 
 </com.RobinNotBad.BiliClient.ui.widget.RotaryNestedScrollView>

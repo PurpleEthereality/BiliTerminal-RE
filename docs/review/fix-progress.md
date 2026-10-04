@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -2056,6 +2056,65 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 调研报告 §12.4 的 C10 行改为「已实现」；`docs/architecture-map.md` 新增 §7.21「话题」。
 - 接口依据：`bilibili-API/docs/dynamic/topic.md:3-54`（话题动态列表，`items[]` 套壳结构）与 `:5314-5356`（推荐话题 `topic_items[]`）。
 - 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（§二十一）→ C7（§二十二）→ C8（§二十三）→ C9（§二十四）→ C10（本条）→ C27（仅剩这一项）。
+
+---
+
+## 二十六、26.10.04 批次 6（8/8）：视频笔记查看（C27）
+
+### 为什么做
+
+调研把「笔记」列为想要实现，用户拍板**范围限定仅「查看」**（不做创建/编辑，也不做我的笔记列表页）。改之前全库没有任何笔记代码（`grep 笔记|NoteApi|note_id` 于 `app/src/main/java` 零命中）。难点是**正文不是 HTML 而是 Quill delta 的 JSON 字符串**，且接口文档自己的示例就暴露了 `note_id` 的精度丢失——这两个坑决定了实现方式。
+
+### 改动表
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/Note.java` | **新增**：`noteId`（**字符串**，只认 `note_id_str`）/`title`/`summary`/`videoTitle`/`videoDesc`/`aid`/`bvid`/`blocks` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/NoteBlock.java` | **新增**：`TYPE_TEXT`/`TYPE_IMAGE`/`TYPE_TAG` + 样式字段（bold/underline/strike/color/background/list）与图片、tag 字段 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/NoteApi.java` | **新增**：纯解析 `parseNoteIds`/`pickNoteId`/`parseBlocks`/`parseNoteDetail`/`formatTagSeconds`/`noteErrorMsg`；网络 `getNoteIdsOfVideo(long aid)`（`x/note/list/archive` + csrf）与 `getNoteInfo(long aid, String noteId)`（`x/note/info`，不带 csrf） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/note/NoteActivity.kt` | **新增**：`BaseActivity` 子类，登录闸门 → 取 id 列表 → 取正文 → 把 blocks 拼成一段 `SpannableStringBuilder` 渲染 |
+| `app/src/main/res/layout/activity_note.xml` | **新增**：标准活动页骨架（`pageName`/`TextClock` + `RotaryScrollView`），含 `note_title`/`note_info`/`note_content`/`note_empty` |
+| `app/src/main/AndroidManifest.xml` | 注册 `.activity.note.NoteActivity`（`exported="false"` + `screenOrientation="locked"` + `label="笔记"`） |
+| `app/src/main/res/layout/fragment_video_info.xml` | 视频详情页新增整行 `MaterialButton id=note`（文案「笔记」） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/video/info/VideoInfoFragment.kt` | 绑定 `note` 按钮 → `NoteActivity`（带 `aid`）；未登录时与「稍后再看」「转发」「视频摘要」一起隐藏 |
+| `app/src/test/java/com/RobinNotBad/BiliClient/api/NoteApiTest.kt` | **新增**：12 例纯函数单测 |
+
+### 取舍
+
+- **`note_id` 一律取 `note_id_str` 并当字符串传**：快照 `bilibili-API/docs/note/list.md` 的示例里 `note_id` 是 `24508729145690110`、`note_id_str` 是 `"24508729145690112"`——17 位超过 2^53，走 JSON number 已经丢精度。`NoteApi.pickNoteId` 固定优先字符串字段、回退数字字段，`model/Note.noteId` 直接声明成 `String`。
+- **不复用 opus 的解析与 adapter**：`model/OpusParagraph.java` + `adapter/article/OpusContentAdapter.kt` 处理的是**嵌套**段落结构，而笔记正文是**扁平** delta 数组（`[{attributes, insert}, …]`，`insert` 可能是字符串、`imageUpload` 对象或 `tag` 对象），结构不兼容。另写 `NoteBlock` + `NoteApi.parseBlocks`，样式是**逐片段**的（同一句话可能被拆成多个元素，逐个套 span 而非合并后处理）。
+- **渲染用一段 `SpannableStringBuilder` 而不是 RecyclerView**：笔记正文是一整篇连续富文本，一个 `TextView` + span 比列表更好排版、也省掉 adapter；样式用 `StyleSpan`/`UnderlineSpan`/`StrikethroughSpan`/`ForegroundColorSpan`/`BackgroundColorSpan`。脏色值 `Color.parseColor` 包 try/catch 返回 null，不崩。
+- **图片只占位、tag 只显示时间**：图片要走图床加载与宽高还原（`imageUpload.width` 还是"宽度 - 2"），视频进度 tag 要跳播放器进度——都超出「仅查看」的范畴，本次只渲染 `[图片]` 与 `[视频进度 mm:ss]`（有分P索引则 `[分P n mm:ss]`）。解析阶段**不校验** `status` 等字段，坏数据一律安全跳过。
+- **入口放视频详情页，不进 `MenuConfig`**：笔记是"某个视频的笔记"，脱离视频没有意义；顺带规避了新增菜单 key 对老用户不生效的问题（见 §二十五同一条取舍）。
+- **未登录双保险**：视频页按钮直接隐藏（与「稍后再看」「转发」「视频摘要」同批），`NoteActivity` 里再判一次 `mid == 0` 并提示「登录后才能看笔记喵~」（接口只返回私有笔记，未登录必失败）。
+- **不做的**：我的笔记列表页（`x/note/list`）、公开笔记（`cvid` + `x/note/publish/info`）、创建/编辑笔记，全部不做。
+
+### 单测
+
+`api/NoteApiTest.kt` **12 例**：`parseNoteIds_readsStringIdsAndSkipsBlanks`、`parseNoteIds_toleratesMissingFieldAndNullData`、`pickNoteId_prefersTheStringForm`（用 24508729145690110 与 `"24508729145690112"` 这组真实示例钉死精度行为）、`pickNoteId_fallsBackToTheNumberField`、`parseBlocks_readsTextAndAttributes`、`parseBlocks_readsTagAndImageInserts`（tag 分P/秒数 + 图片 url/宽度，未知 insert 对象被跳过）、`parseBlocks_keepsEmptyTextOnlyWhenItIsAListItem`、`parseBlocks_toleratesBrokenInput`（null / 空串 / 非 JSON / 根是对象）、`parseNoteDetail_readsArcAndContent`、`parseNoteDetail_toleratesNull`、`formatTagSeconds_padsMinutesAndHours`（0/65/3599/3600/3725/负数）、`noteErrorMsg_mapsKnownCodes`。网络请求部分不测（与既有 api 测试一致）。
+
+### 验证
+
+因新增了 `res/layout/activity_note.xml`（资源文件集合变化），按 AGENTS.md 走两步：`.\gradlew.bat :app:clean --offline --no-configuration-cache` → **BUILD SUCCESSFUL in 19s**；再 `.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-build-cache --no-configuration-cache` → **BUILD SUCCESSFUL in 1m 12s**。`app/build/test-results/testDebugUnitTest` **33 个 XML / 278 个用例 / 0 失败 / 0 错误**（C10 后 32/266，本次 +12 例）。乱码自检 `git diff | Select-String '鐐|璇|鍒|锛|銆|鎴|鏂|锟'` 计数 0。
+
+### 真机验证清单
+
+1. 视频详情页能看到整行「笔记」按钮；未登录时该按钮与「稍后再看」「转发」「视频摘要」一起消失。
+2. 未登录时若强行进入 `NoteActivity`（如从别处带 `aid` 拉起），提示「登录后才能看笔记喵~」而不是空页或崩溃。
+3. 登录后点「笔记」：对**有私有笔记**的视频能显示出标题与正文；对**没有笔记**的视频提示「这个视频还没有笔记」。
+4. 正文里的粗体、下划线、删除线、彩色文字、高亮底色能看出来（重点验证分段样式：同一句话被拆成多个 delta 元素时样式要逐段正确）。
+5. 有序/无序列表项每行带 `n. `/`• ` 前缀，且**有序编号在非列表段落之后重新从 1 开始**。
+6. 正文里的图片位置显示 `[图片]` 占位（不崩、不请求不存在的图片）；视频进度位置显示 `[视频进度 mm:ss]` 或 `[分P n mm:ss]`。
+7. 接口失败（如 `79503` 正文缺失、`79502` 详情缺失）时提示对应中文文案；断网时提示「获取笔记失败」。
+8. 笔记很长时上下滚动顺畅（`RotaryScrollView` 正常），标题/信息区不遮挡正文；手表小屏上正文可读、不横向溢出。
+9. 从视频页进入笔记再返回，视频页状态与播放位置不受影响。
+10. 从笔记页右滑返回可用（未额外禁用滑动删除）。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C27 行改为「已实现（范围限定：仅『查看』）」；`docs/architecture-map.md` 新增 §7.22「笔记，仅查看」。
+- 接口依据：`bilibili-API/docs/note/list.md:3-71`（`x/note/list/archive`）、`bilibili-API/docs/note/info.md:57-172`（`x/note/info`，错误码 79502/79503）、`bilibili-API/docs/note/readme.md:19-158`（delta 正文结构与真实示例）。
+- 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（§二十一）→ C7（§二十二）→ C8（§二十三）→ C9（§二十四）→ C10（§二十五）→ C27（本条）。**批次 6 八项至此全部完成**；下一批为批次 7（C18 C19 C20 C21），其后批次 8（E2 DownloadService + F4 漫画）。
 
 
 

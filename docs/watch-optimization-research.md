@@ -663,7 +663,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | C24 | 分享视频/番剧/动态/专栏/直播至站内消息 | 无计划 |
 | C25 | 直播弹幕发表情 / SuperChat | 无计划 |
 | C26 | 画中画 PiP | 无计划 |
-| C27 | 笔记 | 想要实现（**范围限定：仅「查看」**） |
+| C27 | 笔记 | **已实现（26.10.04 批次 6，范围限定：仅「查看」）**：视频详情页新增整行「笔记」按钮（未登录隐藏）→ `activity/note/NoteActivity.kt`：先 `GET x/note/list/archive`（`oid`+`oid_type=0`）拿私有笔记 id 列表，空则提示「这个视频还没有笔记」，有则取第一篇走 `GET x/note/info`（`oid`/`oid_type=0`/`note_id`），把 Quill delta 的 JSON 字符串解析成 `model/NoteBlock` 列表再拼成一段 `SpannableStringBuilder` 渲染（粗体/下划线/删除线/前景色/背景色/有序·无序列表前缀；图片只显示 `[图片]` 占位；视频进度 tag 只显示「[视频进度 mm:ss]」或「[分P n mm:ss]」）。解析器/文案全在 `api/NoteApi.java` 的纯函数里（`parseNoteIds`/`pickNoteId`/`parseBlocks`/`parseNoteDetail`/`formatTagSeconds`/`noteErrorMsg`），12 例单测。**两个已知取舍**：① 笔记 id **一律取 `note_id_str` 字符串**（快照示例里 `note_id` 24508729145690110 与 `note_id_str` "24508729145690112" 就不一致——17 位超过 2^53，走 JSON number 必丢精度）；② **我的笔记列表页（`x/note/list`）没做**，也没有创建/编辑笔记的链路 |
 | C28 | 自建众包「自动空降」 | 无计划（需要服务端，与纯客户端定位冲突） |
 | C29 | WebDAV 备份 / 恢复设置 | 无计划 |
 | C30 | 滑动跳转预览缩略图（storyboard） | 无计划 |
@@ -697,23 +697,23 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 
 - **D2 / D3 / D5 原被本文 §8 列为待办，核实后为「已实现」**，相应条目作废（D5 只剩历史点击一个 10 分钟小项，已裁为暂缓）。
 - `activity/player/PlayerActivity.kt` 实际 **3494 行**（原述 3090 行）。
-- 单元测试实际 **32 个测试类 / 266 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例、C12 同文件 +4 例、C14 新增 `util/MsgNotifierTest` 5 例、C16 新增 `api/BangumiApiTest` 6 例 + `util/BangumiUpdateCheckerTest` 8 例 + `MsgNotifierTest`/`SettingsKeysTest` 各 +1 例；批次 6 的 C3 在 `api/ReplyApiTest` +2 例、`model/ReplyParseActionTest` +3 例，C4 新增 `model/ReplySortTest` 6 例，C6b 在 `api/ReplyApiTest` +2 例，C7 新增 `api/DynamicApiTest` 6 例、C8 同文件 +5 例、C9 同文件 +5 例，C10 新增 `api/TopicApiTest` 4 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
+- 单元测试实际 **33 个测试类 / 278 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例、C12 同文件 +4 例、C14 新增 `util/MsgNotifierTest` 5 例、C16 新增 `api/BangumiApiTest` 6 例 + `util/BangumiUpdateCheckerTest` 8 例 + `MsgNotifierTest`/`SettingsKeysTest` 各 +1 例；批次 6 的 C3 在 `api/ReplyApiTest` +2 例、`model/ReplyParseActionTest` +3 例，C4 新增 `model/ReplySortTest` 6 例，C6b 在 `api/ReplyApiTest` +2 例，C7 新增 `api/DynamicApiTest` 6 例、C8 同文件 +5 例、C9 同文件 +5 例，C10 新增 `api/TopicApiTest` 4 例、C27 新增 `api/NoteApiTest` 12 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 - **本文 §10.4 与用户裁决存在三处冲突，以本台账为准**：① §10.4 把「关注主播开播提醒」列为"高价值低成本、值得做"，用户裁为**无计划**；② §10.4 把「漫画」列入"明确不值得做"，用户裁为**想要实现（F4）**；③ §10.4 把「收藏夹批量整理」「发布动态/评论/弹幕」列入"明确不值得做"，用户分别裁为**想要实现（C19/C20）**与**想要实现（C7/C9/C10）**——即"需要输入"不是本项目的否决理由（无键盘只影响输入方式，不影响功能取舍）。
 
 ### 12.7 量化汇总与建议顺序
 
 | 结论 | 项数 |
 |---|---|
-| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C12 / C13 / C14 / C16 已于批次 5 落地、C3 / C4 / C6b / C7 / C8 / C9 / C10 已于批次 6 落地，剩 15） |
+| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C12 / C13 / C14 / C16 已于批次 5 落地、C3 / C4 / C6b / C7 / C8 / C9 / C10 / C27 已于批次 6 落地，剩 14） |
 | 暂缓 | 10 |
 | 无计划 | 25 |
 | 已经实现（勘误） | 4（D2 / D3 / D5 主体，另 C3·C6·C8 的「已实现」子项） |
 | **26.10.04 批次 1/2/3 落地** | 6（A2 A3 A4 A5 A6 + A10）+ 5（B1 B2 B3 B5 B8）；2 项勘误作废（A11 A12） |
 | **26.10.04 批次 4 落地** | 3（E4 E5 E6），另有 2 项勘误（E4 字面量 13 处而非 14 处；`applyBatch` 与 `beginBatchEdit` 同类一并删） |
 | **26.10.04 批次 5 落地** | 4（C13 会话删除 + 置顶/取消置顶；C12 私信发图；C14 新消息通知栏提醒；C16 追番更新提醒），本批 4 项全部完成 |
-| **26.10.04 批次 6 落地** | 7 已完成（C3 评论置顶/删除菜单；C4 楼中楼排序；C6b 带图评论发送闸门；C7 动态编辑；C8 动态置顶/取消；C9 动态定时发布；C10 话题广场 + 话题动态列表），本批剩 C27 笔记仅查看 |
+| **26.10.04 批次 6 落地** | 8 项全部完成（C3 评论置顶/删除菜单；C4 楼中楼排序；C6b 带图评论发送闸门；C7 动态编辑；C8 动态置顶/取消；C9 动态定时发布；C10 话题广场 + 话题动态列表；C27 视频笔记查看），每项（或小分组）独立提交，见 `docs/review/fix-progress.md` §十九~§二十六 |
 
-**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（**批次 5 全部完成**：C13 ✅ 见 §十五；C12 ✅ 见 §十六；C14 ✅ 见 §十七；C16 ✅ 见 §十八，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27（**批次 6 进行中**：C3 ✅ 见 §十九；C4 ✅ 见 §二十；C6b ✅ 见 §二十一；C7 ✅ 见 §二十二；C8 ✅ 见 §二十三；C9 ✅ 见 §二十四；C10 ✅ 见 §二十五；剩 C27）→ ⑦ C18 C19 C20 C21 → ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
+**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（**批次 5 全部完成**：C13 ✅ 见 §十五；C12 ✅ 见 §十六；C14 ✅ 见 §十七；C16 ✅ 见 §十八，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27（**批次 6 全部完成**：C3 ✅ 见 §十九；C4 ✅ 见 §二十；C6b ✅ 见 §二十一；C7 ✅ 见 §二十二；C8 ✅ 见 §二十三；C9 ✅ 见 §二十四；C10 ✅ 见 §二十五；C27 ✅ 见 §二十六）→ ⑦ C18 C19 C20 C21 → ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
 
 ---
 

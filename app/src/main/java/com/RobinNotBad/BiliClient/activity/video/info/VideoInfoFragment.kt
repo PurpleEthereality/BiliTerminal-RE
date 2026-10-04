@@ -32,6 +32,7 @@ import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.ImageViewerActivity
 import com.RobinNotBad.BiliClient.activity.base.BaseFragment
 import com.RobinNotBad.BiliClient.activity.dynamic.send.SendDynamicActivity
+import com.RobinNotBad.BiliClient.activity.note.NoteActivity
 import com.RobinNotBad.BiliClient.activity.search.SearchActivity
 import com.RobinNotBad.BiliClient.activity.settings.SettingPlayerChooseActivity
 import com.RobinNotBad.BiliClient.activity.user.WatchLaterActivity
@@ -256,6 +257,7 @@ class VideoInfoFragment : BaseFragment() {
 
         val relay = rootview.findViewById<MaterialButton>(R.id.relay)
         val videoSummary = rootview.findViewById<MaterialButton>(R.id.video_summary)
+        val note = rootview.findViewById<MaterialButton>(R.id.note)
         val bvidText = rootview.findViewById<TextView>(R.id.bvidText)
         val danmakuCount = rootview.findViewById<TextView>(R.id.danmakuCount)
         like = rootview.findViewById(R.id.btn_like)
@@ -558,10 +560,19 @@ class VideoInfoFragment : BaseFragment() {
             }
         }
 
+        note.setOnClickListener {
+            // 私有笔记要 SESSDATA，未登录时按钮已经隐藏（见下面那段 visibility）
+            startActivity(
+                Intent(requireContext(), NoteActivity::class.java)
+                    .putExtra("aid", videoInfo!!.aid)
+            )
+        }
+
         if (SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0) == 0L) {
             addWatchlater.visibility = View.GONE
             relay.visibility = View.GONE
             videoSummary.visibility = View.GONE
+            note.visibility = View.GONE
         }
 
         if (videoInfo!!.collection != null) {
