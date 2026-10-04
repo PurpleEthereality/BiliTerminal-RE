@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1556,4 +1556,63 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 接口依据：`bilibili-API/docs/message/private_msg_content.md:27-57`（图片消息 content 结构、21037 的触发条件）。
 - 复用基建：`app/src/main/java/com/RobinNotBad/BiliClient/api/ImageApi.java`（`prepareImage` / `uploadImage` / `BIZ_REPLY`）。
 - 本批剩余：C14（新私信通知栏通知，不做 RemoteInput 速回）→ C16（打开应用时检查追番更新，不做后台定时），各自独立提交。
+
+---
+
+## 十七、26.10.04 批次 5（3/4）：新消息通知栏通知（C14）
+
+对应调研报告 §12.4 的 C14「新消息通知」。**范围按用户拍板收窄：只做通知栏通知，不做 RemoteInput 速回；只在打开应用检查未读时触发，不做后台定时**。上一条是 C12，本条只记 C14。
+
+### 为什么这么做（取舍写在代码里，也记在这里）
+
+- **不做速回**：`RemoteInput` 要额外申请权限、处理跨进程回复广播，手表上打字成本本来就高，收益不抵复杂度。点通知＝打开消息页。
+- **不做后台定时**：项目里没有 WorkManager / AlarmManager 依赖，也不为此新增（见 `AGENTS.md`「不轻易引入新第三方库」）。触发点直接用 `BiliTerminal.onCreate` 里**既有的未读检查**，零新增定时器。
+- **只在"未读变多"时提醒**：单纯"有未读"会在每次冷启动都弹，变成骚扰。
+
+### 新增文件与改动
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/util/MsgNotifier.kt`（**新建**，`object`） | `CHANNEL_ID = "private_msg_channel"`、`NOTIFICATION_ID = 1029`（**1027 被 `DownloadService` 占用、1028 被 `PlaybackService` 占用，必须避开**）；`notifyNewMessages(context, privateMsgUnread, otherUnread)`（先查 `areNotificationsEnabled()`，未授权直接放弃；O+ 建渠道；`PendingIntent` 指向 `MessageActivity`，`NEW_TASK or CLEAR_TOP` + `FLAG_IMMUTABLE`；异常只记日志，绝不影响未读检查本身）；`cancel(context)`（撤通知） |
+| 同上 | **纯函数** `shouldNotify(previousUnread, currentUnread, enabled) = enabled && currentUnread > 0 && currentUnread > previousUnread`；**纯函数** `summaryText(privateMsgUnread, otherUnread)`（"3 条新私信、2 条新消息"式，全 0 兜底"有新消息"） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/BiliTerminal.kt` | `MESSAGE_UPDATE_CHECK_ENABLE` 分支里：进 try 先取 `previousUnread`（上次存的 `MESSAGE_UPDATE_NUM`）→ 原两次 unread 检查与写回不变 → 读开关 → `shouldNotify` 为真才 `notifyNewMessages(context, privateMsgUnread, messageUnread)`（注意实参顺序：`MessageApi.checkPrivateMsgUnread()` 给 privateMsg、`checkMessageUnread()`（at+reply）给 other） |
+| 同上 | **两个 catch 分支的 `putInt(MESSAGE_UPDATE_NUM, 0)` 改为只记日志**。理由：清零会让下一次成功检查把"老未读"当成新增未读，网络抖一次就重复弹通知；保留上次已知值既不误报也不丢提示。这是 C14 引入的**行为变更**，专门列在真机清单里 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/message/MessageActivity.kt` | `onCreate` 调 `requestNotificationPermissionIfNeeded()`：Android 13+ 且未授予 `POST_NOTIFICATIONS` 时用 `registerForActivityResult(RequestPermission())` 申请（放消息页请求最自然）；`loadSessions()` 把未读清零后追加 `MsgNotifier.cancel(this)`，避免"看过了通知还挂着" |
+| `app/src/main/java/com/RobinNotBad/BiliClient/util/SettingsKeys.kt` | 新增 `const val PRIVATE_MSG_NOTIFY_ENABLE = "private_msg_notify_enable"`（新增"通知"分组注释段） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/settings/SettingPrefActivity.kt` | 「更新提醒」分组在「消息数量检查」之后新增开关「新消息通知」（默认 `"true"`） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/settings/SettingsIndex.kt` | 通用偏好的可搜索条目列表补「新消息通知」（新增设置项的第三处） |
+| `app/src/main/res/values/strings.xml` | 新增 `desc_private_msg_notify_enable`（设置项说明走 `strings.xml` 的 `desc_*` 惯例） |
+
+**无需改动**：`app/src/main/AndroidManifest.xml:18` 早已声明 `POST_NOTIFICATIONS`，本次只是第一次真正用上它。
+
+### 单测
+
+`app/src/test/java/com/RobinNotBad/BiliClient/util/MsgNotifierTest.kt`（**新建**）+5 例：
+1. `shouldNotify_仅在未读变多时才提醒`——0→3 真、2→3 真、3→3 假（不重复骚扰）、5→2 假（用户读过了）。
+2. `shouldNotify_当前没有未读时不提醒`——-1→0 假、0→0 假。
+3. `shouldNotify_开关关闭一律不提醒`。
+4. `summaryText_私信与其它未读分开报`——3/0、0/2、3/2 三种组合逐字断言。
+5. `summaryText_都没有未读时给出兜底文案`。
+
+**验证**：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → BUILD SUCCESSFUL in 1m 2s；`app/build/test-results/testDebugUnitTest` **27 个 XML / 216 个用例 / 0 失败 / 0 错误**（C12 后 211，本批 +5）。
+
+### 真机验证清单（JVM 单测覆盖不到的部分，发布前逐条走一遍）
+
+1. 首次进消息页（Android 13+）应弹「允许发送通知」权限请求；拒绝后再进不反复弹。
+2. 系统设置里关掉本应用通知 → 有新消息时应不弹、且不崩溃（`areNotificationsEnabled()` 兜底）。
+3. 通知栏点通知 → 直接进消息页，且**不会叠出多个消息页**（`NEW_TASK | CLEAR_TOP`）。
+4. 进消息页后通知应自动消失（撤通知 + `setAutoCancel`）。
+5. 冷启动应用、有未读 → 弹一次通知；**不操作、再次冷启动 → 不应重复弹**（这就是 `shouldNotify` 的判据）。
+6. 在消息页把未读读掉 → 再冷启动 → 不应弹。
+7. 让对方新发一条私信 → 冷启动应弹，且正文是「N 条新私信」；只有回复/@ 类未读时正文是「N 条新消息」。
+8. 设置里把「新消息通知」关掉 → 冷启动不弹；打开后恢复。
+9. **断网启动**（验收 C14 引入的行为变更）：未读数应**保持上次已知值**、不弹通知、不崩溃；恢复网络后冷启动，若期间真有新增未读则弹一次，且不会把断网前的老未读当成新增而重复弹。
+10. 与下载通知、播放通知同时存在时，三条通知互不覆盖（ID 1027/1028/1029 不冲突）。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C14 行改为「通知栏通知已实现（26.10.04 批次 5），不做 RemoteInput 速回、不做后台定时」。
+- `docs/architecture-map.md` §7.15「新消息通知」。
+- 通知 ID 占用：`app/src/main/java/com/RobinNotBad/BiliClient/service/DownloadService.kt:493`、`app/src/main/java/com/RobinNotBad/BiliClient/service/PlaybackService.kt:42-43`。
+- 本批剩余：C16（打开应用时检查追番更新提醒，不做后台定时）。
 

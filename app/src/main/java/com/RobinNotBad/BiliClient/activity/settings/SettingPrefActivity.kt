@@ -35,6 +35,8 @@ class SettingPrefActivity : RefreshListActivity() {
                 getString(R.string.desc_dynamic_update_check_enable), "true"))
             add(SettingSection("switch", "消息数量检查", SharedPreferencesUtil.MESSAGE_UPDATE_CHECK_ENABLE,
                 getString(R.string.desc_message_update_check_enable), "true"))
+            add(SettingSection("switch", "新消息通知", SettingsKeys.PRIVATE_MSG_NOTIFY_ENABLE,
+                getString(R.string.desc_private_msg_notify_enable), "true"))
             add(SettingSection("switch", "最近更新的UP主", SharedPreferencesUtil.RECENT_UP_DISPLAY_ENABLE,
                 getString(R.string.desc_recent_up_display_enable), "true"))
             add(SettingSection("switch", "私信自动已读", SharedPreferencesUtil.PRIVATE_MSG_AUTO_READ_ENABLE,

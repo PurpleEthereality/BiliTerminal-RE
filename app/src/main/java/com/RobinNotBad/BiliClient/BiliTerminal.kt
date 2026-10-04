@@ -19,8 +19,10 @@ import com.RobinNotBad.BiliClient.api.MessageApi
 import com.RobinNotBad.BiliClient.tutorial.TutorialStore
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.Logu
+import com.RobinNotBad.BiliClient.util.MsgNotifier
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.PerformanceManager
+import com.RobinNotBad.BiliClient.util.SettingsKeys
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.RobinNotBad.BiliClient.util.TerminalContext
 import com.RobinNotBad.BiliClient.util.UpdateManager
@@ -318,14 +320,23 @@ class BiliTerminal : Application() {
             ) {
                 CenterThreadPool.run {
                     try {
+                        // 先记下上次的未读数：只有"变多了"才弹通知（见 MsgNotifier.shouldNotify）
+                        val previousUnread = SharedPreferencesUtil.getInt(SharedPreferencesUtil.MESSAGE_UPDATE_NUM, 0)
                         val messageUnread = MessageApi.checkMessageUnread()
                         val privateMsgUnread = MessageApi.checkPrivateMsgUnread()
                         val totalUnread = messageUnread + privateMsgUnread
                         SharedPreferencesUtil.putInt(SharedPreferencesUtil.MESSAGE_UPDATE_NUM, totalUnread)
+
+                        val notifyEnabled = SharedPreferencesUtil.getBoolean(SettingsKeys.PRIVATE_MSG_NOTIFY_ENABLE, true)
+                        if (MsgNotifier.shouldNotify(previousUnread, totalUnread, notifyEnabled)) {
+                            context?.let { MsgNotifier.notifyNewMessages(it, privateMsgUnread, messageUnread) }
+                        }
                     } catch (e: IOException) {
-                        SharedPreferencesUtil.putInt(SharedPreferencesUtil.MESSAGE_UPDATE_NUM, 0)
+                        // 检查失败不再把未读数清零：清零会让下一次成功检查把"老未读"当成新增未读，
+                        // 网络抖一次就重复弹通知。保留上次已知值，既不误报也不丢提示。
+                        Logu.w("BiliTerminal", "未读检查失败: ${e.message}")
                     } catch (e: JSONException) {
-                        SharedPreferencesUtil.putInt(SharedPreferencesUtil.MESSAGE_UPDATE_NUM, 0)
+                        Logu.w("BiliTerminal", "未读检查失败: ${e.message}")
                     }
                 }
             }

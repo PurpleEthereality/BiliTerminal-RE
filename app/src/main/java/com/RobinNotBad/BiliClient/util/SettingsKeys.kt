@@ -51,6 +51,13 @@ object SettingsKeys {
     const val UI_ROTATORY_RECYCLER = "ui_rotatory_recycler"
     const val UI_ROTATORY_SCROLL = "ui_rotatory_scroll"
 
+    // ==================== 通知 ====================
+    /**
+     * 新私信通知栏通知开关。只在"未读数比上次检查时变多"时弹，纯逻辑见
+     * `util/MsgNotifier.shouldNotify`。
+     */
+    const val PRIVATE_MSG_NOTIFY_ENABLE = "private_msg_notify_enable"
+
     // ==================== 缓存与下载 ====================
     const val ARIA2_ENABLED = "aria2_enabled"
     const val DEV_DOWNLOAD_OLD = "dev_download_old"
