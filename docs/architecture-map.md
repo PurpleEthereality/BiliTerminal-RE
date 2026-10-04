@@ -2,7 +2,7 @@
 
 > 通读日期：当前 `main` 分支工作区（`versionName 26.10.03`），26.10.04 复核
 > 目的：改功能前先摸清**真实**架构。本文结论均基于逐文件读源码核实；`AGENTS.md` 已按本文事实重写。
-> 配套阅读：`docs/review/fix-progress.md`（修复进度 + 待办总台账）、`docs/tutorial-system-redesign.md`（教程系统重做，进行中）
+> 配套阅读：`docs/review/fix-progress.md`（修复进度 + 待办总台账）、`docs/tutorial-system-redesign.md`（教程系统重做，进行中）、`docs/watch-optimization-research.md`（手表端优化调研：竞品对比 / 性能体检 / 改造清单，26.10.04）
 
 ---
 
@@ -349,6 +349,36 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 （每个 `## YYYY-MM-DD` 段 = 一个历史版本）是**唯一数据源**，不要另建静态日志表（上游曾有两份互相漂移的日志源）。
 `SplashActivity` 在覆盖安装后的首次启动会自动打开该页（只弹一次，存 versionCode），
 旧「更新公告」全屏弹页（`AppInfoApi.check` 里那句 `MsgUtil.showText`）已删除以避免同一次升级弹两个内容重复的页面。
+
+### 7.7 番剧片头/片尾自动跳过（26.10.04 新增）
+
+设计参照 PiliPlus（`bggRGjQaUbCoE/PiliPlus` @ `2515ecf`）的 `pgcSkipType` / `SkipType` 体系。
+
+**数据来源**：`api/PlayerApi.getViewPoints(aid, cid)`（`x/player/wbi/v2` 的 `data.view_points[]`）里的 `type` —— **1 = 片头，2 = 片尾**。
+在此之前全库没有一处读取 `type` 做跳转，`view_points` 只被当成「视频分段」给用户手点，所以本功能是「只差一层判定」。
+
+**纯逻辑**：`player/ViewPointSkip.kt`（Kotlin `object`，零 Android 依赖，配 `app/src/test/.../ViewPointSkipTest.kt` 9 例）。
+- `Segment(type, fromSec, toSec)` 用**秒**；`buildSegments()` 只留 `type` 为 1/2、`toSec > fromSec`、时长 ≤ `MAX_SEGMENT_SECONDS`(600s) 的段并按起点排序——上限用来挡上游偶尔下发的「0 秒 → 整集」脏区间。
+- `segmentAt()` 判定区间是**左闭右开** `[from, to)`。这一点不能改成右闭：跳过后的落点正好等于 `toSec`，右闭会被自己重新命中而反复跳。
+- `shouldSkip(pos, segments, handled)` 命中 `handled` 集合即返回 `null` → **每个片段只自动跳一次**。
+- `keyForManualSeek()` 专门给「用户自己拖进片段」打标记用。
+
+**接线**（全部在 `activity/player/PlayerActivity.kt`）：
+- 判定挂在**既有的 250ms 主线程进度定时器** `progressChange()` 里（`maybeAutoSkipOpEd`），**没有新增 Timer**。
+- 跳跃复用 `seekToPosition()`，与手动拖动走同一条路径，弹幕与外部音轨一起同步。
+- 反悔：`showSkipUndoSnack()` 用 `MsgUtil.createSnack(anchor, 文案, LENGTH_LONG, MsgUtil.Action("撤回"){...})` 跳回片段起点。`lastSkippedSegment` 用来判断这条 Snackbar 是否已过期，防止「期间又跳过别的片段」后点撤回把人拽回去。
+- **用户主动 seek 必须标记为已处理**：`seekToPosition()` 与 seekbar 的 `onStopTrackingTouch` 两条路径都调 `onUserSeekTo()`。不标的话，用户拖进片头想看一眼，下一轮定时器立刻又把他弹走。
+- `loadViewPoints()` 的三个调用条件从「显示视频分段开启」放宽为 `needViewPoints()`（显示分段 **或** 自动跳过，任一开启）。
+- 换集/换P 时重置 `skipSegments` / `skipHandled` / `lastSkippedSegment`，不带上一集的进度。
+
+**设置项**（默认**关闭**）：
+- `SettingsKeys.PLAYER_SKIP_OP_ED`（`player_skip_op_ed`）——开关本体，在 `activity/settings/SettingTerminalPlayerActivity.kt`；关键词加在 `activity/settings/SettingsIndex.kt`；说明文案 `desc_player_skip_op_ed`。
+- `SettingsKeys.PLAYER_SKIP_OP_ED_GUIDED`（`player_skip_op_ed_guided`）——**只是「引导提示已弹过」的记账位，不出现在设置页**，别当成用户可见开关。
+
+**引导**：视频确实有片头片尾、而用户还没开这个功能时，`maybeShowSkipGuide()` 弹一次带「开启」按钮的 Snackbar；写 `PLAYER_SKIP_OP_ED_GUIDED` 后永不再弹（每集都弹会很烦）。
+
+**与 PiliPlus 的差异**：PiliPlus 有 5 档 `SkipType`（`alwaysSkip` / `skipOnce` / `skipManually` / `showOnly` / `disable`，**默认 `skipOnce`**），并把片段画到进度条上（`segment_progress_bar.dart`）。本项目只做「开启 = 跳过一次 + 可撤回」这一档（用户要求默认关闭），也没有进度条片段标记。
+若将来要补 `alwaysSkip`（用户拖回去也继续跳），把 `maybeAutoSkipOpEd` 里的 `handled` 判断去掉即可——落点是右端点，不会自我循环。
 
 ---
 

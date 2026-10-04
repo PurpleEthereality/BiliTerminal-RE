@@ -1,0 +1,589 @@
+# 手表端优化调研：竞品对比、B 站功能面与改造清单
+
+> 调研日期：2026-10-04
+> 基线版本：26.10.03（versionCode 2610031，见 `app/build.gradle:23-24`）
+> 方法：GitHub REST API 一手查询 + Android 官方文档 + 对 `app/src/main` 源码逐条核对
+> 配套文档：`docs/architecture-map.md`（架构）、`docs/review/fix-progress.md`（问题台账）
+
+---
+
+## 0. 摘要
+
+**三句话结论：**
+
+1. **在"手表原生适配"这一维度，本项目已经领先目前所有可查到的开源同类客户端。** 表冠（旋冠）滚动、圆屏 WindowInsets、杂牌手表 ROM 能力探针、`MediaSession` + 前台播放服务、听视频模式、多账号切换、高能进度条、AI 字幕、互动视频、番剧选集都已落地；而 `SpaceXC/WearBili`（已停更）与 `SpaceXC/Re-WearBili`（两年未更新）源码树里**既没有旋冠也没有 ambient 常亮屏**，`10miaomiao/bilimiao2` 的手表适配只是"应用内 DPI 缩小 + 默认全屏"。
+2. **性能上的主要问题不是"没做优化"，而是"做了优化却没接线"和"该增量刷新的地方用了全量刷新"。** `util/PerformanceManager.kt` 有 7 个自适应参数声明后从未被任何代码调用（图像质量、图片最大宽度、OkHttp 连接池/保活、图片过渡、视频预加载、分页大小）；三个 `applyXxxPerfSettings()` 函数体只有一行日志；全库 53 处 `notifyDataSetChanged`。
+3. **最值得投入的三个新方向**：把接口里已有数据的 `view_points` 变成**自动跳过片头/片尾**；加一个 **Baseline Profile 模块**做冷启动优化；**补齐 csrf 实时化**（现在只有 `api/HistoryApi.java` 修了，其余 10 个 api 类仍读静态快照，Cookie 轮换后点赞/投币/收藏/评论会静默返回 `-111`）。
+
+**优先清单（按 收益 ÷ 成本 排序）：**
+
+| # | 事项 | 类型 | 成本 | 说明 |
+|---|---|---|---|---|
+| 1 | 删除 `x86` ABI、视发布需要关掉 `universalApk` | 体积 | 10 分钟 | 实测通用包 22.63 MB，单 arm64 包 9.64 MB |
+| 2 | csrf 实时化补齐到全部写操作 api | 正确性 | 半天 | 否则点赞/投币/评论在 Cookie 轮换后静默失败 |
+| 3 | `PerformanceManager` 死参数接线或删除 | 性能 | 半天 | 7 个 getter 零调用点 |
+| 4 | 自动跳过片头/片尾（复用已有 `view_points`） | 功能 | 1 天 | 数据已解析，只差自动跳转 |
+| 5 | Baseline Profile 模块 | 启动 | 1~2 天 | 纯增量模块，不改业务代码 |
+| 6 | 列表 `notifyDataSetChanged` → DiffUtil/ListAdapter | 流畅度 | 分期 | 全库 53 处 |
+| 7 | 图片统一按设备档位下采样 | 内存 | 1 天 | 服务端已按 512w 压缩，客户端再按 256px 解码 |
+| 8 | 崩溃页独立进程 | 稳定性 | 半天 | 借鉴 Re-WearBili 的 `android:process=":error_activity"` |
+| 9 | 弹幕点击菜单（点赞/复制/举报） | 功能 | 1~2 天 | PiliPlus 有，本项目暂无 |
+| 10 | 动态编辑/置顶/定时发布 | 功能 | 2~3 天 | 发布链路已有，改/顶缺接口封装 |
+
+**本文还包含**：§7.4 是把 B 站客户端全部功能模块（视频/番剧/动态/评论/私信/账号/直播/搜索/本地共 9 组）逐条对照本项目覆盖情况的矩阵，标注 ✅已有 / ❌未做 / ➖建议不做，用于把"B 站有哪些功能"收敛成可判定的待办清单；§10 是**手表相关接口速查 + 风控硬约束**（含 11 条实测约束与错误码语义），供动手实现时直接查。
+
+**一条必须知道的外部变化**：一手接口字典 `bilibili-API-collect`（20,191★）**已于 2026-01-28 因律师函永久关停**，文档站 404。本项目仓库内自带快照 `bilibili-API/`（197 个文件）仍可用，但**不要再以"抄现成端点清单"为长期模式**，且该文档集是 CC BY-NC 4.0，合规风险需在发布前评估（详见 §10.1）。
+
+---
+
+## 1. 调研对象总览
+
+数据采集时间 2026-10-04，均为 GitHub REST API 实时查询 + 仓库 README/源码一手核对。
+
+| 仓库 | ★ / fork | 语言 | 最后提交 | 手表适配 | 参照价值 |
+|---|---|---|---|---|---|
+| [bggRGjQaUbCoE/PiliPlus](https://github.com/bggRGjQaUbCoE/PiliPlus) | 18,999 / 1,424 | Dart(Flutter) | **2026-10-04** | 无专项 | 功能面与 API 实践的"需求样本" |
+| [SpaceXC/Re-WearBili](https://github.com/SpaceXC/Re-WearBili) | 141 / 39 | Kotlin | 2024-12-13 | **强** | 手表端最值得对照的现代实现 |
+| [luern0313/WristBilibili](https://github.com/luern0313/WristBilibili) | 142 / 26 | Java | 2023-05-25 | 强 | 源码不完整（依赖作者自研 Lson 库） |
+| [SpaceXC/WearBili](https://github.com/SpaceXC/WearBili) | 126 / 6 | Kotlin | 2023-08-05 | **强（已停更）** | 圆屏列表曲率避让等小件 |
+| [cyq114514/Re-BiliTerminal](https://github.com/cyq114514/Re-BiliTerminal) | — | Java | 2026-10-02 | 强 | **与本项目同源的兄弟分支** |
+| [10miaomiao/bilimiao2](https://github.com/10miaomiao/bilimiao2) | 2,939 / 104 | Kotlin | 2026-09-27 | 弱 | 官方自述"优先适配手机和平板" |
+| [CryNet-Studio/KiliKili](https://github.com/CryNet-Studio/KiliKili) | — | Kotlin | — | — | BiliClient 的规范重写 fork（Retrofit），架构对照 |
+| [gitee.com/RobinNotBad/BiliClient](https://gitee.com/RobinNotBad/BiliClient) | 71 / 31（Gitee） | Java | 状态「暂停」 | 强 | 本项目上游基线（GitHub 同名仓库 404） |
+| [yujincheng08/BiliRoaming](https://github.com/yujincheng08/BiliRoaming) | 11,546 | Java | 2026-07-06 | — | **已 archived**（收到律师函），仅参考签名算法 |
+| [SocialSisterYi/bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect) | 20,191 | — | **已永久关停** | — | ⚠️ 上游已因律师函关停（2026-01-28），文档站 404；**本项目已在仓库内自带快照 `bilibili-API/`（197 个文件）** |
+
+**结论：Wear OS 生态里目前没有仍在积极维护的原生 B 站第三方客户端。** Re-WearBili 是最后一代，已两年未更新。这既是本项目的机会窗口，也意味着**没有现成代码可抄，只能自己趟**。
+
+---
+
+## 2. 本项目现状：已经做了什么（避免重复投入）
+
+> 这一节专门用来**纠正"以为没做其实做了"的判断**。下列各项均在 `app/src/main` 中实测存在。
+
+### 2.1 手表交互专项
+
+| 能力 | 实现位置 | 说明 |
+|---|---|---|
+| **表冠（旋冠）滚动** | `ui/widget/RotaryEncoderSupport.kt`、`RotaryScrollView.kt`、`RotaryRecyclerView.kt`、`RotaryNestedScrollView.kt` | 三个控件共用一份实现；`RotaryEncoderSupport.kt:60-62` 判定 `InputDevice.SOURCE_ROTARY_ENCODER` 并取 `AXIS_SCROLL` 取负；`res/layout/` 下 **53 个布局**（占 134 个布局的 40%）已换成这三个控件 |
+| 表冠灵敏度可调 | `util/SettingsKeys.kt:50-52`、`activity/settings/SettingPrefActivity.kt:64-67` | `ui_rotatory_enable`、`ui_rotatory_recycler`、`ui_rotatory_scroll` 三个设置 |
+| 表冠翻页（教程） | `tutorial/TutorialPagerActivity.kt:216-233` | 与滚动同向，复用同一套开关 |
+| 圆屏安全区 | `activity/base/BaseActivity.kt:146` | `ViewCompat.setOnApplyWindowInsetsListener(root)` 统一处理 |
+| 杂牌手表 ROM 能力探针 | `util/ViewCapabilityProbe.kt:8-18` | 起因是真实崩溃：某手表 `View.hasOnLongClickListeners()` 不存在；`BaseActivity.kt:173/275/301` 全部走探针 |
+| 禁用系统右滑返回 | `activity/base/BaseActivity.kt:79`、`activity/player/PlayerActivity.kt:326/405-407`、`ui/appearance/ColorScheme.kt:521-524` | ⚠️ 已被证实在 `setTheme` 覆盖清单的主主题下失效，这正是 issue #1 的根因 |
+| 列表页统一基类 | `activity/base/RefreshMainActivity.kt`、`RefreshListActivity.kt:59,71,168-173` | 分页/刷新/复位集中一处 |
+
+**对比结论：** `WearBili` 与 `Re-WearBili` 的源码树中**检索不到 rotary / ambient 相关实现**（见 §1 表与 §7 来源）。旋冠不是本项目的待办，而是已经领先的部分。
+
+### 2.2 播放与后台
+
+| 能力 | 实现位置 |
+|---|---|
+| `MediaSession`（锁屏/通知栏控制） | `activity/player/PlayerActivity.kt:14,175,1964-2026`，含 `FLAG_HANDLES_MEDIA_BUTTONS or FLAG_HANDLES_TRANSPORT_CONTROLS` |
+| 后台播放前台服务 | `service/PlaybackService.kt:36,57-79,154,170-175`（通知 + TOGGLE/STOP 动作） |
+| 听视频模式（关画面只听声） | `PlayerActivity.kt:2373-2454`，设置 `PLAYER_DEFAULT_AUDIO_ONLY` |
+| 倍速（含长按 3 倍速） | `player/VideoPlayerCore.kt:333`、`PlayerActivity.kt:724-766,1077-1102,2229-2231` |
+| 字幕（多轨 / AI 字幕 / 时间校准 / 自动选中文） | `PlayerActivity.kt:1330-1474`、`player/PlayerDefaults.kt:59-72`、`api/PlayerApi.java:596-708` |
+| 高能进度条 | `ui/widget/HighEnergyProgressBar.kt`、`api/PlayerApi.java:712-760`、`model/HighEnergyData.java` |
+| 弹幕发送 + 直播弹幕接收 | `api/DanmakuApi.java:27`、`PlayerActivity.kt:1957` |
+| 视频分段/看点跳转 | `api/PlayerApi.java:633-650`、`adapter/ViewPointAdapter.kt`、`PlayerActivity.kt:2820-2863` |
+| 互动视频分支 | `api/InteractionVideoApi.java`、`model/InteractionVideoData.java` |
+| 续播 + 进度上报 | `api/HistoryApi.java:38-44,74-75,107-119`（`currentCsrf()` 从实时 Cookie 派生） |
+
+### 2.3 账号与内容
+
+- **多账号切换**：`activity/settings/login/AccountSwitchActivity.kt`（`AndroidManifest.xml:557`），点按切换、长按删除。
+- **三种登录 + Cookie 导入导出**：扫码（WEB/TV）、密码、短信、`SpecialLoginActivity`（`AndroidManifest.xml:256`）。
+- **番剧选集**：`activity/video/info/BangumiInfoFragment.kt:258,263,337-339,357-359,368`、`api/BangumiApi.java:59,221-224`、`model/Collection.java`。
+- **动态发布（含话题、可见范围）**：`api/DynamicApi.java:84-136` `publishComplex(contents, pics, option, topic, scene, attachCard, otherArgs)`；`:267` `private_pub`。
+- **图片上传带手表保护**：`activity/reply/WriteReplyActivity.kt:48-54,236,306`、`api/ImageApi.java:113,247` 按最长边 2048 采样，避免手表解码大图 OOM。
+
+**结论：** §0 表中"功能新增"一节**已经剔除了所有本项目已实现的能力**（后台播放、通知栏控制、多账号、高能进度条、字幕、番剧选集、旋冠、圆屏适配都不再列为待办）。竞品调研中列出的 13 条"可借鉴点"，有 5 条本项目已经做了或做得更好。
+
+### 2.4 风控与签名基础设施（已做得相当完整）
+
+这一节同样是"避免重复投入"——B 站第三方客户端最容易翻车的地方，本项目**基本都已实现**：
+
+| 能力 | 实现位置 | 说明 |
+|---|---|---|
+| **WBI 签名** | `api/ConfInfoApi.signWBI(url)`（`api/PlayerApi.java:630` 等多处在用） | 对应官方 `wbi_img.img_url/sub_url` → 拼 `img_key+sub_key` → 64 位重排表取前 32 位得 `mixin_key` → 参数升序 + 过滤 `!'()*` + 拼 `mixin_key` → MD5 得 `w_rid`。**密钥每日更替，需缓存与刷新** |
+| **buvid3 / buvid4** | `api/CookiesApi.java:89-195`（`x/web-frontend/getbuvid`、`x/frontend/finger/spi`） | ⚠️ 这是关键：点赞/投币/一键三连等写接口**不带 buvid3 会直接触发风控**。本项目已生成并持久化 |
+| **bili_ticket** | `api/CookiesApi.java:111-216`（`GenWebTicket`，`key_id=ec02` + `hexsign` + `context[ts]`） | 带过期时间（写入 `bili_ticket_expires`，+3 天）自动续期 |
+| **b_nut / buvid_fp 设备指纹** | `api/CookiesApi.java:175-177,224-226,281,310` | BUVID 与设备绑定（首次安装上报 AndroidID 等换回云端 BUVID，**重装仍被识别**）→ 持久化是对的，**不要每次重装随机换指纹** |
+| **游客态 Cookie 构建** | `util/NetWorkUtil.java:208`《从完整 Cookie 字符串构建游客 Cookie：剔除登录相关项，保留 buvid3/buvid4/bili_ticket/_uuid》 | 未登录也能带着设备身份请求，降低 `-352` 概率 |
+| **Cookie 刷新链** | `api/CookieRefreshApi.java:81,94` | 对应 `cookie/info` → `correspond/{correspondPath}` → `cookie/refresh` → `confirm/refresh` 四步；不做这条链用户就要反复重新扫码 |
+| **写接口携带设备身份** | `api/UserInfoApi.java:285,312,340-351` | 显式把 `buvid3/buvid4/bili_ticket` 拼进请求 |
+
+**结论：** 本项目在"不被风控打死"这件事上的投入已经超过多数第三方客户端。**唯一仍缺的是 §5.1 的 `csrf` 实时化**——而 `csrf`（`bili_jct`）恰恰也会随 Cookie 轮换而变，两者是同一类问题的两个面。
+
+---
+
+## 3. 手表端硬约束（Android 官方，必须满足）
+
+来源：[Wear OS app quality](https://developer.android.com/docs/quality-guidelines/wear-app-quality)、[Rotary input](https://developer.android.com/training/wearables/user-input/rotary-input)、[Layouts](https://developer.android.com/training/wearables/views/layouts)。
+
+**必须满足项：**
+
+- **WO-V2**：触控目标 ≥ 48×48dp。
+- **WO-V1**：适配系统字号放大后不得重叠/裁切（本项目已有"界面缩放 0.25~5 倍"+ 自定义字体，需真机复核）。
+- **WO-V3**：几乎全部页面必须支持右滑关闭（地图平移、进行中运动除外）。
+- **WO-V8**：滚动时必须显示滚动条。
+- **WO-V13**：背景一律纯黑。
+- **WO-V14**：关键文本 ≥ 12sp、非关键 ≥ 10sp。
+- **WO-V15**：启动闪屏为黑底 + 48×48dp 图标，须与启动器图标一致。
+- **WO-V16**：内容不小于 192dp 圆，文字/控件不得互相重叠或被边缘裁切。
+- **WO-V4**：长时操作须用 OngoingActivity / Live Update 通知（本项目后台播放已有通知，下载服务需复核）。
+- **WO-V5**：离开前台保存状态，数分钟内恢复须还原。
+- **WO-P6**：**认证不得要求手表端输入账号密码**。本项目扫码登录满足该项；但**密码/短信登录入口的存在是否会触发审核问题，需要在发布前确认**（合规上通常是"必须提供免输入路径"，而非"禁止存在输入路径"）。
+- WO-V7（必须实现旋冠滚动）已于 **2024-02-14 移除**，本项目已自行实现，属超额满足。
+
+**旋冠实现要点（对照本项目）：**
+
+- 旋转事件**不沿视图树冒泡**，API 28+ 视图不再隐式获焦 → 无焦点或返回 false 时会落到 `Activity.onGenericMotionEvent()`。`RotaryEncoderSupport` 走的是控件级 `onGenericMotionEvent`，需确认焦点策略（`RotaryScrollView.kt:25` 传了 `requestFocus = true`）。
+- 多滚动视图只能指定一个焦点，**旋冠不支持嵌套滚动** → `activity_player.xml` 内有 4 个 `RotaryRecyclerView`、`fragment_media_info.xml` 是 `RotaryNestedScrollView` 套 `RotaryRecyclerView`，属高风险点，建议在真机上逐个验证手势归属。
+- 输入框抢焦点后要提供夺回手段。
+
+**圆屏：**
+
+- 官方推荐 `BoxInsetLayout` + `app:layout_boxedEdges="all"`（外层 15dp + 内层 5dp）；`WatchViewStub` **已废弃**。
+- 本项目未用 `BoxInsetLayout`，走的是 `BaseActivity.kt:146` 的 WindowInsets → padding 手写等价物，方向正确；**单屏页面**（非滚动列表）最容易被裁角，需按 WO-V16 逐页复核。
+
+---
+
+## 4. 本项目性能体检（实测数据）
+
+### 4.1 体积构成（实测）
+
+对已构建的 `app/build/outputs/apk/release/app-arm64-v8a-release.apk`（9.64 MB）解包统计：
+
+| 项 | 原始大小 | 占比 |
+|---|---|---|
+| `lib/`（native） | 6.70 MB | **56.5%** |
+| `classes.dex` | 3.34 MB | 28.2% |
+| `res/` | 1.28 MB | 10.8% |
+| `resources.arsc` | 0.49 MB | 4.1% |
+
+单文件 Top：`lib/arm64-v8a/libijkffmpeg.so` **5.04 MB**、`classes.dex` 3.34 MB、`libbrotli.so` 0.78 MB、`libijkplayer.so` 0.51 MB。
+
+各产物实测大小：`arm64-v8a` 9.64 MB / `armeabi-v7a` 8.21 MB / `x86` 10.63 MB / **`universal` 22.63 MB**。
+
+**结论：**
+- 公共代码只有约 3.3 MB dex + 1.3 MB res，**"清理死代码"对体积几乎没有收益**；真要减体积必须重编 ffmpeg（裁剪解码器）。这一点与 §1 中 `Re-WearBili` 保留 ijkplayer 独立 so 模块的做法一致。
+- `app/build.gradle:140-146` 打包了 `armeabi-v7a / arm64-v8a / x86` 并额外生成 universal 包。**Wear OS 手表全是 ARM，`x86` 只服务模拟器**，属发布噪音；`universalApk true` 产出的 22.63 MB 包也没有分发价值。
+
+### 4.2 `PerformanceManager` 的"自适应"名不副实
+
+`util/PerformanceManager.kt`（320 行）设计上是按硬件打分（RAM/CPU 核数/主频/SDK，阈值 65 高、35 中）分档调节运行时参数。实际情况：
+
+**已接线（真的在用）：**
+
+| Getter | 调用点 |
+|---|---|
+| `getGlideDiskCacheSizeMB` / `getGlideMemoryCacheSizeMB` / `isHardwareBitmapEnabled` | `helper/CustomGlideModule.kt:27,28,38` |
+| `isLowPerfDevice` | `activity/MenuActivity.kt:166` |
+| `getRecyclerViewCacheSize` / `getRecyclerViewPrefetchCount` | `activity/base/RefreshListActivity.kt:59,71` |
+| `setHighPerformanceMode` / `getCurrentPerfLevel` / `KEY_HIGH_PERFORMANCE_MODE` | `activity/settings/SettingGroupActivity.kt:434-438` |
+
+**声明后零调用点（死参数）：**
+
+`getImageQuality()`（:233）、`getImageMaxWidth()`（:240）、`getOkHttpConnectionPoolSize()`（:247）、`getOkHttpKeepAliveMinutes()`（:253）、`isImageTransitionEnabled()`（:259）、`isVideoPreloadEnabled()`（:265）、`getPageSize()`（:268）。
+
+**三个策略函数是空壳：**
+
+```kotlin
+private fun applyLowPerfSettings() {          // :189  注释写着"低性能设备优化策略（手表等）"
+    Logu.i("PerformanceManager", "应用低性能优化策略")
+}
+```
+
+`applyMediumPerfSettings()`（:194）、`applyHighPerfSettings()`（:198）同样只有一行日志。也就是说**"高性能模式"开关除了改变 Glide/RecyclerView 的取值外，不做任何事**。
+
+**主线程 IO：** `init()`（:110-143）在 `BiliTerminal.onCreate`（`BiliTerminal.kt:209`）同步调用；首次冷启动时 `getPerformanceLevel()` → `getCpuMaxFreqMHz()`（:289-319）会读 `/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq`，失败时回退逐行解析 `/proc/cpuinfo`。第二次起命中 `KEY_DEVICE_PERFORMANCE_LEVEL` 缓存不再执行。**:136-141 已经有一处刻意优化**（用 `LOGI_ENABLED` 短路，避免 release 版每次冷启动白跑一次 `getHardwareScore()`），说明作者已经注意到这条路径的代价——**把首次检测整体挪到后台线程即可彻底解决**。
+
+### 4.3 列表刷新
+
+- 全库 `notifyDataSetChanged` **53 处**。
+- 全库 `.override(` / `.thumbnail(` 仅 **6 处**，而 `Glide.with` 有 54 处。
+
+### 4.4 图片链路（比预想的好）
+
+`util/GlideUtil.java`：`url()` 会给 http 图拼 `@0e_{q}q_{w}w.webp`（`q` 由 `image_request_jpg` 开关决定，`w` 取 `QUALITY_HIGH=80 / MAX_W_HIGH=1024` 或 `QUALITY_LOW=60 / MAX_W_LOW=512`），已跳过 gif / `@` 签名 / afdian 图；`request()` 用 `DecodeFormat.PREFER_RGB_565` + `DiskCacheStrategy.AUTOMATIC` + 300ms 淡入。
+
+**所以"图片没下采样、内存爆"的判断是不成立的**——服务端已经按 512w 压过、客户端按 RGB_565 解码。真正缺的是**按设备档位把 `w` 降到 256~320**（400×400 的手表屏封面 256px 足够），而这正好是那个没人调用的 `getImageMaxWidth()`。
+
+### 4.5 构建配置
+
+- `app/build.gradle:59-60` release 开 `minifyEnabled true` + `shrinkResources true`（正确）。
+- `app/build.gradle:114-118` **`viewBinding false`、`dataBinding false`** → 全库 `findViewById`。这不仅是性能问题（每次 bind 都要查视图树），更是稳定性问题：`adapter/SettingsAdapter.kt:108`、`activity/base/BaseActivity.kt:204,238` 的注释里都记录着真实发生过的 `ClassCastException` 崩溃。
+- `app/src/main/AndroidManifest.xml:36` **`android:largeHeap="true"`**。注意：`Re-WearBili` 也开了这一项，所以不能简单判定为错误；但本项目的图片链路已经比它保守（RGB_565 + 服务端缩图），**建议实测内存曲线后再决定是否移除**。
+
+---
+
+## 5. 代码正确性风险（影响"看起来有但用不了"的体验）
+
+### 5.1 csrf 实时化只修了一半 ⚠️
+
+兄弟分支 `Re-BiliTerminal` 修过的 ① 号坑是"进度上报读本地快照 csrf/mid → Cookie 轮换后所有 POST 返 `-111`"。
+
+**本仓库只修了 `api/HistoryApi.java`**（`:38-44,74-75,107-119` 的 `currentCsrf()` 从实时 Cookie `bili_jct` 派生，并在为空时 `Logu.e` 明确提示"上报必被服务端拒绝(-111)"）。
+
+**其余写操作 api 仍读静态快照 `SharedPreferencesUtil.getString("csrf","")`：**
+
+| 文件 | 行号 |
+|---|---|
+| `api/DanmakuApi.java` | 32, 44, 55, 67 |
+| `api/FavoriteApi.java` | 295, 307, 320, 334, 345 |
+| `api/LikeCoinFavApi.java` | 21, 30, 39, 50 |
+| `api/WatchLaterApi.java` | 49, 60 |
+| `api/ReplyApi.java` | 182, 279, 313, 333 |
+| `api/DynamicApi.java` | 64, 90, 340, 447, 464 |
+| `api/OpusApi.java` | 282, 283, 288 |
+| `api/PrivateMsgApi.java` | 229, 244, 251, 252 |
+| `api/VoteApi.java` | 45, 76, 78, 92, 93, 233, 235, 240, 241 |
+| `api/ArticleApi.java` | 120, 146, 167, 184 |
+| `api/EmoteApi.java` | 52, 92, 118, 154 |
+
+已改用实时 Cookie 的：`api/MessageApi.java:406,423`、`api/UserInfoApi.java:207,228,246,263,282,337`、`api/ReplyApi.java:234`、`api/VipApi.java:72`、`api/CookieRefreshApi.java:81,94`。
+
+**影响：** 点赞、投币、收藏、加稍后再看、发弹幕、发评论、发动态、投票、私信、专栏/表情操作。手表上用户很难判断是"网不好"还是"没登上"，属于最伤的体验级 bug。
+
+### 5.2 未接线的 P0 项（来自 `docs/review/fix-progress.md` §五）
+
+已迁移到台账，此处不重复，仅提示这批问题**集中在"接口调用了但 UI 状态没回"**这一类，对手表小屏的影响比手机更大（用户没有其他途径确认操作是否生效）。
+
+### 5.3 网络层（本仓库比兄弟分支更保守，属优点）
+
+`util/NetWorkUtil.java`：
+
+- `executeWithDoctypeRetry`（:299-350）**只被 `get()`（:296）调用**；
+- `post()` / `postJson()`（:367-395）**不走重试**；
+- 重试上限 `api_retry_max_times` 默认 5、间隔 `api_retry_interval_seconds` 默认 0.1s；`"Canceled"` 时不重试。
+
+**结论：兄弟分支的 ⑥ 号坑（弱网下写操作被自动重发导致重复点赞/投币）在本仓库不成立。** 后续若要给 POST 加重试（弱网手表确实需要），**必须显式排除写操作**。
+
+同一分支的 ⑤ 号坑（搜索 suggest 词表从 `data` 移到 `result`）**本仓库也已修**：`api/SearchApi.java:234-243` 直接读 `result.tag[].value`。
+
+### 5.4 其他"有 UI 无逻辑"项
+
+- **评论点踩按钮是死视图**：`adapter/ReplyAdapter.kt:495` 只做了 `findViewById(R.id.dislikeBtn)`，全库再无引用 —— 无点击监听、无状态绑定，用户点了没有反应。属 §5.2 同一类问题，建议并入台账。
+
+---
+
+## 6. 竞品借鉴点逐条裁决
+
+对调研收集到的 13 条借鉴点，逐条给出"本仓库是否已有"的裁决（**已有的不再列为待办**）：
+
+| # | 借鉴点 | 来源 | 本仓库状态 |
+|---|---|---|---|
+| 1 | 禁右滑退出主题 | WearBili `theme_without_swipe.xml` | ✅ 已有（`ColorScheme.kt:521-524`），但存在 `setTheme` 覆盖失效 bug（issue #1） |
+| 2 | **Baseline Profile 模块** | Re-WearBili `baselineprofile/` | ❌ **未做**（`app/` 下无 source baseline profile，只有 AGP 在 `build/intermediates` 生成的） |
+| 3 | 全局密度缩放（372dp 基准） | Re-WearBili `DensityProvider.kt` | ✅ 已有等价物（"界面缩放 0.25~5 倍"）；可参考它的 `widthPixels / 372.0f` 算法 |
+| 4 | 圆屏列表曲率避让 + 跑马灯标题 | WearBili | ⚠️ 部分：有 WindowInsets 安全区，**无列表项曲率避让、无跑马灯** |
+| 5 | 观看进度同步 | Re-BiliTerminal | ✅ 已有（续播 + 上报 + `HistoryApi.currentCsrf()`） |
+| 6 | 番剧选集 | Re-BiliTerminal | ✅ 已有 |
+| 7 | 后台/熄屏播放 + 通知栏遥控 | Re-WearBili / Re-BiliTerminal | ✅ 已有（`PlaybackService` + `MediaSession` + 听视频模式） |
+| 8 | 列表复用结构（Holder 抽离） | huanli233 BiliClient | ⚠️ 部分：已有 `adapter/video/VideoCardHolder.kt`，但 `new VideoCard(` 仍有 21 处解析重复 |
+| 9 | 播放器交互增强 | Re-BiliTerminal | ✅ 大部分已有（长按倍速、双击快进退、听视频、字幕、看点） |
+| 10 | WebDAV 备份/恢复设置 | PiliPlus | ❌ 未做（手表端价值低，**建议不做**） |
+| 11 | 多账号切换 | Re-BiliTerminal / PiliPlus | ✅ 已有 |
+| 12 | **崩溃页独立进程 + 崩溃上报** | Re-WearBili / WearBili | ❌ 未做（本项目用 `ErrorCatch`，未隔离进程） |
+| 13 | 旋冠全列表接入 | 调研认为"无现成实现" | ✅ **本仓库已实现且做得比调研对象都好** |
+
+---
+
+## 7. 待办清单
+
+### 7.1 性能 / 体积 / 启动
+
+| 优先级 | 事项 | 位置 | 做法 |
+|---|---|---|---|
+| P0 | 去掉 `x86` ABI | `app/build.gradle:140-146` | `include 'armeabi-v7a', 'arm64-v8a'`；`universalApk` 按发布需要保留 |
+| P0 | csrf 实时化 | 见 §5.1 清单 | 把 `HistoryApi.currentCsrf()` 提为公共工具（如 `util/CookieUtil.kt`），替换全部静态快照读取 |
+| P0 | `PerformanceManager` 死参数 | `util/PerformanceManager.kt:233-271` | 三选一：接线 / 删除 / 标注 `@Deprecated` + TODO；三个 `applyXxxPerfSettings` 要么实现要么删 |
+| P1 | Baseline Profile | 新增 `baselineprofile` 模块 | 用 `androidx.baselineprofile` 插件 + `BaselineProfileGenerator`；**注意 AGENTS.md 的 clean 构建约定** |
+| P1 | 首次硬件检测挪后台 | `util/PerformanceManager.kt:125` | `CenterThreadPool.run { currentPerfLevel = getPerformanceLevel() }`，先落默认中档 |
+| P1 | 图片按档位降 `w` | `util/GlideUtil.java:url()` | 接入 `getImageMaxWidth()`，低档 256、中档 320、高档 512 |
+| P1 | 列表增量刷新 | 53 处 | 优先改造 `RefreshListActivity` 派生页；用 `DiffUtil.ItemCallback` |
+| P2 | 打开 viewBinding | `app/build.gradle:114-118` | 分期迁移；先对新代码启用 |
+| P2 | OkHttp 连接池接线 | `NetWorkUtil` 构建 OkHttpClient 处 | 接 `getOkHttpConnectionPoolSize()` / `getOkHttpKeepAliveMinutes()` |
+| P2 | 崩溃页独立进程 | `AndroidManifest.xml` | `android:process=":error_activity"`（借鉴 Re-WearBili） |
+| P3 | ffmpeg 裁剪重编 | `ijkplayer-java` / so | 唯一能显著减体积的手段，成本高，需 NDK 工具链 |
+
+### 7.2 功能新增（已剔除本项目已有项）
+
+| 优先级 | 功能 | 依据 | 说明 |
+|---|---|---|---|
+| **P0** | **自动跳过片头/片尾** | 数据已就位：`api/PlayerApi.java:627-651` 从 `x/player/wbi/v2` 解析 `view_points`，`model/ViewPoint.java:7` 的 `type` 字段（1=片头 / 2=片尾，语义以 bilibili-API-collect 为准）**已被解析并存下，但全库无任何地方读取它做跳转** | 在播放位置进入 `type==1/2` 区间时自动 `seekTo(to)`；加设置开关 + "每段只跳一次"保护 + 用户手动拖回后不再跳 |
+| **P0** | 弹幕点击菜单 | PiliPlus | 点弹幕 → 悬停 → 点赞/复制/举报；手表上"复制"价值有限，"举报/屏蔽"可留 |
+| P1 | ~~SponsorBlock~~ **自动空降** | PiliPlus | ⚠️ **纠偏**：SponsorBlock 官方 README 只服务 YouTube（支持 Invidious），**全文未提 B 站**。B 站生态的"空降"只能靠 ①官方 PGC 片头片尾/章节看点（`x/player/wbi/v2` 的 `view_points`）②高能进度条 `https://bvc.bilivideo.com/pbp/data`（返回 `step_sec` + `events.default[]`）③自建众包。→ **不要引入 SponsorBlock 依赖** |
+| P1 | 画中画（PiP） | PiliPlus | 全库无 `enterPictureInPicture`；手表上价值中等（小屏 PiP 体验有限），可延后 |
+| P1 | 评论点踩 | PiliPlus | ⚠️ **已确认是死视图**：`adapter/ReplyAdapter.kt:495` 只有 `val dislikeBtn: ImageView = itemView.findViewById(R.id.dislikeBtn)`，全库再无第二处引用，既无点击监听也无状态绑定 —— 点了没反应。接口是现成的：`x/v2/reply/hate`（需登录 + csrf） |
+| P1 | 评论举报 / 删除 / 置顶自己的评论 | PiliPlus | 接口 `x/v2/reply/report`、`/del`、`/top`（后两个需 csrf） |
+| P1 | 评论楼中楼排序/定位 | PiliPlus | 已有 `activity/reply/ReplyInfoActivity.kt`（楼中楼），排序/定位待补；游标接口 `x/v2/reply/dialog/cursor` |
+| P1 | 动态编辑 / 置顶 / 定时发布 | PiliPlus | 发布链路已有（`DynamicApi.publishComplex`）；缺的接口都已确认存在：置顶 `x/dynamic/feed/space/set_top` + `/rm_top`、删除 `dynamic_svr/rm_dynamic`、传图 `x/dynamic/feed/draw/upload_bfs`、投票 `vote_svr/create_vote`（后三者需 csrf） |
+| P1 | 私信：发图 / 撤回 / 置顶 / 折叠消息 | PiliPlus | 文本收发已有（`api/PrivateMsgApi.java`）；缺 `session_svr/remove_session`、`/set_top`、`batch_rm_dustbin`、`batch_update_dustbin_ack`（均需 csrf），发图需先走 upload 拿 url |
+| P1 | 关注主播开播提醒 | —— | 接口现成且轻量：`live.bilibili.com/room/v1/Room/get_status_info_by_uids`（按 uid 批量查开播状态，免登录）；配合 WorkManager 定期轮询 → 本地通知。**手表高价值、低实现成本** |
+| P2 | 弹幕点赞 / 撤回自己的弹幕 | PiliPlus | `x/v2/dm/thumbup/add`、`x/v2/dm/thumbup/stats`、`x/dm/recall` |
+| P2 | 稍后再看「未看完」分类 | PiliPlus | 列表已有（`api/WatchLaterApi.java:23` 走 `x/v2/history/toview/web`），仅缺按 `progress` 分组 |
+| P2 | 笔记 | PiliPlus | 全库无实现；手表端输入体验差，建议不做或只做"查看" |
+| P2 | 搜索建议 `data` / `result` 双字段兼容 | 兄弟分支 ⑤ 号坑 | ✅ **已有**：`api/SearchApi.java:234-243` 已按 `result.tag[].value` 解析 |
+| P2 | 收藏夹排序 / 多选删除 | PiliPlus | 手表上多选操作可用表冠，成本中 |
+| P2 | 滑动跳转预览缩略图 | PiliPlus | 需 `storyboard` 接口 + 每帧图片，手表功耗敏感，**建议不做** |
+| P3 | WebDAV 备份 / 恢复设置 | PiliPlus | 与"轻量手表客户端"定位不符 |
+| P3 | DLNA 投屏、超级分辨率、Live Photo、AI 原声翻译、互动视频增强 | PiliPlus | 手表端明确不适合 |
+
+### 7.3 明确不做
+
+创作中心、会员购、漫画、课堂、直播礼物/舰长、多窗口、桌面小组件 —— 与手表使用场景不匹配，做了只会增加体积与维护面。
+
+### 7.4 B 站客户端功能全景对照（"B 站有哪些功能" × 本项目覆盖情况）
+
+> 功能项取自 PiliPlus README 的实战清单（功能面最全的开源客户端），逐条对照本项目源码判定。✅=已有，❌=未做，➖=建议不做。
+
+**视频播放**
+
+| 功能 | 本项目 | 功能 | 本项目 |
+|---|---|---|---|
+| 多清晰度 / 音质切换 | ✅ | 自动跳过片头/片尾 | ❌ 见 7.2 P0 |
+| 倍速（含长按） | ✅ | SponsorBlock | ❌ |
+| 弹幕开关 / 透明度 / 字号 / 速度 | ✅ | 高能进度条 | ✅ |
+| 弹幕发送 / 屏蔽词 | ✅ | 视频分段 / 看点 | ✅ |
+| 弹幕点击点赞/复制/举报 | ❌ 见 7.2 P0 | 滑动跳转预览缩略图（storyboard） | ➖ |
+| 高级弹幕 / 合并弹幕 / 彩色弹幕 | ❌/➖ | 超分辨率 | ➖ |
+| 字幕（多轨 / AI / 校准） | ✅ | 视频截图 / 截取动图 | ❌/➖ |
+| 互动视频 | ✅ | AI 原声翻译 | ➖ |
+| 画中画（PiP） | ❌ | 听视频（纯音频） | ✅ |
+| DLNA 投屏 | ❌ | 视频 TAG / staff | ❌ |
+| 外挂播放器（FileProvider 授权） | ✅ | 亮度 / 音量手势 | ❌ |
+
+**番剧 / 影视**
+
+| 功能 | 本项目 | 功能 | 本项目 |
+|---|---|---|---|
+| 番剧选集 | ✅ | 追番 / 取消追番 | ✅ |
+| 时间表 | ✅（`TimelineActivity`） | 多季 / OVA 直达 | ✅ |
+
+**动态**
+
+| 功能 | 本项目 | 功能 | 本项目 |
+|---|---|---|---|
+| 浏览器动态流 / 图文动态 | ✅ | 编辑动态 | ❌ |
+| 动态发布（文字 / 图 / 话题 / 可见范围） | ✅ | 置顶 / 删除动态 | ❌ 部分 |
+| 转发动态 | ✅ | 投票创建 / 参与投票 | ✅ 参与 |
+| 带图动态、图片评论 | ✅ | 动态话题页 | ❌ |
+| 屏蔽带货动态 | ❌ | 互动抽奖 / 预约 | ➖ |
+
+**评论**
+
+| 功能 | 本项目 | 功能 | 本项目 |
+|---|---|---|---|
+| 评论列表 / 楼中楼 | ✅ | 评论点踩 | ❌ 死视图 |
+| 发评 / 回复 / @用户 / 表情 | ✅ | 楼中楼排序 / 定位 | ❌ |
+| 评论点赞 | ✅ | 保存评论 | ❌ |
+| 评论举报 | ❌ | 评论图片（发图） | ❌ 部分 |
+| 取消 / 置顶自己的评论 | ❌ | 评论反诈提示 | ➖ |
+
+**私信 / 消息**
+
+| 功能 | 本项目 | 功能 | 本项目 |
+|---|---|---|---|
+| 私信列表 / 收发文本 | ✅ | 私信发图 | ❌ |
+| 消息未读数 | ✅ | 删除 / 撤回 / 置顶私信 | ❌ |
+| 回复我的 / @我的 / 收到的赞 | ✅ | 消息设置 / 聊天设置 | ✅（`MessageSettingsActivity`） |
+| 系统通知 / 公告 | ✅ | 分享视频/番剧/动态/专栏/直播至消息 | ❌ |
+
+**账号 / 收藏 / 历史**
+
+| 功能 | 本项目 | 功能 | 本项目 |
+|---|---|---|---|
+| 扫码 / 密码 / 短信登录 | ✅ | 收藏夹排序 / 复制 / 移动 | ❌ |
+| Cookie 导入导出 | ✅ | 收藏夹多选删除 | ❌ |
+| 多账号切换 | ✅ | 稍后再看 +「未看完」分类 | ✅ 基础 |
+| 观看历史 / 进度同步 | ✅ | 关注分组增删改 | ❌ |
+| 观看记录（登录设备 / 硬币 / 经验） | ✅ | 移除粉丝 | ❌ |
+| 个人空间 / 编辑资料 / 头像 | ✅ | 记笔记 | ❌ |
+| 勋章墙 / 大会员 | ✅ | WebDAV 备份 / 恢复 | ➖ |
+
+**直播**
+
+| 功能 | 本项目 | 功能 | 本项目 |
+|---|---|---|---|
+| 直播列表 / 分区 / 关注直播 | ✅ | 直播弹幕发表情 | ❌ |
+| 直播播放 + 弹幕接收 | ✅ | SuperChat | ❌ |
+| 直播礼物 / 舰长 | ➖ | 开播 | ➖ |
+
+**搜索 / 发现**
+
+| 功能 | 本项目 | 功能 | 本项目 |
+|---|---|---|---|
+| 搜索（视频 / 番剧 / 用户 / 专栏） | ✅ | 热搜 | ✅ |
+| 搜索建议 | ✅ | 筛选 / 排序搜索 | ✅（`SearchSortActivity`） |
+| 搜索用户动态 | ❌ | 排行榜 / 热门 / 推荐 | ✅ |
+
+**本地 / 系统**
+
+| 功能 | 本项目 | 功能 | 本项目 |
+|---|---|---|---|
+| 离线缓存 / 本地播放 | ✅（`DownloadService`） | 后台 / 熄屏播放 + 通知栏遥控 | ✅ |
+| 外部播放器接管 | ✅ | 崩溃页独立进程 | ❌ |
+| 主题 / 外观 / 字体 / DPI | ✅ | 教程 / 更新检查 / 更新日志 | ✅ |
+
+**该表的用途**：把"B 站功能"从"多到不知道选什么"收敛成**可判定的待办**——❌ 且不在 7.3 的项就是候选；➖ 的项直接排除，避免无效投入。
+
+---
+
+## 8. 交互与无障碍建议（手表专项）
+
+- **旋冠优先于拖动**：表冠在圆形小屏上是精度最高的连续输入，优先用它做列表滚动、进度调节（本项目已有旋冠，**建议把"音量/进度"也接入 `RotaryEncoderSupport`，而不只是滚动**）。
+- **反模式**：小圆屏不做边缘侧滑抽屉（与系统 swipe-to-dismiss 冲突）；长按不作唯一入口；双击缩放/双指捏合/精确拖拽选值在手表上不适用。
+- **跑马灯**：只用于"当前聚焦的单条标题"，不用于多行正文或批量列表（`WearBili` 的 `MarqueeTextView.kt` 是这条的现成范式）。
+- **弱网写操作**：一律不自动重试，只对 GET 重试（本项目现状已符合，见 §5.3，需保持）。
+- **无障碍**：所有图标按钮补 `contentDescription`；TalkBack 走通主流程；无键盘场景用"旋冠选择 + 单击确认"作主路径，语音（`RecognizerIntent`）仅兜底；搜索优先点选历史/热搜候选词而非手输。
+- **后台任务**：官方倾向 `WorkManager`/`JobScheduler` 而非自建 Service（本项目 `DownloadService` 是自建前台服务，功能上没错，但需确保 `foregroundServiceType` 声明完整：`AndroidManifest.xml:19-22` 已有 `FOREGROUND_SERVICE` / `_DATA_SYNC` / `_MEDIA_PLAYBACK`）。
+- **常亮屏（ambient）**：本项目未实现；但官方原则是"尽量减少 always-on 特性使用"，**考虑到手表电量，不建议新增**。
+
+---
+
+## 9. 建议的落地顺序
+
+**迭代 1（1~2 天，纯收益、低风险）**
+1. 去掉 `x86` ABI。
+2. `PerformanceManager` 死参数裁决（接线 `getImageMaxWidth` / `getOkHttpConnectionPoolSize`，删除或标 TODO 其余）。
+3. 首次硬件检测挪到后台线程。
+
+**迭代 2（2~3 天，正确性）**
+4. csrf 实时化铺开到 §5.1 的 11 个 api 类（抽公共工具，配 JVM 单测）。
+5. 自动跳过片头/片尾（复用 `view_points`，加设置开关与"仅跳一次"保护）。
+
+**迭代 3（1 周，体验）**
+6. Baseline Profile 模块 + 冷启动基准测试。
+7. 列表 DiffUtil 改造（先做推荐/热门/搜索三个高频页）。
+8. 弹幕点击菜单。
+
+**暂缓**：WebDAV、多账号增强（已有）、PiP、笔记、投屏。
+
+---
+
+## 10. B 站公开接口面与风控要点（一手来源）
+
+### 10.1 来源状况：上游接口字典已永久关停 ⚠️
+
+- `SocialSisterYi/bilibili-API-collect`（20,191★）README 已改为 `# Deprecated` / "本仓库停止维护并永久关停"，并附**律师函**措辞（指控"对非公开 API 及其调用逻辑、参数结构、访问控制及安全认证机制进行系统性收集并传播"），落款 **2026-01-28**；官方文档站 `socialsisteryi.github.io/bilibili-API-collect/` 现返回 404。
+  来源：<https://github.com/SocialSisterYi/bilibili-API-collect>、<https://raw.githubusercontent.com/SocialSisterYi/bilibili-API-collect/master/README.md>
+- **本项目已经在仓库根目录自带快照 `bilibili-API/`（197 个文件，`docs/` 下 195 篇 md）**，它是关停前的版本。另有贡献者复刻仓库 <https://github.com/pskdje/bilibili-API-collect>（master 同步至 2026-01-25），本文接口路径以这两份快照为准。
+- **战略含义**：不要再把"抄现成端点清单"当长期模式。应把本项目**实际依赖的端点、参数、错误码固化为仓库内自有契约文档**，并建立"上游变更 → 快速自检"的机制。另外注意：该文档集为 **CC BY-NC 4.0**，且上游已收到律师函，仓库内自带快照的**合规风险**需要在发布前评估。
+
+### 10.2 手表相关接口速查（三列含义：登录 = 需 SESSDATA；wbi = 需 `w_rid`+`wts`；csrf = 需 `bili_jct`）
+
+**播放 / 字幕**
+
+| 端点 | 用途 | 登录 | wbi | csrf |
+|---|---|---|---|---|
+| `x/player/wbi/playurl` | 取流（**现行唯一 Web 取流**） | 可选 | 是 | 否 |
+| `x/player/wbi/v2` | 字幕 / 章节看点 / 播放器元数据 | 字幕需登录 | 是 | 否 |
+| `x/web-interface/view/conclusion/get` | AI 总结 / AI 字幕（`part_subtitle[].timestamp/content` 带时间戳） | — | — | 否 |
+| `bvc.bilivideo.com/pbp/data` | 高能进度条（`step_sec` + `events.default[]`） | 否 | 否 | 否 |
+| `x/v2/history/report` | 观看进度上报 | 是 | 否 | 否 |
+| `x/web-interface/archive/like`、`coin/add`、`like/triple` | 点赞 / 投币 / 一键三连 | 是（**且需 buvid3**） | 否 | **是** |
+| `x/v3/fav/resource/deal`、`medialist/gateway/coll/resource/deal` | 收藏 / 取消收藏 | 是 | 否 | **是** |
+
+**列表 / 内容**
+
+| 端点 | 用途 | 登录 | wbi | csrf |
+|---|---|---|---|---|
+| `x/v2/history/toview`(+`/add` `/del` `/clear`) | 稍后再看 | 是 | 否 | 写操作**是** |
+| `x/web-interface/history/cursor`、`x/v2/history` | 历史（游标翻页） | 是 | 否 | 否 |
+| `x/web-interface/wbi/index/top/feed/rcmd` | 首页推荐流 | 否 | 是 | 否 |
+| `polymer/web-dynamic/v1/feed/all` | 关注动态流 | 是 | 否 | 否 |
+| `x/v2/reply/wbi/main` | 新版评论主楼（旧 `x/v2/reply/main` 已废弃） | 是 | **是** | 否 |
+| `x/v2/reply/reply`、`x/v2/reply/dialog/cursor` | 楼中楼 / 游标翻页 | 是 | 否 | 否 |
+| `x/v2/reply/add`、`/action`、`/hate`、`/report`、`/del`、`/top` | 评论写操作 | 是 | 否 | **是** |
+| `pgc/web/timeline`、`pgc/review/user`、`pgc/web/season/section` | 番剧时间表 / 我的追番 / 分集 | 是 | 否 | 否 |
+| `pgc/player/web/playurl` | PGC 取流（**必须带 Referer `https://www.bilibili.com`**） | 大会员决定清晰度 | — | — |
+| `x/web-interface/wbi/search/all/v2`、`search/type`、`search/square` | 搜索 / 热搜 | 是（Cookies 需足量） | **是** | 否 |
+| `s.search.bilibili.com/main/suggest` | 搜索建议（**根字段是 `result.tag[]`，不是 `data`**） | 否 | 否 | 否 |
+| `live.bilibili.com/room/v1/Room/get_status_info_by_uids` | 按 uid 查开播状态（开播提醒首选） | 否 | 否 | 否 |
+| `live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo` | 直播弹幕 WS 地址 + token | 否 | 否 | 否 |
+
+### 10.3 必须知道的硬约束
+
+1. **`playurl` 取回的 url 有效期 120 分钟**（`bilibili-API/docs/video/videostream_url.md:102`）→ 手表端必须"播放前校验 + 失败重取"，**不能把 url 缓存进离线队列复用**。
+2. **FLV 已下线**（同上 `:104`），**分 P 视频只返回单 P url**（`:106`），换 P 必须带对应 `cid` 重新取。
+3. **`qn` 在 DASH 格式下无效**（`:117`）；未登录默认 `qn=32`（480P）、登录 `qn=64`（720P）；720P 以上需登录，1080P60/HDR/杜比/会员内容需大会员。
+   → **手表端策略**：`fnval=16`（DASH）只取**音频轨 + 低清视频轨**；音频轨最高 192K 正好适合弱网省电；UI 上直说"登录可解锁 720P"。
+4. **字幕需要登录**：`x/player/wbi/v2` 的 `data.subtitle.subtitles[]` 在未登录时为空数组，`subtitle_url` 指向 `//aisubtitle.hdslb.com/...`。→ 想把"听视频 + AI 字幕"做成核心体验，**登录是前置条件**。
+5. **搜索风控很凶**：`bilibili-API/docs/search/search_request.md:3` 原文——"B站于2022年8月24日更新了搜索api……如果Cookies不足会返回 `-412` 搜索被拦截。**如果没有cookies的话，请在搜索之前先GET一遍 `https://bilibili.com` 以获取cookies**"。
+   → 可直接照抄的低成本缓解：**搜索/空间类接口前先"暖一次首页"**。另外实测 `search.bilibili.com/all?keyword=...` 直接返回 `<title>验证码_哔哩哔哩</title>` → 手表端**绝不要走 Web 页面模拟**，并把"需要人工过验证码"当成**不可自动恢复的失败态**，直接给用户提示。
+6. **错误码语义（不要硬编码直觉映射）**：`-352` = 风控校验失败（UA 或 wbi 参数不合法）；`-412` = 客户端 IP 被风控拦截；`-111` = csrf 校验失败；`-101` = 账号未登录；**`-403` 在评论场景是"Wbi 签名错误"而非无权限**（`bilibili-API/docs/comment/list.md:867` 原文："Wbi 签名错误时返回 -403 而非 -352"）。
+7. **`-352` 与设备指纹是同一件事的两面**：`-352` 时响应体带 `v_voucher`、响应头带 `x-bili-gaia-vvoucher`，处置链路是 `x/gaia-vgate/v1/register` → `/validate` 换 `gaia_vtoken`。**持久化 buvid3/buvid4/UA、不随机换指纹**是根本解法（本项目 §2.4 已做到）。
+8. **弹幕协议取舍**：protobuf 版 `x/v2/dm/web/seg.so`（及 wbi 变体、BFS 直链 `i0.hdslb.com/bfs/dm/{data}.bin`）字段丰富但**必须引入 protobuf 运行时并维护 `.proto`**；xml 版 `x/v1/dm/list.so`（**deflate 压缩，必须解压**）与 `comment.bilibili.com/{cid}.xml` 简单。
+   → **手表端一屏只显示 3~5 行滚动弹幕，用 xml 即可**，不要为弹幕引入 protobuf 编解码链路；只有要做彩色/高级弹幕/按类型过滤/弹幕点赞数时才值得上 protobuf。
+9. **弹幕池是栈语义**：`bilibili-API/docs/danmaku/danmaku_xml.md:3` 原文——"实时弹幕池容量有限（根据视频类型 500-8000 条不等），占满后再发送会使实时弹幕池底部的弹幕压入历史弹幕池（类似于堆栈）"；弹幕池类型 `0 普通 / 1 字幕 / 2 特殊(代码/BAS) / 3 互动池`。
+10. **登录方式**：官方扫码登录（Web）为 `passport-login/web/qrcode/generate` + `/poll`；**TV 端另有独立链路** `x/passport-tv-login/qrcode/auth_code` + `/poll`（备用域 `passport.snm0516.aisee.tv`）。→ 手表**无键盘，密码/短信登录不可行**；**TV 端扫码比 Web 端扫码更贴合"无键盘设备授权"的心智模型**，建议手表端引导用户用 TV 端链路的二维码。密码登录还需先取 `passport-login/web/key`（返回 hash 盐 + 公钥，**有效期仅 20 秒**）。
+11. **反向纠偏：SponsorBlock 不是 B 站的方案。** SponsorBlock 官方 README 原文定义其目标是"skip sponsor segments in **YouTube** videos"，支持 Invidious，**未提及 bilibili**。→ 本项目的"空降/跳过片头片尾"应走 `view_points` / `pbp/data` / 自建众包，不要引入 SponsorBlock 依赖。
+
+### 10.4 手表端"值得做 / 不值得做"（按接口可行性收敛）
+
+**值得做（且本项目的接口基础已经具备）：**
+
+| 方向 | 为什么 | 本项目现状 |
+|---|---|---|
+| 稍后再看队列 | 本质是离线播放队列，无键盘 + 弱网点播 + 碎片时间三件事同时满足 | ✅ 列表/增删已有（`api/WatchLaterApi.java:23,48,59`），仅缺"未看完"分组 |
+| 历史续播 | "打开就接着看/听" | ✅ 已有（`api/HistoryApi.java:37,174,257` + PGC 专用心跳） |
+| 后台听视频 + AI 字幕 | 圆屏天生适合"一屏一句"；音频轨省流省电 | ✅ 听视频、字幕、AI 字幕已有；**缺的是二者组合的"车载/播客式"体验打磨** |
+| 私信通知 + 速回 | 手表最强场景 | ✅ 文本收发已有；缺通知栏速回、发图、折叠消息 |
+| 关注主播开播提醒 | 接口免登录、一屏一条 | ❌ 未做，**高价值低成本** |
+| 收藏/投币/一键三连快捷操作 | 播放中一个手势完成 | ✅ 已有（注意 §5.1 的 csrf 问题） |
+| 榜单（热门/排行/每周必看） | 有限枚举、无输入需求 | ✅ 已有 |
+| 追番更新提醒 | "今天更了什么"一屏可读完 | ✅ 时间表已有，缺提醒 |
+
+**明确不值得做**：创作中心、会员购、漫画、课堂、发布动态/评论/弹幕（需输入）、礼物面板/舰长榜（涉消费决策）、收藏夹批量整理、关注/粉丝列表管理、登录密码/短信、风纪委员与入站考试。
+
+**一个额外结论**：从接口可行性看，**腕上场景的终点不是"把 B 站功能搬过来"，而是"把 B 站内容变成一条可离线消费的队列"**——稍后再看 + 历史续播 + 音频轨 + AI 字幕，这四样凑齐就是手表上最完整的产品形态，其余都是锦上添花。
+
+---
+
+## 11. 来源
+
+**官方文档**
+- Wear OS app quality guidelines — https://developer.android.com/docs/quality-guidelines/wear-app-quality
+- Rotary input — https://developer.android.com/training/wearables/user-input/rotary-input
+- Wear layouts（BoxInsetLayout / WatchViewStub 废弃）— https://developer.android.com/training/wearables/views/layouts
+
+**竞品仓库**
+- PiliPlus — https://github.com/bggRGjQaUbCoE/PiliPlus
+- Re-WearBili — https://github.com/SpaceXC/Re-WearBili
+- WearBili — https://github.com/SpaceXC/WearBili
+- WristBilibili — https://github.com/luern0313/WristBilibili
+- Re-BiliTerminal（兄弟分支）— https://github.com/cyq114514/Re-BiliTerminal
+- bilimiao2 — https://github.com/10miaomiao/bilimiao2 ；手表说明 https://github.com/10miaomiao/bilimiao2/blob/master/doc/手表使用说明.md
+- KiliKili — https://github.com/CryNet-Studio/KiliKili
+- BiliClient 上游（Gitee）— https://gitee.com/RobinNotBad/BiliClient
+- bilibili-API-collect（**已永久关停，2026-01-28**）— https://github.com/SocialSisterYi/bilibili-API-collect ；关停说明 https://raw.githubusercontent.com/SocialSisterYi/bilibili-API-collect/master/README.md
+- bilibili-API-collect 贡献者复刻（快照 2026-01-25，用于本次接口核对）— https://github.com/pskdje/bilibili-API-collect
+- BiliRoaming（已 archived，收到律师函）— https://github.com/yujincheng08/BiliRoaming ；https://m.ithome.com/html/973202.htm
+- SponsorBlock 官方 README（用于纠偏"是否支持 B 站"）— https://raw.githubusercontent.com/ajayyy/SponsorBlock/master/README.md
+
+**B 站官方口径（正文可读的少数来源）**
+- 官方下载中心（客户端矩阵）— https://app.bilibili.com/
+- 腾讯应用宝官方应用介绍 — https://sj.qq.com/appdetail/tv.danmaku.bili
+- 小米应用商店官方应用介绍 — https://app.mi.com/details?id=tv.danmaku.bili
+- 说明：`openhome.bilibili.com/doc`、`open-live.bilibili.com/document/`、`www.bilibili.com/blackboard/help.html` 等官方页均为 JS 渲染空壳，**只能读到标题，读不到正文**。
+
+**本仓库实测**
+- 体积数据：对 `app/build/outputs/apk/release/app-arm64-v8a-release.apk`（2026-10-02 构建）解包统计
+- 其余结论均标注了 `文件:行号`，可直接核对
+
+---
+
+## 附：本次调研中未能核实的部分
+
+- GitHub `RobinNotBad/BiliClient` 返回 404（上游主仓只在 Gitee）；Gitee 无公开 API，`71★ / 1322 commits / 状态「暂停」` 取自网页。
+- `Darock-Studio/Darock-Bili`（Apple Watch 版）因匿名 API 限流（HTTP 403）**未能核实**。
+- `qingyiwebt/Biliw`、`nonomal/bilibili-for-AppleWatch` 仅见搜索结果中的个位数 star，**未核实**。
+- Wear OS 是否存在其他仍在维护的 B 站客户端：**未查到**。
+- **「Android 9+ 默认禁止明文 HTTP」未取到可引用的官方原文**：`developer.android.com/privacy-and-security/security-config` 与 `/about/versions/pie/android-9.0-changes-all` 均只读到导航或被截断（入口存在）。本仓库相关的依据只有 `bilibili-API` 快照 README 的"强制使用 https 协议"。
+- **SponsorBlock API 正文与"B 站是否被其服务端收录"**：`wiki.sponsor.ajay.app` 抓取失败；其 README 全文未提 B 站 → 只能确认"官方目标平台是 YouTube"，不能确认"B 站被收录"。
+- **官方 App 底部 Tab 的具体数量与顺序**：官方页面全是 JS 空壳，商店页仅能确认存在"我的"Tab。§7.4 的模块划分是按官方子站与接口域反推的**模块划分**，不是 Tab 顺序断言。
+- **动态发布的完整参数取值表**（定时 / 可见范围的字段枚举）：只读到接口与部分字段名，未逐字段核对 `bilibili-API/docs/dynamic/publish.md` 全文。
+- **`-352` / `-412` / `-111` 之外的错误码语义**：快照 `docs/misc/errcode.md` 有更长列表，本文只逐字核对了 §10.3 提到的几条。
