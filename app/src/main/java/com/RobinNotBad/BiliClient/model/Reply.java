@@ -20,6 +20,7 @@ import org.json.JSONObject;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -27,6 +28,20 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Reply implements Serializable {
+
+    /**
+     * 评论排序方式：按时间。
+     *
+     * <p>楼中楼接口（{@code /x/v2/reply/reply}）本身就是「按照回复顺序排序」，
+     * 所以「按时间」= 保持服务端返回的顺序，不做任何本地重排。
+     */
+    public static final int SORT_TIME = 0;
+
+    /**
+     * 评论排序方式：按点赞数降序。
+     */
+    public static final int SORT_LIKE = 1;
+
     public long rpid;
     public long oid;
     public long root;
@@ -239,5 +254,35 @@ public class Reply implements Serializable {
             }
         }
         this.isTop = top;
+    }
+
+    /**
+     * 纯逻辑：对**已经加载到本地**的评论做客户端排序。
+     *
+     * <p>为什么要在客户端排：楼中楼接口 {@code /x/v2/reply/reply} 的参数只有
+     * {@code type/oid/root/ps/pn}，**没有 sort / mode**（见 bilibili-API/docs/comment/list.md），
+     * 传了也没用；而且服务端每页最多只返回 20 条。所以「楼中楼排序」只能对当前已加载的
+     * 那一页（含翻页累积的结果）重排，翻到下一页时新数据要并进来重新排。
+     *
+     * <p>主评论列表不归这里管：{@code /x/v2/reply} 与 {@code /x/v2/reply/wbi/main} 支持
+     * 服务端排序（{@code sort}/{@code mode}），服务端排得更准（它能看到全部页）。
+     *
+     * <p>「按时间」直接返回、不动列表——接口返回的就是回复顺序（时间序），
+     * 用 {@code floor} 排反而不稳（该字段在部分评论区不存在，见
+     * bilibili-API/docs/comment/readme.md 的 floor 字段说明）。
+     *
+     * <p>{@link Collections#sort(List)} 是稳定排序，点赞数相同的评论会保持原本的时间顺序。
+     *
+     * @param replies   要排序的列表，允许为 null
+     * @param sort      {@link #SORT_TIME} / {@link #SORT_LIKE}
+     * @param fromIndex 从这个下标开始排（前面的元素不动）。
+     *                  评论详情页第 0 位是根评论，必须传 1，否则根评论会被排进子评论里。
+     */
+    public static void sortReplies(List<Reply> replies, int sort, int fromIndex) {
+        if (replies == null || sort != SORT_LIKE) return;
+        if (fromIndex < 0) fromIndex = 0;
+        if (replies.size() - fromIndex < 2) return;
+        Collections.sort(replies.subList(fromIndex, replies.size()),
+                (a, b) -> Integer.compare(b.likeCount, a.likeCount));
     }
 }

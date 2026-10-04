@@ -640,7 +640,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | C1 | 弹幕点击菜单（点赞/复制/举报） | 无计划 |
 | C2 | 评论举报 | 无计划 |
 | C3 | 评论删除 / 置顶自己的评论 | **删除 + 置顶/取消置顶已实现（26.10.04 批次 6）**：删除走 `api/ReplyApi.java` 的 `deleteReply` → `x/v2/reply/del`；置顶走新增的 `ReplyApi.topReply(oid, rpid, type, top)` → `x/v2/reply/top`（**注意接口语义反直觉：`action` 0=取消置顶、1=设为置顶**，已抽成纯函数 `topActionFor(boolean)` 并单测）。UI 侧把原来「连点两次长按才删除」的交互换成**长按弹菜单**（`adapter/ReplyAdapter.kt` 的 `showManageMenu`）：UP 主/合作稿 staff 看到「置顶评论/取消置顶 + 删除评论」，普通用户只有「删除评论」。服务端一个评论区**只有一个置顶位**（再置顶别的回 12029），所以置顶成功后要清掉本地其它条目的标记（纯函数 `Reply.clearTopFlags` + `Reply.setTopFlag` 同步显示文本里的 `[置顶]` 前缀）；`actionErrorMsg` 补齐 12029/12030 文案 |
-| C4 | 评论楼中楼排序 / 定位 | 想要实现 |
+| C4 | 评论楼中楼排序 / 定位 | **排序已实现（26.10.04 批次 6）**：服务端 `/x/v2/reply/reply` **没有 sort/mode 参数**、每页最多 20 条，所以详情页排序是**纯客户端**的——`model/Reply.sortReplies(list, sort, fromIndex)`（`SORT_TIME` 0=保持服务端回复顺序、`SORT_LIKE` 1=按点赞数降序，稳定排序；`fromIndex` 传 1 以跳过第 0 位的根评论），`activity/reply/ReplyInfoActivity.kt` 的排序开关改为即时重排、不再重新请求，翻页时新数据并入重排；顺带修掉「详情页排序按钮被设成 `GONE` + 共用主列表的文案表导致永远显示『未知排序』」两个 bug。**「定位到某条评论」（`seek_rpid` + `min_floor`）没做** |
 | C5 | 评论保存（收藏评论） | 无计划（接口亦未核实） |
 | C6 | 评论图片（发图） | **已实现**（`activity/reply/WriteReplyActivity.kt:127`；`api/ReplyApi.java:218/231`；`:40` `BIZ_REPLY= new_reply`）；**「上传/发送无进度无反馈」= 想要实现（独立 bug）** |
 | C7 | 动态编辑 | 想要实现（发布链路已有 `DynamicApi.publishComplex`） |
@@ -697,7 +697,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 
 - **D2 / D3 / D5 原被本文 §8 列为待办，核实后为「已实现」**，相应条目作废（D5 只剩历史点击一个 10 分钟小项，已裁为暂缓）。
 - `activity/player/PlayerActivity.kt` 实际 **3494 行**（原述 3090 行）。
-- 单元测试实际 **29 个测试类 / 233 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例、C12 同文件 +4 例、C14 新增 `util/MsgNotifierTest` 5 例、C16 新增 `api/BangumiApiTest` 6 例 + `util/BangumiUpdateCheckerTest` 8 例 + `MsgNotifierTest`/`SettingsKeysTest` 各 +1 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
+- 单元测试实际 **30 个测试类 / 244 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例、C12 同文件 +4 例、C14 新增 `util/MsgNotifierTest` 5 例、C16 新增 `api/BangumiApiTest` 6 例 + `util/BangumiUpdateCheckerTest` 8 例 + `MsgNotifierTest`/`SettingsKeysTest` 各 +1 例；批次 6 的 C3 在 `api/ReplyApiTest` +2 例、`model/ReplyParseActionTest` +3 例，C4 新增 `model/ReplySortTest` 6 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 - **本文 §10.4 与用户裁决存在三处冲突，以本台账为准**：① §10.4 把「关注主播开播提醒」列为"高价值低成本、值得做"，用户裁为**无计划**；② §10.4 把「漫画」列入"明确不值得做"，用户裁为**想要实现（F4）**；③ §10.4 把「收藏夹批量整理」「发布动态/评论/弹幕」列入"明确不值得做"，用户分别裁为**想要实现（C19/C20）**与**想要实现（C7/C9/C10）**——即"需要输入"不是本项目的否决理由（无键盘只影响输入方式，不影响功能取舍）。
 
 ### 12.7 量化汇总与建议顺序

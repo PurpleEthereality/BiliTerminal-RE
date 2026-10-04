@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1728,4 +1728,59 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - `docs/architecture-map.md` 的 `ReplyApi` 方法表补齐 `dislikeReply`/`deleteReply`/`topReply`/`getRepliesLazy`/`getReplyCount`/`sendDynamicReply`。
 - 接口依据：`bilibili-API/docs/comment/action.md:399-455`（置顶）、`:285-328`（点踩，批次 2）。
 - 批次 6 进度：C3（本条）→ C4 → C6b → C7 → C8 → C9 → C10 → C27。
+
+---
+
+## 二十、26.10.04 批次 6（2/8）：评论楼中楼排序（C4）
+
+对应调研报告 §12.4 的 C4「评论楼中楼排序 / 定位」。
+
+### 为什么原来那个排序开关是假的
+
+评论详情页（`activity/reply/ReplyInfoActivity.kt`，楼中楼）自带一个「排序」按钮，但**三层叠加把它彻底废掉了**：
+
+1. 接口层：`/x/v2/reply/reply` 的参数**只有 `type`/`oid`/`root`/`ps`/`pn`**，**没有 sort / mode**（`bilibili-API/docs/comment/list.md:1559-1665`，`:1567` 明确写「按照回复顺序排序」；`ps` 定义域 1-49 但每页 `data.replies` 最多返回 20 条）。`ReplyApi.getReplies` 虽然把 `&sort=` 拼进了 URL，服务端不认，切 0↔1 拿回来的顺序完全一样。
+2. 适配器层：`ReplyAdapter` 在 `isDetail` 时把这个按钮设成了 `View.GONE`——详情页根本看不见它。
+3. 文案层：按钮文字取 `sorts[sort]`，而主列表的 `sorts` 表是 `{"未知排序","未知排序","时间排序","热度排序"}`；详情页用的是 0/1 两档，正好落在两个「未知排序」上。
+
+### 改动
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/Reply.java` | 新增常量 `SORT_TIME = 0`、`SORT_LIKE = 1`；新增**纯函数** `sortReplies(List<Reply> replies, int sort, int fromIndex)`——`SORT_LIKE` 时对 `subList(fromIndex, size)` 按 `likeCount` 降序（`Collections.sort` 稳定，同热度保持时间序），其余取值直接返回；`import java.util.Collections` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/ReplyAdapter.kt` | 详情页把排序按钮显示出来（`VISIBLE`）；文案抽成 `sortLabel()`（详情页 0/1 → 「时间排序/热度排序」，主列表 2/3 → 同一张 `sortNames` 表）；`listener` 调用统一为 `listener?.onItemClick(0)` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/reply/ReplyInfoActivity.kt` | `setOnSortSwitch` 改为**不重新请求**：切档后同步 `replyAdapter.sort` 并调 `applySort()`；新增 `applySort()`（`Reply.sortReplies(list, sort, 1)` + `notifyDataSetChanged`）；`refresh()` 末尾改调 `applySort()`；`continueLoading()` 在 `SORT_LIKE` 下整体重排、其余情况维持 `notifyItemRangeInserted`；顺手清掉本文件 4 处 `Log.e("debug", …)` 与 `import android.util.Log`（批次 3 的 B5 清理遗漏） |
+
+### 取舍
+
+- **只排「已经加载到本地」的评论**：服务端不给排序参数，就只能排当前这一页（含翻页累积）。翻到下一页时把新数据并进来重排，所以「热度排序」在翻页后顺序会整体变化，这是这个方案固有的。
+- **「按时间」不做任何本地重排**：接口返回顺序本身就是回复顺序，动它反而可能把顺序弄乱。**没有用 `floor` 排**——该字段在部分评论区不存在（`bilibili-API/docs/comment/readme.md:56` 注明「若不支持楼层则无此项」），用它排会出现「不支持楼层时整片乱序」。
+- **切档不再重新请求**（改掉原 `refresh()`）：重排是本地纯计算，重新请求只会拿回同样的服务端顺序，白等一次网络。
+- **`fromIndex` 固定传 1**：详情页第 0 位是根评论（所有楼中楼回复的父评论），不能参与排序，否则根评论会被排进子评论里。
+- **翻页路径分开处理**：`SORT_LIKE` 时新页要并入全局排序、插入位置不再是「接在末尾」，只能整体重排重绑；`SORT_TIME` 时保留原来的 `notifyItemRangeInserted`（局部插入更省）。
+- **「定位到某条评论」不做**：C4 的另一半要走 `seek_rpid` + `min_floor`（`ReplyInfoActivity` 已有的 `rpid` 就是走 `seek_rpid`），单独页面重构，当前没必要。
+
+### 单测
+
+`app/src/test/java/com/RobinNotBad/BiliClient/model/ReplySortTest.kt`（新建，6 例）：降序、同热度稳定（保持时间序）、`SORT_TIME` 不动列表、`fromIndex` 之前的元素不动（根评论留住且 `assertSame`）、null/空/单元素/越界与负数 fromIndex 都不抛、未知档位（2/3，主列表用的服务端档位）不动列表。
+
+**中途失败一次**：`sortReplies_likeMode_ordersByLikeCountDesc` 我按「全局降序」断言，但用例传的是 `fromIndex = 1`，第 0 位本来就该不动——改成 `fromIndex = 0` 后通过。这个用例反而证明了 `fromIndex` 生效。
+
+**验证**：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → BUILD SUCCESSFUL；`app/build/test-results/testDebugUnitTest` **30 个 XML / 244 个用例 / 0 失败 / 0 错误**（C3 后 238 例，本次 +1 类 +6 例）。
+
+### 真机验证清单
+
+1. 进任意评论的楼中楼详情页 → 第 2 项上方能看到「时间排序」按钮（以前是隐藏的）。
+2. 点一下 → 按钮变「热度排序」，列表**立即**重排（不出现转圈刷新），点赞多的排前面。
+3. 再点一下 → 回到「时间排序」，顺序变回原来的回复顺序（**注意**：不是动画回滚，是重排结果）。
+4. 在「热度排序」下滚到底加载下一页 → 新页内容并入整体排序，不会出现「新页自己排一段」。
+5. 根评论（第 1 项）在任何排序下都留在最上面，不会被排到子评论中间。
+6. 在楼中楼里点赞一条评论再切排序 → 该条的点赞数/图标状态不丢（排序只是重绑，不改数据）。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C4 行已改写。
+- `docs/architecture-map.md` 新增 §7.17（主列表走服务端排序、楼中楼只能客户端排，两种档位别共用文案表）。
+- 接口依据：`bilibili-API/docs/comment/list.md:1559-1665`（`/x/v2/reply/reply` 参数表与 20 条上限）、`:876`（`/x/v2/reply/wbi/main` 的 `mode`）、`:18`（`/x/v2/reply` 的 `sort`）、`bilibili-API/docs/comment/readme.md:56`（`floor` 字段）。
+- 批次 6 进度：C3（§十九）→ C4（本条）→ C6b → C7 → C8 → C9 → C10 → C27。
 

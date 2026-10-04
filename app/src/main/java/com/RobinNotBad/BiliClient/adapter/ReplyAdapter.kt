@@ -79,6 +79,19 @@ class ReplyAdapter(
         this.listener = listener
     }
 
+    // 主评论列表（非详情页）的排序名。0/1 位置写「未知排序」是因为主列表走服务端排序的 2/3 两档
+    private val sortNames = arrayOf("未知排序", "未知排序", "时间排序", "热度排序")
+
+    /**
+     * 排序按钮上的文案。
+     *
+     * 详情页（楼中楼）用 [Reply.SORT_TIME]/[Reply.SORT_LIKE] 这两档本地排序，
+     * 主列表用服务端的 2/3 两档，取值不一样必须分开取名——否则详情页永远显示「未知排序」。
+     */
+    private fun sortLabel(): String =
+        if (isDetail) (if (sort == Reply.SORT_TIME) "时间排序" else "热度排序")
+        else sortNames.getOrElse(sort) { "未知排序" }
+
     /**
      * 把「点踩/取消点踩」的结果落到本地状态与视图上。
      *
@@ -125,16 +138,22 @@ class ReplyAdapter(
                 intent.putExtra("replyType", replyType)
                 context.startActivity(intent)
             }
-            val sorts = arrayOf("未知排序", "未知排序", "时间排序", "热度排序")
             if (isDetail) {
-                writeReply.sort.visibility = View.GONE
+                // 评论详情页也要能排序。服务端的楼中楼接口（/x/v2/reply/reply）没有 sort 参数，
+                // 传了也不生效，所以这里的排序完全在客户端做（Reply.sortReplies），
+                // 点一下即时重排、不重新请求，见 ReplyInfoActivity.setOnSortSwitch。
+                writeReply.sort.visibility = View.VISIBLE
                 writeReply.count_label.visibility = View.GONE
-            } else {
-                writeReply.sort.text = sorts[sort]
+                writeReply.sort.text = sortLabel()
                 writeReply.sort.setOnClickListener {
-                    if (this.listener != null)
-                        listener!!.onItemClick(0)
-                    writeReply.sort.text = sorts[sort]
+                    listener?.onItemClick(0)
+                    writeReply.sort.text = sortLabel()
+                }
+            } else {
+                writeReply.sort.text = sortLabel()
+                writeReply.sort.setOnClickListener {
+                    listener?.onItemClick(0)
+                    writeReply.sort.text = sortLabel()
                 }
                 writeReply.count_label.text = "共" + count + "条评论"
             }

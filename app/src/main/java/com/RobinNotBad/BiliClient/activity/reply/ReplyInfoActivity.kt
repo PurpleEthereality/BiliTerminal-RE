@@ -6,7 +6,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.util.DisplayMetrics
-import android.util.Log
 import android.view.Display
 import android.view.WindowManager
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -107,7 +106,6 @@ class ReplyInfoActivity : BaseActivity() {
                         })
                         refreshLayout.isRefreshing = false
                         if (result == 1) {
-                            Log.e("debug", "到底了")
                             bottom = true
                         }
                     }
@@ -128,14 +126,17 @@ class ReplyInfoActivity : BaseActivity() {
             val list = ArrayList<Reply>()
             val result = ReplyApi.getReplies(oid, rpid, page, type, sort, list)
             if (result != -1) {
-                Log.e("debug", "下一页")
                 runOnUiThread {
                     replyList!!.addAll(list)
-                    replyAdapter!!.notifyItemRangeInserted(replyList!!.size - list.size + 2, list.size)
+                    if (sort == Reply.SORT_LIKE) {
+                        // 热度排序下新一页要并进全局排序，插入位置不再是「接在末尾」，只能整体重排
+                        applySort()
+                    } else {
+                        replyAdapter!!.notifyItemRangeInserted(replyList!!.size - list.size + 2, list.size)
+                    }
                     refreshLayout.isRefreshing = false
                 }
                 if (result == 1) {
-                    Log.e("debug", "到底了")
                     bottom = true
                 }
             }
@@ -168,13 +169,12 @@ class ReplyInfoActivity : BaseActivity() {
                                 replyAdapter!!.isDetail = true
                                 setOnSortSwitch()
                                 recyclerView.adapter = replyAdapter
-                            } else {
-                                replyAdapter!!.notifyDataSetChanged()
                             }
+                            // 刷新拿回来的是服务端顺序，但用户可能正选着「热度排序」，要重排一次
+                            applySort()
                             refreshLayout.isRefreshing = false
                         }
                         if (result == 1) {
-                            Log.e("debug", "到底了")
                             bottom = true
                         } else bottom = false
                     }
@@ -187,11 +187,34 @@ class ReplyInfoActivity : BaseActivity() {
         }
     }
 
+    /**
+     * 楼中楼排序开关。
+     *
+     * 服务端 {@code /x/v2/reply/reply} 没有 sort 参数（见 api/ReplyApi.java 的 getReplies），
+     * 传了也不生效，所以这里**不重新请求**，只对已加载的评论重排：
+     * 0=按时间（就是服务端返回的回复顺序）、1=按点赞数降序。
+     * 翻页时新数据会并进来重新排（见 continueLoading）。
+     */
     private fun setOnSortSwitch() {
         replyAdapter!!.setOnSortSwitchListener {
-            sort = if (sort == 0) 1 else 0
-            refresh()
+            sort = if (sort == Reply.SORT_TIME) Reply.SORT_LIKE else Reply.SORT_TIME
+            // 适配器里另有一份 sort，用来显示排序按钮的文案，必须一起改，否则按钮文字不变
+            replyAdapter!!.sort = sort
+            applySort()
         }
+    }
+
+    /**
+     * 按当前 [sort] 重排已加载的评论并刷新列表。
+     *
+     * 第 0 位是根评论（所有楼中楼回复的父评论），不能参与排序，所以 fromIndex = 1。
+     * 重排后整体重绑：同一条评论会换行，用局部 notify 会错行。
+     */
+    @SuppressLint("NotifyDataSetChanged")
+    private fun applySort() {
+        val list = replyList ?: return
+        Reply.sortReplies(list, sort, 1)
+        replyAdapter?.notifyDataSetChanged()
     }
 
     override fun eventBusEnabled(): Boolean {
