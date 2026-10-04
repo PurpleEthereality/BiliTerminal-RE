@@ -126,6 +126,8 @@ class DynamicActivity : RefreshMainActivity() {
             val text = data.getStringExtra("text") ?: ""
             val voteDraft = data.getSerializableExtra("voteDraft") as? VoteDraft
             val picsJson = data.getStringExtra("pics")
+            // 定时发布：秒级时间戳，0 表示不定时（只有发布链路吃这个字段）
+            val timerSeconds = data.getLongExtra("timerPubTime", 0L)
             CenterThreadPool.run {
                 try {
                     val pics = if (!picsJson.isNullOrEmpty()) org.json.JSONArray(picsJson) else null
@@ -152,27 +154,36 @@ class DynamicActivity : RefreshMainActivity() {
                         // 表情文本用于把正文里的 [xxx] 拆成 type 9 表情节点
                         val emoteTexts = EmoteApi.getEmoteTexts(EmoteApi.BUSINESS_DYNAMIC)
 
+                        // 定时发布走 option.timer_pub_time（秒级时间戳）；不定时就不传 option，
+                        // 保持各条既有链路原样
+                        val option = if (timerSeconds > 0) {
+                            DynamicApi.buildPublishOption(false, null, null, timerSeconds.toInt())
+                        } else null
+
                         val dynId: Long
                         if (voteId > 0) {
                             // 有投票，使用复杂动态发布并挂载投票
                             val attachCard = org.json.JSONObject().put("vote", org.json.JSONObject().put("vote_id", voteId))
                             val contents = DynamicApi.buildContents(text, atUids.ifEmpty { null }, emoteTexts)
                             dynId = DynamicApi.publishComplex(
-                                contents, pics, null, null, if (pics != null) 2 else 1,
+                                contents, pics, option, null, if (pics != null) 2 else 1,
                                 attachCard, null
                             )
                         } else if (pics != null) {
                             // 带图动态走 scene=2，图片已在 SendDynamicActivity 上传成 pics 节点
-                            dynId = DynamicApi.publishImageContent(text, atUids.ifEmpty { null }, pics, null, emoteTexts)
+                            dynId = DynamicApi.publishImageContent(text, atUids.ifEmpty { null }, pics, option, emoteTexts)
                         } else if (atUids.isEmpty() && !DynamicApi.containsEmoteText(text, emoteTexts)) {
                             // 既没有 @ 也没有可用表情，继续走原来的纯文本接口，不无谓地换链路
-                            dynId = DynamicApi.publishTextContent(text)
+                            dynId = if (option == null) DynamicApi.publishTextContent(text)
+                            else DynamicApi.publishTextContent(text, null, option, null)
                         } else {
-                            dynId = DynamicApi.publishTextContent(text, atUids.ifEmpty { null }, null, emoteTexts)
+                            dynId = DynamicApi.publishTextContent(text, atUids.ifEmpty { null }, option, emoteTexts)
                         }
                         if (dynId != -1L) {
-                            runOnUiThread { MsgUtil.showMsg("发送成功~") }
-                            CenterThreadPool.run {
+                            runOnUiThread { MsgUtil.showMsg(if (timerSeconds > 0) "已设置定时发布~" else "发送成功~") }
+                            // 定时发布的动态此刻还没真正发出去，getDynamic 拿回的状态不对，
+                            // 插进列表只会显示一条"将来才发"的动态；跳过本地插入，由下拉刷新兜底
+                            if (timerSeconds == 0L) CenterThreadPool.run {
                                 try {
                                     val dynamic = DynamicApi.getDynamic(dynId)
                                     runOnUiThread {

@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1946,6 +1946,58 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 调研报告 §12.4 的 C8 行改为「已全部实现」；`docs/architecture-map.md` §7.19 补了置顶这一段。
 - 接口依据：`bilibili-API/docs/dynamic/action.md:233-292`（set_top）、`:294-317`（rm_top），两处正文参数都只有 `dyn_str`。
 - 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（§二十一）→ C7（§二十二）→ C8（本条）→ C9 → C10 → C27。
+
+---
+
+## 二十四、26.10.04 批次 6（6/8）：动态定时发布（C9）
+
+### 为什么做
+
+`api/DynamicApi.java` 的 `buildPublishOption(boolean, Integer, Integer, String)` 早就把 `timer_pub_time` 拼进去了，但**全库零调用点**——是个死函数；页面里也没有任何定时入口。这次按用户拍板接线（A 方案：接真接口，真机验证；兜底才是草稿箱）。
+
+### 改动表
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/DynamicApi.java` | `buildPublishOption` 的 `timerPubTime` 由 `String` 改成 `Integer`（秒级时间戳）并订正 javadoc；新增纯函数 `timerSecondsAt(long nowSeconds, int addMinutes)` |
+| `app/src/main/res/layout/activity_send_dynamic.xml` | 投票卡片之前新增 `add_timer` 卡片 + `add_timer_text` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/dynamic/send/SendDynamicActivity.kt` | 新增 `timerPubTime` 字段、`showTimerPicker()`/`tomorrowNoonSeconds()`/`applyTimer()`/`updateTimerText()`；`add_timer` 按 `normalPublish` 显隐；结果 intent 在（无图 / 带图）两条分支都带 `timerPubTime` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/dynamic/DynamicActivity.kt` | `writeDynamicLauncher` 读 `timerPubTime`，> 0 时用 `buildPublishOption(false, null, null, seconds)` 组 `option` 并传进四条发布链路；定时成功改提示「已设置定时发布~」且**跳过本地插入** |
+
+### 取舍
+
+- **只给固定档，不做自由输入**：10/30/60/120 分钟后、明天 12:00、不定时。手表上打字选日期时间不现实，项目里也没有 DatePicker/TimePicker 先例，六项 AlertDialog 点一下就定。
+- **`timer_pub_time` 必须是 int 时间戳**：老注释写的 `yyyy-MM-dd HH:mm` 是错的（上游 web 端与 PiliPlus 传的都是 int），这次连类型带注释一起改掉，并在单测里把「是 Int」钉死。
+- **只在普通发布时露出**：转发走 `relayDynamic`（没有 option），编辑接口也没有定时字段，所以 `add_timer` 与 `add_pic` 一样按 `normalPublish` 显隐。
+- **定时成功后不插本地列表**：动态此刻还没真正发出去，`getDynamic` 拿回的状态不对，插进去只会显示一条「将来才发」的动态；提示后由下拉刷新兜底。
+- **失败没有精细文案**：`publishComplex` 失败只回 -1，页面显示「发送失败」，所以「离现在太近被拒」这种情况只能靠真机确认（见清单第 1 条）。
+
+### 单测
+
+`api/DynamicApiTest.kt` +5 例：`buildPublishOption_writesTimerAsIntegerSeconds`、`buildPublishOption_withoutTimerHasNoTimerKey`、`buildPublishOption_keepsOtherFlags`、`timerSecondsAt_addsMinutes`、`timerSecondsAt_ignoresNonPositiveMinutes`。
+
+### 验证
+
+`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → BUILD SUCCESSFUL；`app/build/test-results/testDebugUnitTest` **31 个 XML / 262 个用例 / 0 失败 / 0 错误**（C8 后 257 例，本次 +5 例）。布局改了 id（未增删资源文件），无需 clean。
+
+### 真机验证清单
+
+1. **先试最近的一档（10 分钟后）**：若能发出去（返回动态 id、提示「已设置定时发布~」），说明服务端接受近时间；若提示「发送失败」，说明服务端有最小提前量限制，需要把档位改大或改走草稿箱。
+2. 选「30 分钟后」→ 按钮文案变成「定时：MM-dd HH:mm」，且时间与当前时间相差约 30 分钟。
+3. 选「明天 12:00」→ 文案是明天的 12:00（跨天正确）。
+4. 选「不定时」→ 文案回到「定时发布」，再发就是立即发布。
+5. 定时 + 带图：先选图再定时，发送后图片正常上传、结果同样提示定时。
+6. 定时 + 投票：选投票再定时，发送后投票能创建（`VoteApi.createVote` 先走），动态为定时状态。
+7. 编辑模式下**看不到**「定时发布」入口；转发模式下也看不到。
+8. 定时发送后下拉刷新：动态**不会**立刻出现在列表里（服务端未发布）；到点后下拉刷新才出现。
+9. 未登录 / 凭证过期时走一遍：仍然先被 `cookie_refresh` 闸门或发布失败拦住，不会静默成功。
+10. 到点后到 B 站客户端/网页确认动态确实发出且正文、图片、投票与预期一致。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C9 行改为「已实现」；`docs/architecture-map.md` 新增 §7.20「定时发布」。
+- 接口依据：`bilibili-API/docs/dynamic/publish.md`（`option` 字段）；旧注释的 `yyyy-MM-dd HH:mm` 来自本仓库自己写错，非快照内容。
+- 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（§二十一）→ C7（§二十二）→ C8（§二十三）→ C9（本条）→ C10 → C27。
 
 
 

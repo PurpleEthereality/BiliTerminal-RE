@@ -1,6 +1,7 @@
 package com.RobinNotBad.BiliClient.api
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -84,5 +85,40 @@ class DynamicApiTest {
         val msg = DynamicApi.topErrorMsg(999)
         assertTrue(msg.contains("999"))
         assertTrue(msg.contains("失败"))
+    }
+
+    @Test
+    fun buildPublishOption_writesTimerAsIntegerSeconds() {
+        // 定时发布要的是秒级时间戳（int），不是 "yyyy-MM-dd HH:mm" 字符串——写死以防被改回字符串
+        val option = DynamicApi.buildPublishOption(false, null, null, 1893456000)
+        assertTrue(option.get("timer_pub_time") is Int)
+        assertEquals(1893456000, option.getInt("timer_pub_time"))
+    }
+
+    @Test
+    fun buildPublishOption_withoutTimerHasNoTimerKey() {
+        val option = DynamicApi.buildPublishOption(false, null, null, null)
+        assertFalse(option.has("timer_pub_time"))
+        assertFalse(option.has("private_pub"))
+    }
+
+    @Test
+    fun buildPublishOption_keepsOtherFlags() {
+        val option = DynamicApi.buildPublishOption(true, 1, 0, null)
+        assertTrue(option.getBoolean("private_pub"))
+        assertEquals(1, option.getInt("close_comment"))
+        assertEquals(0, option.getInt("up_choose_comment"))
+    }
+
+    @Test
+    fun timerSecondsAt_addsMinutes() {
+        assertEquals(1000L + 10 * 60L, DynamicApi.timerSecondsAt(1000L, 10))
+        assertEquals(1000L + 120 * 60L, DynamicApi.timerSecondsAt(1000L, 120))
+    }
+
+    @Test
+    fun timerSecondsAt_ignoresNonPositiveMinutes() {
+        assertEquals(1000L, DynamicApi.timerSecondsAt(1000L, 0))
+        assertEquals(1000L, DynamicApi.timerSecondsAt(1000L, -5))
     }
 }

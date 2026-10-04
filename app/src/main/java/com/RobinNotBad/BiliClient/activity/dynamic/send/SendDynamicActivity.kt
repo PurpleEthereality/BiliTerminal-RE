@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.EmoteActivity
 import com.RobinNotBad.BiliClient.activity.base.BaseActivity
@@ -28,11 +29,13 @@ import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.RobinNotBad.BiliClient.util.TerminalContext
+import com.RobinNotBad.BiliClient.util.TimeUtil
 import com.bumptech.glide.Glide
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import org.json.JSONArray
 import java.io.Serializable
+import java.util.Calendar
 import java.util.HashMap
 import java.util.regex.Pattern
 
@@ -45,10 +48,19 @@ class SendDynamicActivity : BaseActivity() {
     private lateinit var addOptionBtn: MaterialButton
     private lateinit var removeVoteBtn: MaterialButton
     private lateinit var addPicText: TextView
+    private lateinit var addTimerText: TextView
     private lateinit var picsPreview: LinearLayout
     private var voteDraft: VoteDraft? = null
     private val optionEditTexts = mutableListOf<EditText>()
     private var hasVote: Boolean = false
+
+    /**
+     * 定时发布的目标时间戳（秒级）；0 表示不定时。
+     *
+     * <p>这里只负责收集用户意图，真正拼进 {@code option.timer_pub_time} 是在
+     * `DynamicActivity.writeDynamicLauncher` 里（发布链路统一在那边）。
+     */
+    private var timerPubTime: Long = 0L
 
     /** 已选待上传的图片。 */
     private val imageUris = mutableListOf<Uri>()
@@ -103,7 +115,9 @@ class SendDynamicActivity : BaseActivity() {
             val send = findViewById<MaterialCardView>(R.id.send)
             val addVote = findViewById<MaterialCardView>(R.id.add_vote)
             val addPic = findViewById<MaterialCardView>(R.id.add_pic)
+            val addTimer = findViewById<MaterialCardView>(R.id.add_timer)
             addPicText = findViewById(R.id.add_pic_text)
+            addTimerText = findViewById(R.id.add_timer_text)
             picsPreview = findViewById(R.id.pics_preview)
 
             // 投票编辑区
@@ -143,12 +157,17 @@ class SendDynamicActivity : BaseActivity() {
             // 转发场景不允许带图：转发的是别人的内容，再挂自己的图语义不成立，B 站也不接受
             val normalPublish = !editing && forward == null && video == null
             addPic.visibility = if (normalPublish) View.VISIBLE else View.GONE
+            // 定时发布只在普通发布链路上有意义：转发走 relayDynamic（没有 option），编辑接口也没有定时字段
+            addTimer.visibility = if (normalPublish) View.VISIBLE else View.GONE
             // 编辑不带投票：编辑接口改不了 attach_card，留着入口只会让用户以为能改
             if (editing) addVote.visibility = View.GONE
 
             addPic.setOnClickListener {
                 pickImageLauncher.launch(Intent(Intent.ACTION_GET_CONTENT).apply { type = "image/*" })
             }
+
+            // 定时发布：手表上不方便输入日期时间，只给几个固定档 + 明天中午 + 不定时
+            addTimer.setOnClickListener { showTimerPicker() }
 
             // 添加投票按钮点击
             addVote.setOnClickListener {
@@ -217,6 +236,7 @@ class SendDynamicActivity : BaseActivity() {
                     if (draft != null) {
                         result.putExtra("voteDraft", draft as Serializable)
                     }
+                    if (timerPubTime > 0) result.putExtra("timerPubTime", timerPubTime)
                     setResult(RESULT_OK, result)
                     finish()
                     return@setOnClickListener
@@ -241,6 +261,7 @@ class SendDynamicActivity : BaseActivity() {
                         if (bundle != null) result.putExtras(bundle)
                         result.putExtra("text", text)
                         result.putExtra("pics", pics.toString())
+                        if (timerPubTime > 0) result.putExtra("timerPubTime", timerPubTime)
                         runOnUiThread {
                             setResult(RESULT_OK, result)
                             finish()
@@ -257,6 +278,57 @@ class SendDynamicActivity : BaseActivity() {
             findViewById<View>(R.id.emote).setOnClickListener {
                 emoteLauncher.launch(Intent(this, EmoteActivity::class.java).putExtra("from", EmoteApi.BUSINESS_DYNAMIC))
             }
+        }
+    }
+
+    /**
+     * 定时发布的时间选择。
+     *
+     * <p>手表屏幕小、没有键盘友好的日期输入，项目里也没有 DatePicker/TimePicker 的先例，
+     * 所以只给「几分钟后」这种固定档 + 明天 12:00，点一下就定，不再让用户打字。
+     */
+    private fun showTimerPicker() {
+        val now = System.currentTimeMillis() / 1000
+        val items = arrayOf("10 分钟后", "30 分钟后", "1 小时后", "2 小时后", "明天 12:00", "不定时")
+        AlertDialog.Builder(this)
+            .setTitle("定时发布")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> applyTimer(DynamicApi.timerSecondsAt(now, 10))
+                    1 -> applyTimer(DynamicApi.timerSecondsAt(now, 30))
+                    2 -> applyTimer(DynamicApi.timerSecondsAt(now, 60))
+                    3 -> applyTimer(DynamicApi.timerSecondsAt(now, 120))
+                    4 -> applyTimer(tomorrowNoonSeconds())
+                    else -> applyTimer(0L)
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 明天 12:00 的秒级时间戳。 */
+    private fun tomorrowNoonSeconds(): Long {
+        val calendar = Calendar.getInstance()
+        calendar.add(Calendar.DAY_OF_MONTH, 1)
+        calendar.set(Calendar.HOUR_OF_DAY, 12)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        return calendar.timeInMillis / 1000
+    }
+
+    private fun applyTimer(seconds: Long) {
+        timerPubTime = seconds
+        updateTimerText()
+        if (seconds > 0) MsgUtil.showMsg("已设为定时发布")
+    }
+
+    @SuppressLint("SetTextI18n")
+    private fun updateTimerText() {
+        addTimerText.text = if (timerPubTime > 0) {
+            "定时：" + TimeUtil.format(timerPubTime * 1000, "MM-dd HH:mm")
+        } else {
+            "定时发布"
         }
     }
 

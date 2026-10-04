@@ -418,18 +418,36 @@ public class DynamicApi {
     /**
      * 构造发布选项。参数为 null / 假时对应项不下发，交给服务端走默认值。
      *
+     * <p><b>定时发布的坑</b>：{@code timer_pub_time} 要的是**秒级时间戳（整数）**，不是
+     * {@code yyyy-MM-dd HH:mm} 这种字符串——本方法早先的注释写的是后者，是错的（上游 web 端
+     * 与 PiliPlus 传的都是 int 时间戳）。编辑接口没有定时能力，只有发布接口吃这个字段。
+     *
      * @param privatePub      是否仅自己可见
      * @param closeComment    是否关闭评论，null 表示不改
      * @param upChooseComment 是否开启评论精选，null 表示不改
-     * @param timerPubTime    定时发布时间，格式 yyyy-MM-dd HH:mm，null / 空表示不定时
+     * @param timerPubTime    定时发布时间的秒级时间戳（int），null 表示不定时
      */
-    public static JSONObject buildPublishOption(boolean privatePub, Integer closeComment, Integer upChooseComment, String timerPubTime) throws JSONException {
+    public static JSONObject buildPublishOption(boolean privatePub, Integer closeComment, Integer upChooseComment, Integer timerPubTime) throws JSONException {
         JSONObject option = new JSONObject();
         if (privatePub) option.put("private_pub", true);
         if (closeComment != null) option.put("close_comment", closeComment);
         if (upChooseComment != null) option.put("up_choose_comment", upChooseComment);
-        if (timerPubTime != null && !timerPubTime.isEmpty()) option.put("timer_pub_time", timerPubTime);
+        if (timerPubTime != null) option.put("timer_pub_time", timerPubTime);
         return option;
+    }
+
+    /**
+     * 定时发布的目标时间戳：当前秒 + 若干分钟。
+     *
+     * <p>抽成纯函数是为了能单测（时间来源由调用方给，不在测试里读系统时钟）。
+     *
+     * @param nowSeconds   当前秒级时间戳
+     * @param addMinutes   往后推的分钟数，&lt;= 0 时原样返回 nowSeconds
+     * @return 秒级时间戳
+     */
+    public static long timerSecondsAt(long nowSeconds, int addMinutes) {
+        if (addMinutes <= 0) return nowSeconds;
+        return nowSeconds + addMinutes * 60L;
     }
 
     /**
