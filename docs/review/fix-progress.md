@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1487,4 +1487,73 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 接口依据：仓库自带快照 `bilibili-API/docs/message/private_msg.md`（移除会话 :1075-1107、置顶 :1136-1165、会话列表字段 `top_ts` :12）。
 - `docs/architecture-map.md` §7.13「session_svr 会话管理接口」。
 - 本批剩余：C12（私信发图）→ C14（新私信通知）→ C16（追番更新提醒），各自独立提交。
+
+---
+
+## 十六、26.10.04 批次 5（2/4）：私信发图（C12）
+
+对应调研报告 §12.4 的 C12「私信发图」。**范围按用户拍板收窄：只做「从相册选图发送」，不做拍照**。上一条是 C13，本条只记 C12。
+
+### 接口依据
+
+`bilibili-API/docs/message/private_msg_content.md:27-57`：`msg_type=2` 的 content 根对象字段为
+
+| 字段 | 要求 |
+|---|---|
+| `url` | **必须是 B 站图床地址**，否则接口返回 21037「图片格式不合法，不要调戏接口啦」 |
+| `width` / `height` | 建议必带，缺了消息在客户端显示异常 |
+| `imageType` | 不带 `image/` 前缀的格式名，如 `"jpeg"` |
+| `original` | 传 1 时 APP 显示「下载原图」 |
+| `size` | 单位是 **KB**（示例值 `55.443`，带三位小数） |
+
+### 新增纯函数
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/PrivateMsgApi.java` | 新增 `public static JSONObject buildImageContent(String url, int width, int height, long byteSize, String imageType)`：按上表组装 content，`size` 走 `sizeToKb` |
+| 同上 | 新增 `public static double sizeToKb(long byteSize)`：`Math.round(byteSize / 1024d * 1000d) / 1000d`；`byteSize <= 0` 返回 0（不能发出 NaN / 负数） |
+| 同上 | 新增 `public static String imageTypeOf(String mimeType)`：转小写、去掉 `image/` 前缀、`jpg` 归一成 `jpeg`、空值兜底 `jpeg`（用 `Locale.ROOT`，避免土耳其语 i 问题） |
+
+抽出这三个纯函数的理由：都是"错了不报错、只在服务端默默拒绝或显示异常"的格式约定（21037 只会在真发图时才出现），放纯函数才能被 JVM 单测锁死。
+
+### UI
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/res/layout/activity_private_msg.xml` | 输入行新增 `TextView id=image_btn`（38dp 圆角、`background_privatemsg_send`、文字「图」），并把 `msg_input_et` 的 `layout_toStartOf` 从 `send_btn` 改到 `image_btn`。**用文字按钮而不是新图标**：`res/drawable/` 里没有任何 image/pic/photo/album 类图标，新增资源文件会触发 build cache 陈旧资源坑（要跑两段式 clean），收益不抵成本；复用 `WriteReplyActivity` 的"文字入口"风格 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/message/PrivateMsgActivity.kt` | 新增 `imageBtn` 字段 + `imageLauncher`（`registerForActivityResult` + `ActivityResultContracts.StartActivityForResult`）；点击先判登录（`SharedPreferencesUtil.getLong(mid, 0) == 0L` → 提示「还没有登录喵~」），再 `pickImage()`；`pickImage()` 用 **`ACTION_GET_CONTENT`** + `type=image/*` + `CATEGORY_OPENABLE`（手表相册不一定支持 `ACTION_PICK`，与 `WriteReplyActivity`、`SettingGroupActivity` 的判断一致） |
+| 同上 | 新增 `private fun sendImage(uri: Uri)`：`CenterThreadPool.run` 内 `ImageApi.prepareImage`（按最长边 2048 压缩，避免手表 OOM）→ `ImageApi.uploadImage(..., ImageApi.BIZ_REPLY)` → `buildImageContent` → `PrivateMsgApi.sendMsg(..., PrivateMessage.TYPE_PIC, ...)`；成功提示「发送成功」并 `refresh()`，失败弹 `message`，异常走 `MsgUtil.err` |
+| 同上 | **`ImageApi.BIZ_REPLY` 是复用而非专有值**：私信图片没有独立的 `biz`（`biz=` 在接口快照全库只命中 album/live/space 等无关文档），而 21037 只校验"url 是不是 B 站图床"，图床本身就是共用的 `upload_bfs`，所以复用 `BIZ_REPLY`（`new_reply`）安全。以后若找到私信专用 biz，改这一处即可 |
+
+代码依据：`app/src/main/java/com/RobinNotBad/BiliClient/api/ImageApi.java` 已有 `prepareImage(Context, Uri)`（GIF ≤20MB / PNG ≤8MB 原样透传，其余压 JPEG90，`MAX_IMAGE_SIZE` 25MB）与 `uploadImage(byte[], String, String, String)`（内部 `ReplyApi.uploadReplyImage` → `POST https://api.bilibili.com/x/dynamic/feed/draw/upload_bfs`），C12 没有新增任何上传代码，只是接线。**已知取舍：不做 EXIF 旋转**（无 `androidx.exifinterface` 依赖且约定不轻易加库，与 `WriteReplyActivity` 表现一致），竖拍照片可能方向不对。
+
+### 单测
+
+`app/src/test/java/com/RobinNotBad/BiliClient/api/PrivateMsgApiTest.kt` +4 例：
+1. `sizeToKb_按千字节保留三位小数`——0/负数 → 0、1024 → 1.0、56774 → 55.443、512 → 0.5（小于 1KB 不能被截成 0）。
+2. `imageTypeOf_去掉mime前缀并把jpg归一成jpeg`——含大小写不敏感。
+3. `imageTypeOf_空值兜底为jpeg`。
+4. `buildImageContent_字段齐全且是图片消息规格`——逐字段断言，`size` 断言 55.443。
+
+**验证**：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → BUILD SUCCESSFUL；`app/build/test-results/testDebugUnitTest` **26 个 XML / 211 个用例 / 0 失败 / 0 错误**（C13 后 207，本批 +4）。
+
+### 真机验证清单（JVM 单测覆盖不到的部分，发布前逐条走一遍）
+
+1. 私信页输入行能看到「图」按钮，且输入框/图/发送三个控件不重叠（圆形表盘上尤其看一眼）。
+2. 点击「图」→ 拉起系统选图；**手表上确认 `ACTION_GET_CONTENT` 真能选到图**（这是选它而非 `ACTION_PICK` 的原因）。
+3. 选一张普通照片 → 提示上传中 → 「发送成功」，消息气泡里出现图片。
+4. 在 **B 站官方 App / 网页**里看同一条消息：图片能正常显示、尺寸比例正确（验 `width`/`height` 带对了）。
+5. 选一张 **GIF** 发送 → 不应被压成静态图（`prepareImage` 对 GIF 原样透传）。
+6. 选一张 **竖拍照片** → 记录实际显示方向（已知不做 EXIF 旋转，此条是确认现状而非要求修复）。
+7. 选一张超过 25MB 的图 → 应走异常提示不崩溃。
+8. 未登录点「图」→ 提示「还没有登录喵~」，不弹选图。
+9. 选图后直接返回（不选任何图）→ 不应发送、不崩溃。
+10. 断网发送 → 走 `MsgUtil.err`，不崩溃。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C12 行改为「选图发送已实现（26.10.04 批次 5），拍照不做」。
+- 接口依据：`bilibili-API/docs/message/private_msg_content.md:27-57`（图片消息 content 结构、21037 的触发条件）。
+- 复用基建：`app/src/main/java/com/RobinNotBad/BiliClient/api/ImageApi.java`（`prepareImage` / `uploadImage` / `BIZ_REPLY`）。
+- 本批剩余：C14（新私信通知栏通知，不做 RemoteInput 速回）→ C16（打开应用时检查追番更新，不做后台定时），各自独立提交。
 

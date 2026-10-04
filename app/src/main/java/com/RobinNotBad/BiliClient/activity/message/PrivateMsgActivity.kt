@@ -2,6 +2,7 @@ package com.RobinNotBad.BiliClient.activity.message
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -10,13 +11,17 @@ import android.view.animation.Animation
 import android.view.animation.TranslateAnimation
 import android.widget.EditText
 import android.widget.ImageButton
+import android.widget.TextView
 
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.NonNull
 import androidx.recyclerview.widget.RecyclerView
 
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.base.BaseActivity
 import com.RobinNotBad.BiliClient.adapter.message.PrivateMsgAdapter
+import com.RobinNotBad.BiliClient.api.ImageApi
 import com.RobinNotBad.BiliClient.api.PrivateMsgApi
 import com.RobinNotBad.BiliClient.model.PrivateMessage
 import com.RobinNotBad.BiliClient.ui.widget.recycler.CustomLinearManager
@@ -39,6 +44,7 @@ class PrivateMsgActivity : BaseActivity() {
     lateinit var msgView: RecyclerView
     lateinit var contentEt: EditText
     lateinit var sendBtn: ImageButton
+    lateinit var imageBtn: TextView
     lateinit var layout_input: View
     var adapter: PrivateMsgAdapter? = null
     var uid: Long = 0
@@ -48,6 +54,17 @@ class PrivateMsgActivity : BaseActivity() {
 
     var animVisible = true
 
+    /**
+     * 选图结果回调。发图链路见 [sendImage]。
+     */
+    private val imageLauncher: ActivityResultLauncher<Intent> =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val data = result.data
+            if (result.resultCode == android.app.Activity.RESULT_OK && data?.data != null) {
+                sendImage(data.data!!)
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_private_msg)
@@ -55,6 +72,7 @@ class PrivateMsgActivity : BaseActivity() {
         msgView = findViewById(R.id.msg_view)
         contentEt = findViewById(R.id.msg_input_et)
         sendBtn = findViewById(R.id.send_btn)
+        imageBtn = findViewById(R.id.image_btn)
         layout_input = findViewById(R.id.layout_input)
 
         val intent = intent
@@ -162,6 +180,80 @@ class PrivateMsgActivity : BaseActivity() {
                 } catch (e: Exception) {
                     runOnUiThread { MsgUtil.err(e) }
                 }
+            }
+        }
+
+        imageBtn.setOnClickListener {
+            if (SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0L) == 0L) {
+                MsgUtil.showMsg("还没有登录喵~")
+            } else {
+                pickImage()
+            }
+        }
+    }
+
+    /**
+     * 拉起系统选图。手表上系统相册/文件选择器不一定支持 ACTION_PICK，
+     * ACTION_GET_CONTENT 兼容性更好（与 WriteReplyActivity、SettingGroupActivity 的结论一致）。
+     */
+    private fun pickImage() {
+        try {
+            val intent = Intent(Intent.ACTION_GET_CONTENT)
+            intent.type = "image/*"
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            imageLauncher.launch(intent)
+        } catch (e: Exception) {
+            MsgUtil.err(e)
+        }
+    }
+
+    /**
+     * 发图：本地图片 → [ImageApi.prepareImage]（按最长边 2048 压缩，避免手表 OOM）
+     * → [ImageApi.uploadImage] 上传到 B 站图床 → 组装 `msg_type=2` 的 content → sendMsg。
+     *
+     * 必须走本项目图床（upload_bfs），否则接口回 21037「图片格式不合法，不要调戏接口啦」。
+     */
+    private fun sendImage(uri: Uri) {
+        CenterThreadPool.run {
+            try {
+                runOnUiThread { MsgUtil.showMsg("正在上传图片喵…") }
+                val prepared = ImageApi.prepareImage(this, uri)
+                val uploaded = ImageApi.uploadImage(
+                    prepared.data,
+                    prepared.fileName,
+                    prepared.mimeType,
+                    ImageApi.BIZ_REPLY
+                ).getOrThrow()
+                val content = PrivateMsgApi.buildImageContent(
+                    uploaded.url,
+                    uploaded.width,
+                    uploaded.height,
+                    uploaded.size,
+                    PrivateMsgApi.imageTypeOf(prepared.mimeType)
+                )
+                val result = PrivateMsgApi.sendMsg(
+                    SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 114514),
+                    uid,
+                    PrivateMessage.TYPE_PIC,
+                    System.currentTimeMillis() / 1000,
+                    content.toString()
+                )
+                runOnUiThread {
+                    try {
+                        if (result.getInt("code") == 0) {
+                            MsgUtil.showMsg("发送成功")
+                            refresh()
+                        } else {
+                            val message = result.optString("message")
+                            MsgUtil.showMsg(message.ifEmpty { "发送失败" })
+                        }
+                    } catch (e: JSONException) {
+                        MsgUtil.showMsg("发送失败：\n$result")
+                        e.printStackTrace()
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread { MsgUtil.err(e) }
             }
         }
     }

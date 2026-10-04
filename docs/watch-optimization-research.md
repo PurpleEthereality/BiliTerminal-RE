@@ -648,7 +648,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | C9 | 动态定时发布 | 想要实现 |
 | C10 | 动态话题页 | 想要实现 |
 | C11 | 屏蔽带货动态 | 暂缓（用户「先等等」） |
-| C12 | 私信发图 | 想要实现 |
+| C12 | 私信发图 | **已实现（26.10.04 批次 5）**：`api/PrivateMsgApi.java` 的 `buildImageContent`/`sizeToKb`/`imageTypeOf` + `PrivateMsgActivity` 的选图入口（`ACTION_GET_CONTENT` → `ImageApi.prepareImage` → `upload_bfs` → `msg_type=2`）；**拍照不做**（用户拍板）；已知取舍：不处理 EXIF 旋转 |
 | C13 | 私信删除 / 置顶 / 折叠 | **删除 + 置顶/取消置顶已实现（26.10.04 批次 5）**：`api/PrivateMsgApi.java` 的 `removeSession`/`setSessionTop`（注意 `op_type` 0=置顶 1=取消置顶）+ `model/PrivateMsgSession.topTs`，会话项长按弹菜单；**折叠消息（`batch_rm_dustbin`）不做**（用户拍板） |
 | C14 | 私信通知栏速回（`RemoteInput`） | 想要实现 |
 | C15 | 关注主播开播提醒 | 无计划 |
@@ -697,22 +697,22 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 
 - **D2 / D3 / D5 原被本文 §8 列为待办，核实后为「已实现」**，相应条目作废（D5 只剩历史点击一个 10 分钟小项，已裁为暂缓）。
 - `activity/player/PlayerActivity.kt` 实际 **3494 行**（原述 3090 行）。
-- 单元测试实际 **26 个测试类 / 207 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
+- 单元测试实际 **26 个测试类 / 211 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例、C12 同文件 +4 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 - **本文 §10.4 与用户裁决存在三处冲突，以本台账为准**：① §10.4 把「关注主播开播提醒」列为"高价值低成本、值得做"，用户裁为**无计划**；② §10.4 把「漫画」列入"明确不值得做"，用户裁为**想要实现（F4）**；③ §10.4 把「收藏夹批量整理」「发布动态/评论/弹幕」列入"明确不值得做"，用户分别裁为**想要实现（C19/C20）**与**想要实现（C7/C9/C10）**——即"需要输入"不是本项目的否决理由（无键盘只影响输入方式，不影响功能取舍）。
 
 ### 12.7 量化汇总与建议顺序
 
 | 结论 | 项数 |
 |---|---|
-| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C13 已于批次 5 落地，剩 25） |
+| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C12 / C13 已于批次 5 落地，剩 24） |
 | 暂缓 | 10 |
 | 无计划 | 25 |
 | 已经实现（勘误） | 4（D2 / D3 / D5 主体，另 C3·C6·C8 的「已实现」子项） |
 | **26.10.04 批次 1/2/3 落地** | 6（A2 A3 A4 A5 A6 + A10）+ 5（B1 B2 B3 B5 B8）；2 项勘误作废（A11 A12） |
 | **26.10.04 批次 4 落地** | 3（E4 E5 E6），另有 2 项勘误（E4 字面量 13 处而非 14 处；`applyBatch` 与 `beginBatchEdit` 同类一并删） |
-| **26.10.04 批次 5 落地** | 1（C13，范围收窄为删除 + 置顶/取消置顶；折叠消息不做），本批共 4 项，其余见 C12/C14/C16 |
+| **26.10.04 批次 5 落地** | 2（C13 会话删除 + 置顶/取消置顶；C12 私信发图），本批共 4 项，其余见 C14/C16 |
 
-**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（C13 ✅ 已完成，见 §十五；C12/C14/C16 待做，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27 → ⑦ C18 C19 C20 C21 → ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
+**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（C13 ✅ 已完成，见 §十五；C12 ✅ 已完成，见 §十六；C14/C16 待做，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27 → ⑦ C18 C19 C20 C21 → ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
 
 ---
 

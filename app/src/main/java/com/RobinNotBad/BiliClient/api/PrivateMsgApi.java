@@ -326,6 +326,49 @@ public class PrivateMsgApi {
     }
 
     /**
+     * 构造图片消息（{@code msg_type=2}）的 content 对象。
+     *
+     * <p>接口要求 {@code url} 必须是 B 站图床地址，否则返回 21037「图片格式不合法，不要调戏接口啦」；
+     * 本项目的图床来自 {@link ImageApi#uploadImage}（upload_bfs），满足要求。
+     * {@code width}/{@code height} 不传会导致消息显示异常，所以调用方必须把上传返回的尺寸带上。
+     *
+     * @param byteSize  原图字节数，接口按 KB 计（见 {@link #sizeToKb(long)}）
+     * @param imageType 不带 {@code image/} 前缀的格式名，见 {@link #imageTypeOf(String)}
+     */
+    public static JSONObject buildImageContent(String url, int width, int height, long byteSize, String imageType)
+            throws JSONException {
+        return new JSONObject()
+                .put("url", url)
+                .put("width", width)
+                .put("height", height)
+                .put("imageType", imageType)
+                .put("original", 1)
+                .put("size", sizeToKb(byteSize));
+    }
+
+    /**
+     * 字节 → 千字节，保留三位小数（接口文档里 size 的单位就是 KB，示例值 55.443）。
+     * 非法输入（0 或负数）返回 0，避免发出 NaN / 负数。
+     */
+    public static double sizeToKb(long byteSize) {
+        if (byteSize <= 0) return 0d;
+        return Math.round(byteSize / 1024d * 1000d) / 1000d;
+    }
+
+    /**
+     * 把 MIME 类型转成接口要的 {@code imageType}（去掉 {@code image/} 前缀，{@code jpg} 归一成 {@code jpeg}）。
+     * 空值按 jpeg 处理，与 {@link ImageApi} 的 MIME 兜底保持一致。
+     */
+    public static String imageTypeOf(String mimeType) {
+        if (mimeType == null || mimeType.isEmpty()) return "jpeg";
+        String type = mimeType.toLowerCase(java.util.Locale.ROOT);
+        int slash = type.indexOf('/');
+        if (slash >= 0) type = type.substring(slash + 1);
+        if ("jpg".equals(type)) return "jpeg";
+        return type;
+    }
+
+    /**
      * 把会话管理接口的返回码翻译成给用户看的提示。0 返回空串（成功，由调用方自己提示）。
      */
     public static String sessionErrorMsg(int code) {

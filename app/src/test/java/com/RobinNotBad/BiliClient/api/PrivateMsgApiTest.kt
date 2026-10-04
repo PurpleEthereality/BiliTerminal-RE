@@ -131,4 +131,46 @@ class PrivateMsgApiTest {
         assertTrue(PrivateMsgApi.sessionErrorMsg(-400).contains("请求错误"))
         assertTrue(PrivateMsgApi.sessionErrorMsg(12345).contains("12345"))
     }
+
+    // ---------- C12 图片消息 ----------
+
+    @Test
+    fun sizeToKb_按千字节保留三位小数() {
+        assertEquals(0.0, PrivateMsgApi.sizeToKb(0L), 0.0)
+        assertEquals("负数按 0 处理，不能发出 NaN/负数", 0.0, PrivateMsgApi.sizeToKb(-1L), 0.0)
+        assertEquals(1.0, PrivateMsgApi.sizeToKb(1024L), 0.0)
+        // 接口文档示例值就是 55.443 这种三位小数
+        assertEquals(55.443, PrivateMsgApi.sizeToKb(56774L), 0.001)
+        // 小于 1KB 也要保留小数，不能被截成 0
+        assertEquals(0.5, PrivateMsgApi.sizeToKb(512L), 0.0)
+    }
+
+    @Test
+    fun imageTypeOf_去掉mime前缀并把jpg归一成jpeg() {
+        assertEquals("jpeg", PrivateMsgApi.imageTypeOf("image/jpeg"))
+        assertEquals("jpeg", PrivateMsgApi.imageTypeOf("image/jpg"))
+        assertEquals("png", PrivateMsgApi.imageTypeOf("image/png"))
+        assertEquals("gif", PrivateMsgApi.imageTypeOf("image/gif"))
+        assertEquals("大小写不敏感，统一小写输出", "webp", PrivateMsgApi.imageTypeOf("IMAGE/WEBP"))
+    }
+
+    @Test
+    fun imageTypeOf_空值兜底为jpeg() {
+        assertEquals("jpeg", PrivateMsgApi.imageTypeOf(null))
+        assertEquals("jpeg", PrivateMsgApi.imageTypeOf(""))
+    }
+
+    @Test
+    fun buildImageContent_字段齐全且是图片消息规格() {
+        val content = PrivateMsgApi.buildImageContent(
+            "https://message.biliimg.com/bfs/im_new/xxx.jpg", 300, 400, 56774L, "jpeg"
+        )
+
+        assertEquals("https://message.biliimg.com/bfs/im_new/xxx.jpg", content.getString("url"))
+        assertEquals(300, content.getInt("width"))
+        assertEquals(400, content.getInt("height"))
+        assertEquals("jpeg", content.getString("imageType"))
+        assertEquals("1 表示 APP 显示「下载原图」", 1, content.getInt("original"))
+        assertEquals(55.443, content.getDouble("size"), 0.001)
+    }
 }
