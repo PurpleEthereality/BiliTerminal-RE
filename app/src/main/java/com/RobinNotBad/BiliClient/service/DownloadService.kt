@@ -24,12 +24,11 @@ import com.RobinNotBad.BiliClient.service.download.DownloadPathSpec
 import com.RobinNotBad.BiliClient.service.download.DownloadProgressMath
 import com.RobinNotBad.BiliClient.service.download.DownloadProgressStore
 import com.RobinNotBad.BiliClient.service.download.DownloadProgressInfo
+import com.RobinNotBad.BiliClient.service.download.DownloadRepository
 import com.RobinNotBad.BiliClient.model.DownloadSection
 import com.RobinNotBad.BiliClient.model.PlayerData
 import com.RobinNotBad.BiliClient.model.SubtitleLink
 import com.RobinNotBad.BiliClient.util.Aria2Util
-import com.RobinNotBad.BiliClient.util.VideoMetaManager
-import com.RobinNotBad.BiliClient.model.VideoMeta
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.FileUtil
 import com.RobinNotBad.BiliClient.util.GlideUtil
@@ -89,7 +88,7 @@ class DownloadService : Service() {
                 DownloadProgressStore.isSpeedMode = value
             }
 
-        private var firstDown: Long = -1
+        // 用户指定优先下载的那一集（firstDown）已搬到 DownloadRepository，与 DB 查询放在一起
 
         // 本次下载批次的总体统计（总进度条、通知栏使用）
         @JvmStatic val batchStats = DownloadBatchStats()
@@ -171,137 +170,22 @@ class DownloadService : Service() {
 
         // 下载结果码（含"任务被暂停不算失败"）统一见 DownloadPathSpec
 
-        @JvmStatic
-        fun getFirst(): DownloadSection? {
-            var cursor: Cursor? = null
-            var database: SQLiteDatabase? = null
-            return try {
-                val helper = DownloadSqlHelper(BiliTerminal.context)
-                database = helper.readableDatabase
-
-                if (firstDown >= 0)
-                    cursor = database.rawQuery("select * from download where id=? limit 1",
-                        arrayOf(firstDown.toString()))
-                if (cursor == null)
-                    cursor = database.rawQuery("select * from download where state=? limit 1", arrayOf("none"))
-
-                firstDown = -1
-
-                if (cursor == null || cursor.count == 0)
-                    return null
-
-                cursor.moveToFirst()
-                DownloadSection(cursor)
-            } catch (e: Exception) {
-                MsgUtil.err(e)
-                null
-            } finally {
-                cursor?.close()
-                database?.close()
-            }
-        }
+        // ---------- 以下为 DownloadRepository 的门面：DB 访问全部搬到 service/download/ ----------
 
         @JvmStatic
-        fun getAll(): ArrayList<DownloadSection>? {
-            var cursor: Cursor? = null
-            var database: SQLiteDatabase? = null
-            return try {
-                val helper = DownloadSqlHelper(BiliTerminal.context)
-                database = helper.readableDatabase
-                cursor = database.rawQuery("select * from download", null)
-                if (cursor == null || cursor.count == 0)
-                    return null
-
-                val list = ArrayList<DownloadSection>()
-                while (cursor.moveToNext()) {
-                    list.add(DownloadSection(cursor))
-                }
-                list
-            } catch (e: Exception) {
-                MsgUtil.err(e)
-                ArrayList()
-            } finally {
-                cursor?.close()
-                database?.close()
-            }
-        }
+        fun getFirst(): DownloadSection? = DownloadRepository.getFirst()
 
         @JvmStatic
-        fun deleteSection(id: Long) {
-            var database: SQLiteDatabase? = null
-            try {
-                val helper = DownloadSqlHelper(BiliTerminal.context)
-                database = helper.writableDatabase
-                database.execSQL("delete from download where id=?", arrayOf<Any>(id))
-                database.close()
-            } catch (e: Exception) {
-                MsgUtil.err(e)
-            } finally {
-                database?.close()
-            }
-        }
+        fun getAll(): ArrayList<DownloadSection>? = DownloadRepository.getAll()
 
         @JvmStatic
-        fun clear() {
-            var database: SQLiteDatabase? = null
-            try {
-                val helper = DownloadSqlHelper(BiliTerminal.context)
-                database = helper.writableDatabase
-                database.execSQL("delete from download", arrayOf<Any>())
-                database.close()
-            } catch (e: Exception) {
-                MsgUtil.err(e)
-            } finally {
-                database?.close()
-            }
-        }
+        fun deleteSection(id: Long) = DownloadRepository.deleteSection(id)
 
         @JvmStatic
-        fun setState(id: Long, state: String) {
-            var database: SQLiteDatabase? = null
-            try {
-                val helper = DownloadSqlHelper(BiliTerminal.context)
-                database = helper.writableDatabase
-                database.execSQL("update download set state=? where id=?", arrayOf<Any>(state, id))
-                database.close()
-            } catch (e: Exception) {
-                MsgUtil.err(e)
-            } finally {
-                database?.close()
-            }
-        }
+        fun clear() = DownloadRepository.clear()
 
-        /**
-         * 保存视频元数据到缓存文件夹
-         */
-        private fun saveVideoMeta(folder: File, title: String, aid: Long, cid: Long, qn: Int, downloadType: String) {
-            try {
-                val meta = VideoMeta()
-                meta.title = title
-                meta.aid = aid
-                meta.cid = cid
-                meta.qn = qn
-                meta.downloadType = downloadType
-                VideoMetaManager.saveMeta(folder, meta)
-            } catch (e: Exception) {
-                Logu.e("saveVideoMeta", "保存视频元数据失败: ${e.message}")
-            }
-        }
-
-        /**
-         * 更新视频元数据中的画质列表（下载完成后回调）
-         */
-        private fun updateVideoMetaQualityLists(folder: File, qnStrList: Array<String>?, qnValueList: IntArray?) {
-            try {
-                if (qnStrList == null && qnValueList == null) return
-                val meta = VideoMetaManager.readMeta(folder)
-                meta.qnStrList = qnStrList
-                meta.qnValueList = qnValueList
-                VideoMetaManager.saveMeta(folder, meta)
-            } catch (e: Exception) {
-                Logu.e("updateVideoMeta", "更新画质列表失败: ${e.message}")
-            }
-        }
+        @JvmStatic
+        fun setState(id: Long, state: String) = DownloadRepository.setState(id, state)
 
         @JvmStatic
         fun startDownload(title: String, aid: Long, cid: Long, cover: String, qn: Int, downloadType: String,
@@ -339,7 +223,7 @@ class DownloadService : Service() {
                     qualityFile.writeText(qualityContent)
 
                     // 保存完整视频元数据到 .video_meta.json
-                    saveVideoMeta(path_single, title, aid, cid, qn, downloadType)
+                    DownloadRepository.saveVideoMeta(path_single, title, aid, cid, qn, downloadType)
 
                     val msg = if (DownloadPathSpec.TYPE_AUDIO_ONLY == downloadType) "已添加音频下载" else "已添加下载"
                     MsgUtil.showMsg(msg)
@@ -390,7 +274,7 @@ class DownloadService : Service() {
                     qualityFile.writeText(qualityContent)
 
                     // 保存完整视频元数据到 .video_meta.json
-                    saveVideoMeta(path_page, child, aid, cid, qn, downloadType)
+                    DownloadRepository.saveVideoMeta(path_page, child, aid, cid, qn, downloadType)
 
                     val msg = if (DownloadPathSpec.TYPE_AUDIO_ONLY == downloadType) "已添加音频下载" else "已添加下载"
                     MsgUtil.showMsg(msg)
@@ -418,7 +302,7 @@ class DownloadService : Service() {
             }
             started = true
             Logu.d("start")
-            firstDown = first
+            DownloadRepository.setFirstDown(first)
 
             val context = BiliTerminal.context!!
             try {
@@ -565,7 +449,7 @@ class DownloadService : Service() {
 
     private fun sequentialDownload() {
         while (started) {
-            val section_tmp = getFirst()
+            val section_tmp = DownloadRepository.getFirst()
             if (section_tmp == null)
                 break
 
@@ -593,7 +477,7 @@ class DownloadService : Service() {
                 break
             }
 
-            val sectionToProcess = getFirst()
+            val sectionToProcess = DownloadRepository.getFirst()
             if (sectionToProcess == null) {
                 // 没有可下载的任务了
                 semaphore.release()
@@ -608,7 +492,7 @@ class DownloadService : Service() {
             }
 
             // 立即标记为下载中，防止竞态条件导致同一任务被重复调度
-            setState(sectionToProcess.id, "downloading")
+            DownloadRepository.setState(sectionToProcess.id, "downloading")
             setDownloadProgress(sectionToProcess.id, 0f, "准备中")
 
             activeCount.incrementAndGet()
@@ -667,20 +551,20 @@ class DownloadService : Service() {
             }
             batchStats.recordFailure()
             removeDownloadProgress(downloadSection.id)
-            setState(downloadSection.id, "error")
+            DownloadRepository.setState(downloadSection.id, "error")
         }
         return success
     }
 
     /** 恢复上次会话遗留的"下载中"记录，并清理残留进度 */
     private fun recoverStuckSections() {
-        val all = getAll() ?: return
+        val all = DownloadRepository.getAll() ?: return
         for (s in all) {
             // 只重置「本进程没有线程在下载」的遗留记录：downloadProgressMap 里有条目的，
             // 说明有活跃下载线程正在写这个 section，改回 "none" 会让调度器二次拾取、
             // 双线程写同一文件（审计 S6）。同时顺手清掉它的残留进度，避免列表显示假进度。
             if (s.state == "downloading" && !DownloadProgressStore.hasProgress(s.id)) {
-                setState(s.id, "none")
+                DownloadRepository.setState(s.id, "none")
                 removeDownloadProgress(s.id)
             }
         }
@@ -725,22 +609,22 @@ class DownloadService : Service() {
             // 保存画质列表到元数据文件
             val downloadPath = downloadSection.getPath()
             if (downloadPath != null && downloadPath.exists()) {
-                updateVideoMetaQualityLists(downloadPath, data.qnStrList, data.qnValueList)
+                DownloadRepository.updateVideoMetaQualityLists(downloadPath, data.qnStrList, data.qnValueList)
             }
         } catch (e: JSONException) {
-            setState(downloadSection.id, "error")
+            DownloadRepository.setState(downloadSection.id, "error")
             notifyCompletion("下载链接获取失败：\n" + downloadSection.name_short, downloadSection.id.toInt())
             section = null
             refreshDownloadList()
             return false
         } catch (e: IOException) {
             exitCode = DownloadPathSpec.ERR_NETWORK
-            setState(downloadSection.id, "none")
+            DownloadRepository.setState(downloadSection.id, "none")
             return false
         }
 
         try {
-            setState(downloadSection.id, "downloading")
+            DownloadRepository.setState(downloadSection.id, "downloading")
 
             // 更新进度追踪
             setDownloadProgress(downloadSection.id, 0f, "开始下载")
@@ -905,13 +789,13 @@ class DownloadService : Service() {
             if (file_sign != null && file_sign.exists())
                 file_sign.delete()
 
-            deleteSection(downloadSection.id)
+            DownloadRepository.deleteSection(downloadSection.id)
             refreshLocalList()
 
             return true
         } catch (e: IOException) {
             exitCode = DownloadPathSpec.ERR_FILE
-            setState(downloadSection.id, "error")
+            DownloadRepository.setState(downloadSection.id, "error")
             return false
         }
     }
@@ -1034,7 +918,7 @@ class DownloadService : Service() {
                         return
 
                     val overall = DownloadService.computeOverallProgress(
-                        DownloadService.getAll() ?: emptyList()
+                        DownloadRepository.getAll() ?: emptyList()
                     )
                     statusBuilder.setContentText(
                         "总进度 " + (overall * 100).toInt() + "% · " + (section?.name_short ?: "下载中")
@@ -1534,7 +1418,7 @@ class DownloadService : Service() {
             CenterThreadPool.run {
                 notifyExit(exitMessage!!)
                 if (exitCode != DownloadPathSpec.NORMAL) {
-                    setState(id, "none")
+                    DownloadRepository.setState(id, "none")
                     // 注意：这里绝不能删整个任务目录。单 P 任务的目录（FileUtil.getVideoDownloadPath(title, null)）
                     // 就是 <下载根>/<标题> 本身，递归删除会把上一次成功下载好的视频/音频/封面/弹幕一起清掉，
                     // 属于真实数据丢失。批次非正常结束（服务被回收、用户停止、中途出错）时只清理本次下载的

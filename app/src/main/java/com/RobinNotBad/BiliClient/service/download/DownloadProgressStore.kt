@@ -66,7 +66,7 @@ internal object DownloadProgressStore {
      */
     fun pauseDownload(id: Long) {
         pausedMap[id] = true
-        DownloadService.setState(id, "paused")
+        DownloadRepository.setState(id, "paused")
     }
 
     /**
@@ -74,7 +74,7 @@ internal object DownloadProgressStore {
      */
     fun resumeDownload(id: Long) {
         pausedMap.remove(id)
-        DownloadService.setState(id, "none")
+        DownloadRepository.setState(id, "none")
         DownloadService.start(id)
     }
 
