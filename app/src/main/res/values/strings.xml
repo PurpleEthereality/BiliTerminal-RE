@@ -153,6 +153,7 @@
     <string name="desc_danmaku_force_r2l">除了高级弹幕以外的弹幕都会被强制以滚动弹幕的形式展示，从而避免顶部弹幕和底部弹幕遮挡画面</string>
     <string name="desc_danmaku_showsender">显示直播聊天弹幕的发送者名称</string>
     <string name="desc_player_high_energy">在进度条下方用折线图展示弹幕密度分布</string>
+    <string name="desc_player_skip_op_ed">播放番剧/影视时，进度走到片头或片尾会自动跳过去，并在屏幕下方留一个「撤回」按钮，点一下就能回到被跳过的地方。\n跳过只对 B 站标注了片头片尾的视频生效。</string>
     <string name="desc_subtitle_autoshow">开启后，播放存在字幕的视频时，将会自动弹出字幕选择对话框。</string>
     <string name="desc_subtitle_ai_allowed">打开此选项，如果视频只有一个中文AI字幕，播放时仍然会让你选择。\n可能比较烦人，谨慎开启。</string>
     <string name="desc_no_vip_color">开启此选项后，将不会在评论区为大会员用户显示专属的红色名称</string>

@@ -93,6 +93,15 @@ object SettingsKeys {
     const val PLAYER_CODEC = "player_codec"
     const val PLAYER_AUDIO = "player_audio"
     const val PLAYER_HIGH_ENERGY = "player_high_energy"
+    /**
+     * 自动跳过片头/片尾。数据来源是 `view_points` 里 `type=1`（片头）/`type=2`（片尾）的区间。
+     * 默认关闭：跳过是「替用户做决定」，必须由用户显式开启，且跳过后要能撤回。
+     */
+    const val PLAYER_SKIP_OP_ED = "player_skip_op_ed"
+    /**
+     * 「自动跳过片头片尾」的首次引导是否已经弹过。纯记账用，不出现在设置页。
+     */
+    const val PLAYER_SKIP_OP_ED_GUIDED = "player_skip_op_ed_guided"
     const val PLAYER_DANMAKU_ALLOW_OVERLAP = "player_danmaku_allowoverlap"
     const val PLAYER_DANMAKU_MERGE_DUPLICATE = "player_danmaku_mergeduplicate"
     const val PLAYER_DANMAKU_FORCE_R2L = "player_danmaku_forceR2L"

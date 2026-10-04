@@ -60,6 +60,7 @@ import com.RobinNotBad.BiliClient.model.ViewPoint
 import com.RobinNotBad.BiliClient.player.DanmakuManager
 import com.RobinNotBad.BiliClient.player.PlayerDefaults
 import com.RobinNotBad.BiliClient.player.PlayerSurfaceBinder
+import com.RobinNotBad.BiliClient.player.ViewPointSkip
 import com.RobinNotBad.BiliClient.player.SurfaceTarget
 import com.RobinNotBad.BiliClient.service.PlaybackService
 import com.RobinNotBad.BiliClient.ui.widget.BatteryView
@@ -316,6 +317,15 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     private var viewPoints: MutableList<ViewPoint>? = null
     private var viewPointAdapter: ViewPointAdapter? = null
 
+    /** 从 [viewPoints] 提炼出的可自动跳过片段（片头/片尾），由 [ViewPointSkip.buildSegments] 生成。 */
+    private var skipSegments: List<ViewPointSkip.Segment> = emptyList()
+
+    /** 本次播放已经处理过的片段 key：自动跳过一次、或用户手动拖进去过，都不再重复跳。 */
+    private val skipHandled = HashSet<String>()
+
+    /** 最近一次自动跳过的片段，供「撤回」回到原位；跳完即置位，撤回后清空。 */
+    private var lastSkippedSegment: ViewPointSkip.Segment? = null
+
     private var eventBusInit = false
 
     @JvmField var liveWebSocket: WebSocket? = null
@@ -536,7 +546,7 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                     loadHighEnergyData()
                 }
 
-                if (!destroyed && isOnlineVideo && aid > 0 && cid > 0 && SharedPreferencesUtil.getBoolean("player_show_viewpoints", true)) {
+                if (!destroyed && isOnlineVideo && aid > 0 && cid > 0 && needViewPoints()) {
                     loadViewPoints()
                 }
 
@@ -1183,6 +1193,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                         if (viewPointAdapter != null && viewPoints != null && viewPoints!!.isNotEmpty()) {
                             viewPointAdapter!!.updateCurrentPosition(currSec.toInt())
                         }
+                        // 复用同一个 250ms 主线程定时器做片头/片尾判定，不另起 Timer
+                        maybeAutoSkipOpEd(currSec.toDouble())
                         if (subtitles != null) showSubtitle(currSec + subtitle_delta)
 
                         // 只在整秒变化时上报，避免每 250ms 一次 MediaSession Binder IPC
@@ -2214,6 +2226,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                 isSeeking = false
                 if (isPrepared && !destroyed) {
                     val seekPos = seekbar_progress.progress
+                    // 用户主动拖进片头/片尾就算「已处理」，否则会被立刻自动跳走
+                    onUserSeekTo(seekPos.toLong())
                     ijkPlayer!!.seekTo(seekPos.toLong())
                     if (hasDanmaku && mDanmakuView != null) mDanmakuView!!.seekTo(seekPos.toLong())
                     autohideReset()
@@ -2264,6 +2278,8 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
 
     private fun seekToPosition(position: Long) {
         if (ijkPlayer != null && isPrepared) {
+            // 用户手动拖进片头/片尾就算「已处理」，否则下一轮定时器会立刻把他弹走
+            onUserSeekTo(position)
             ijkPlayer!!.seekTo(position)
             if (hasDanmaku && mDanmakuView != null) mDanmakuView!!.seekTo(position)
             // 同步外部音频轨道
@@ -2271,6 +2287,76 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                 try { audioPlayer!!.seekTo(position.toInt()) } catch (_: Exception) {}
             }
         }
+    }
+
+    /** 显示视频分段、或自动跳过片头片尾——任一开启都需要 view_points 数据。 */
+    private fun needViewPoints(): Boolean =
+        SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SHOW_VIEWPOINTS, true) ||
+            SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, false)
+
+    /**
+     * 自动跳过片头/片尾。
+     *
+     * 触发条件：用户开了设置、且当前位置落在一段**还没处理过**的片头/片尾里。
+     * 跳一次就把片段记进 [skipHandled]，这样用户点「撤回」回到原地后不会被立刻再弹走。
+     */
+    private fun maybeAutoSkipOpEd(positionSec: Double) {
+        if (skipSegments.isEmpty()) return
+        if (!SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, false)) return
+        val segment = ViewPointSkip.shouldSkip(positionSec, skipSegments, skipHandled) ?: return
+        skipHandled.add(ViewPointSkip.keyOf(segment))
+        Logu.d("跳过片头片尾", "跳过 type=" + segment.type + " " + segment.fromSec + "s -> " + segment.toSec + "s")
+        // 落点是区间的右端点（右开区间之外），所以不会被自己再次判定
+        seekToPosition((segment.toSec * 1000.0).toLong())
+        lastSkippedSegment = segment
+        showSkipUndoSnack(segment)
+    }
+
+    /** 跳过后给一次反悔机会：屏幕下方留一个「撤回」按钮，点一下回到被跳过的地方。 */
+    private fun showSkipUndoSnack(segment: ViewPointSkip.Segment) {
+        val isOpening = segment.type == ViewPointSkip.TYPE_OP
+        val action = MsgUtil.Action("撤回", View.OnClickListener {
+            // 期间又跳过别的片段、或用户自己拖过进度，这条「撤回」就过期了，别把人拽回去
+            if (lastSkippedSegment !== segment) return@OnClickListener
+            lastSkippedSegment = null
+            // 跳回片段起点；此时该片段已在 skipHandled 里，不会再被自动跳过
+            seekToPosition((segment.fromSec * 1000.0).toLong())
+            MsgUtil.showMsg(if (isOpening) "已回到片头" else "已回到片尾")
+        })
+        val anchor = findViewById<View>(android.R.id.content) ?: return
+        MsgUtil.createSnack(anchor, if (isOpening) "已跳过片头" else "已跳过片尾", Snackbar.LENGTH_LONG, action).show()
+    }
+
+    /**
+     * 用户主动拖动/按键跳转时，把落点所在的片头/片尾标记成「已处理」。
+     *
+     * 用户主动拖进片头，说明他就是想看看片头，不能被下一轮定时器又弹走。
+     * 自动跳过自己跳到区间右端点（区间之外），所以不会误伤这里。
+     */
+    private fun onUserSeekTo(positionMs: Long) {
+        if (skipSegments.isEmpty()) return
+        val key = ViewPointSkip.keyForManualSeek(positionMs / 1000.0, skipSegments, skipHandled) ?: return
+        skipHandled.add(key)
+        lastSkippedSegment = null
+    }
+
+    /**
+     * 第一次在「有片头片尾」的视频里播放、且用户还没开这个功能时，只提示一次。
+     *
+     * 直接给一个「开启」按钮，用户不用去设置页翻；见过一次就写 `player_skip_op_ed_guided`，
+     * 以后每集都弹会很烦。
+     */
+    private fun maybeShowSkipGuide() {
+        if (skipSegments.isEmpty()) return
+        if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, false)) return
+        if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED_GUIDED, false)) return
+        SharedPreferencesUtil.putBoolean(SettingsKeys.PLAYER_SKIP_OP_ED_GUIDED, true)
+        val action = MsgUtil.Action("开启", View.OnClickListener {
+            SharedPreferencesUtil.putBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, true)
+            MsgUtil.showMsg("已开启自动跳过片头片尾")
+        })
+        val anchor = findViewById<View>(android.R.id.content) ?: return
+        MsgUtil.createSnack(anchor, "这个视频有片头片尾，可以自动跳过", Snackbar.LENGTH_LONG, action).show()
     }
 
     /**
@@ -2708,7 +2794,7 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                     loadHighEnergyData()
                 }
 
-                if (!destroyed && isOnlineVideo && aid > 0 && cid > 0 && SharedPreferencesUtil.getBoolean("player_show_viewpoints", true)) {
+                if (!destroyed && isOnlineVideo && aid > 0 && cid > 0 && needViewPoints()) {
                     loadViewPoints()
                 }
 
@@ -2818,17 +2904,31 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
             try {
                 Logu.d("视频分段", "开始加载分段数据 aid=" + aid + " cid=" + cid)
                 viewPoints = PlayerApi.getViewPoints(aid, cid)
+                // 片头/片尾只是 view_points 的子集（type=1/2），这里单独提炼一份给自动跳过用
+                val segments = ViewPointSkip.buildSegments(
+                    (viewPoints ?: emptyList()).map {
+                        ViewPointSkip.Segment(it.type, it.from.toDouble(), it.to.toDouble())
+                    }
+                )
 
-                if (viewPoints != null && viewPoints!!.isNotEmpty()) {
-                    runOnUiThread {
-                        if (!destroyed) {
+                runOnUiThread {
+                    if (destroyed) return@runOnUiThread
+                    // 换集/换P 之后，上一集的进度不能带过来
+                    skipSegments = segments
+                    skipHandled.clear()
+                    lastSkippedSegment = null
+
+                    if (viewPoints != null && viewPoints!!.isNotEmpty()) {
+                        // 只开了自动跳过的用户不需要这个按钮
+                        if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SHOW_VIEWPOINTS, true)) {
                             btn_viewpoint.visibility = View.VISIBLE
                             btn_viewpoint.setOnClickListener { showViewPointSelectorCard() }
-                            Logu.d("视频分段", "成功加载 " + viewPoints!!.size + " 个分段")
                         }
+                        Logu.d("视频分段", "成功加载 " + viewPoints!!.size + " 个分段")
+                        maybeShowSkipGuide()
+                    } else {
+                        Logu.d("视频分段", "未获取到分段数据")
                     }
-                } else {
-                    Logu.d("视频分段", "未获取到分段数据")
                 }
             } catch (e: Exception) {
                 Logu.e("视频分段", "加载失败: " + e.message)
@@ -3208,7 +3308,7 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
                                 loadHighEnergyData()
                             }
 
-                            if (!destroyed && isOnlineVideo && aid > 0 && cid > 0 && SharedPreferencesUtil.getBoolean("player_show_viewpoints", true)) {
+                            if (!destroyed && isOnlineVideo && aid > 0 && cid > 0 && needViewPoints()) {
                                 loadViewPoints()
                             }
                         }

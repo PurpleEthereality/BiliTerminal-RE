@@ -128,6 +128,8 @@ class SettingTerminalPlayerActivity : RefreshListActivity() {
 
             add(SettingSection("switch", "显示高能进度条", SettingsKeys.PLAYER_HIGH_ENERGY,
                 getString(R.string.desc_player_high_energy), "false"))
+            add(SettingSection("switch", "自动跳过片头片尾", SettingsKeys.PLAYER_SKIP_OP_ED,
+                getString(R.string.desc_player_skip_op_ed), "false"))
             add(SettingSection("switch", "弹幕允许重叠", SettingsKeys.PLAYER_DANMAKU_ALLOW_OVERLAP, "", "true"))
             add(SettingSection("switch", "合并重复弹幕", SettingsKeys.PLAYER_DANMAKU_MERGE_DUPLICATE, "", "false"))
             add(SettingSection("switch", "强制为滚动弹幕", SettingsKeys.PLAYER_DANMAKU_FORCE_R2L,
