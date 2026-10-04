@@ -2593,8 +2593,11 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
 
         CenterThreadPool.run {
             try {
-                Logu.d("高能进度条", "开始加载数据 aid=" + aid + " cid=" + cid)
-                val data = PlayerApi.getHighEnergyData(cid, aid)
+                // bvid 不是每个入口都会传（PlayerData 里就没有这个字段），
+                // 拿不到就交给 getHighEnergyData 用 av 号拼 Referer
+                val bvid = intent?.getStringExtra("bvid") ?: ""
+                Logu.d("高能进度条", "开始加载数据 aid=" + aid + " cid=" + cid + " bvid=" + bvid)
+                val data = PlayerApi.getHighEnergyData(cid, aid, bvid)
 
                 if (data != null && data.hasValidData()) {
                     runOnUiThread {

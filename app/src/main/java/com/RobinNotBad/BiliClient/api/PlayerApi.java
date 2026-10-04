@@ -35,6 +35,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -710,56 +711,156 @@ public class PlayerApi {
 
     /**
      * 获取高能进度条数据
+     *
+     * @param cid  视频分P的cid，全局唯一，接口靠它定位
+     * @param aid  稿件avid；番剧、直播等场景可能为0
+     * @param bvid 稿件bvid；拿不到就传空串，Referer 会退回 av 号
      */
-    public static HighEnergyData getHighEnergyData(long cid, long aid) {
+    public static HighEnergyData getHighEnergyData(long cid, long aid, String bvid) {
         try {
-            String url = "https://bvc.bilivideo.com/pbp/data?cid=" + cid;
-            if (aid > 0) {
-                url += "&aid=" + aid;
-            }
+            StringBuilder url = new StringBuilder("https://bvc.bilivideo.com/pbp/data?cid=").append(cid);
+            if (aid > 0) url.append("&aid=").append(aid);
+            if (bvid != null && !bvid.isEmpty()) url.append("&bvid=").append(bvid);
+            // r=loader 是 web 播放器加载本接口时固定带的标记。
+            // 2026-10 前后服务端改了行为：少了它（以及落在视频页上的 Referer），
+            // 返回体里不再有 events 段，曲线就是空白的。
+            url.append("&r=loader");
 
-            JSONObject response = NetWorkUtil.getJson(url, NetWorkUtil.webHeaders);
+            JSONObject response = NetWorkUtil.getJson(url.toString(), pbpHeaders(bvid, aid));
 
-            if (response == null) {
-                Logu.w("高能进度条", "响应为空");
-                return null;
-            }
-
-            int code = response.optInt("code", -1);
-            if (code != 0 && code != -1) {
-                Logu.w("高能进度条", "API返回错误码: " + code);
-                return null;
-            }
-
-            HighEnergyData data = new HighEnergyData();
-            data.stepSec = response.optInt("step_sec", 10);
-            data.tagStr = response.optString("tagstr", "");
-            data.debug = response.optString("debug", "");
-
-            JSONObject events = response.optJSONObject("events");
-            if (events != null) {
-                JSONArray defaultArray = events.optJSONArray("default");
-                if (defaultArray != null && defaultArray.length() > 0) {
-                    float[] eventData = new float[defaultArray.length()];
-                    for (int i = 0; i < defaultArray.length(); i++) {
-                        eventData[i] = (float) defaultArray.optDouble(i, 0.0);
-                    }
-                    data.events = eventData;
-                    Logu.d("高能进度条", "成功获取 " + eventData.length + " 个数据点，采样间隔: " + data.stepSec + "秒");
-                } else {
-                    Logu.w("高能进度条", "default数组为空或不存在");
-                    data.events = new float[0];
-                }
+            HighEnergyData data = parseHighEnergyData(response);
+            if (data == null) {
+                Logu.w("高能进度条", "未取得响应 code 或响应为空");
+            } else if (!data.hasValidData()) {
+                Logu.w("高能进度条", "返回体里没有 events.default");
             } else {
-                Logu.w("高能进度条", "events对象不存在");
-                data.events = new float[0];
+                Logu.d("高能进度条", "成功获取 " + data.events.length + " 个数据点，采样间隔: " + data.stepSec + "秒");
             }
-
             return data;
         } catch (Exception e) {
             Logu.e("高能进度条", "获取失败: " + e.getMessage());
             e.printStackTrace();
             return null;
         }
+    }
+
+    /** 兼容旧调用点：不知道 bvid 时用 av 号拼 Referer */
+    public static HighEnergyData getHighEnergyData(long cid, long aid) {
+        return getHighEnergyData(cid, aid, "");
+    }
+
+    /**
+     * 纯解析：把 pbp 接口响应转成 {@link HighEnergyData}，不发请求、不打日志。
+     * <p>
+     * 响应体有两个已知形态：
+     * 旧形态把数据直接摊在根上（{@code {"step_sec":3,"events":{"default":[...]}}}）；
+     * 新形态多包了一层 {@code {"modules":[{"params":{"data":{...}}}]}}。
+     * 这里两种都认，并且按"谁真的带 events.default"来挑层，
+     * 免得结构猜错就静默画出一条空曲线。
+     *
+     * @return 响应为 null、或 code 非 0/缺失时返回 null；其余情况返回对象（可能没有 events）
+     */
+    public static HighEnergyData parseHighEnergyData(JSONObject response) {
+        if (response == null) return null;
+
+        int code = response.optInt("code", -1);
+        if (code != 0 && code != -1) return null;
+
+        HighEnergyData data = new HighEnergyData();
+        JSONObject payload = pickPbpPayload(response);
+        if (payload == null) {
+            data.events = new float[0];
+            return data;
+        }
+
+        data.stepSec = payload.optInt("step_sec", 10);
+        data.tagStr = payload.optString("tagstr", "");
+        data.debug = payload.optString("debug", "");
+
+        JSONObject events = payload.optJSONObject("events");
+        JSONArray defaultArray = events == null ? null : events.optJSONArray("default");
+        if (defaultArray == null || defaultArray.length() == 0) {
+            data.events = new float[0];
+            return data;
+        }
+
+        float[] eventData = new float[defaultArray.length()];
+        for (int i = 0; i < defaultArray.length(); i++) {
+            eventData[i] = (float) defaultArray.optDouble(i, 0.0);
+        }
+        data.events = eventData;
+        return data;
+    }
+
+    /**
+     * 依次尝试四种位置：根上的 modules、data 里的 modules、data 本身、根自己。
+     * 挑到多个候选时优先返回真正带 events.default 的那个，都不带才退回第一个候选
+     * （这样至少能把 step_sec / debug 取出来，便于排查）。
+     */
+    private static JSONObject pickPbpPayload(JSONObject root) {
+        if (root == null) return null;
+        JSONObject data = root.optJSONObject("data");
+        JSONObject[] candidates = {
+                modulePayload(root),
+                modulePayload(data),
+                data,
+                root
+        };
+        JSONObject first = null;
+        for (JSONObject candidate : candidates) {
+            if (candidate == null) continue;
+            if (first == null) first = candidate;
+            if (hasDefaultEvents(candidate)) return candidate;
+        }
+        return first;
+    }
+
+    /** 新形态 {"modules":[{"params":{"data":{...}}}] }，取第一个带 data 的模块 */
+    private static JSONObject modulePayload(JSONObject obj) {
+        if (obj == null) return null;
+        JSONArray modules = obj.optJSONArray("modules");
+        if (modules == null) return null;
+        for (int i = 0; i < modules.length(); i++) {
+            JSONObject module = modules.optJSONObject(i);
+            if (module == null) continue;
+            JSONObject params = module.optJSONObject("params");
+            if (params == null) continue;
+            JSONObject nested = params.optJSONObject("data");
+            if (nested != null) return nested;
+        }
+        return null;
+    }
+
+    private static boolean hasDefaultEvents(JSONObject obj) {
+        if (obj == null) return false;
+        JSONObject events = obj.optJSONObject("events");
+        if (events == null) return false;
+        JSONArray defaultArray = events.optJSONArray("default");
+        return defaultArray != null && defaultArray.length() > 0;
+    }
+
+    /**
+     * pbp 接口要求 Referer 落在具体视频页上（站点根会被风控挡掉）。
+     * 这里在全局请求头快照上复制一份，只替换 Referer——不改动全局表。
+     */
+    private static ArrayList<String> pbpHeaders(String bvid, long aid) {
+        ArrayList<String> headers = new ArrayList<>(NetWorkUtil.webHeaders);
+        String referer = buildPbpReferer(bvid, aid);
+        for (int i = 0; i + 1 < headers.size(); i += 2) {
+            if ("Referer".equalsIgnoreCase(headers.get(i))) {
+                headers.set(i + 1, referer);
+                return headers;
+            }
+        }
+        headers.add("Referer");
+        headers.add(referer);
+        return headers;
+    }
+
+    /** 视频页 Referer，优先级：bvid &gt; av号 &gt; 站点根 */
+    public static String buildPbpReferer(String bvid, long aid) {
+        if (bvid != null && !bvid.isEmpty()) return "https://www.bilibili.com/video/" + bvid;
+        if (aid > 0) return "https://www.bilibili.com/video/av" + aid;
+        return "https://www.bilibili.com/";
     }
 }
