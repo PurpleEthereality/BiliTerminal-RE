@@ -393,6 +393,10 @@ public class ReplyApi {
                 return "评论主体类型不合法";
             case 12011:
                 return "不合法的赞或踩";
+            case 12029:
+                return "已经有置顶评论了，请先取消原置顶";
+            case 12030:
+                return "只能置顶一级评论";
             case 65004:
                 return "取消赞失败：没有点过赞";
             case 65005:
@@ -424,6 +428,50 @@ public class ReplyApi {
                 .toString();
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, reqBody, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-点赞评论", result.toString());
+        return result.getInt("code");
+    }
+
+    /**
+     * 纯逻辑：置顶参数的取值。
+     *
+     * <p>接口文档（bilibili-API/docs/comment/action.md:411-418）写的是 {@code action}
+     * 默认 0，且「0=取消置顶、1=设为置顶」——**与直觉相反**（一般 1 才是"有效"，
+     * 但这里 1 是"设为置顶"、0 是"取消"）。写反了不会报错，只会静默地把置顶做成取消，
+     * 所以抽成纯函数并由单测钉死。
+     *
+     * @param top true=设为置顶，false=取消置顶
+     * @return 接口的 action 取值
+     */
+    public static int topActionFor(boolean top) {
+        return top ? 1 : 0;
+    }
+
+    /**
+     * 置顶 / 取消置顶评论。
+     *
+     * <p>只能操作**自己管理的评论区**（视频 UP 主、合作稿 staff）里的**一级评论**；
+     * 服务端一个评论区只有一个置顶位，已有置顶时再置顶别的评论会回 12029，
+     * 调用方要先取消原置顶（或用 {@link #actionErrorMsg(int)} 把它翻译给用户）。
+     *
+     * <p>置顶状态在客户端靠 {@code reply_control.is_up_top} 体现（见 {@code model/Reply.java}），
+     * 该字段不在接口快照里，属未文档化字段。
+     *
+     * @param oid  评论区 oid
+     * @param rpid 要置顶的一级评论 rpid
+     * @param type 评论区类型
+     * @param top  true=置顶，false=取消置顶
+     * @return 返回码，0 表示成功
+     */
+    public static int topReply(long oid, long rpid, int type, boolean top) throws IOException, JSONException {
+        String url = "https://api.bilibili.com/x/v2/reply/top";
+        String reqBody = new NetWorkUtil.FormData()
+                .put("type", type)
+                .put("oid", oid)
+                .put("rpid", rpid)
+                .put("action", topActionFor(top))
+                .put("csrf", NetWorkUtil.currentCsrf())
+                .toString();
+        JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, reqBody, NetWorkUtil.webHeaders).body()).string());
         return result.getInt("code");
     }
 

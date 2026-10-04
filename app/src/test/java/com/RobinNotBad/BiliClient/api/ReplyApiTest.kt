@@ -74,12 +74,31 @@ class ReplyApiTest {
 
     @Test
     fun actionErrorMsg_knownCommentErrorsAreNotGeneric() {
-        val known = listOf(-102, -400, -404, 12002, 12004, 12006, 12009, 12011, 65004, 65005, 65006, 65007)
+        val known = listOf(-102, -400, -404, 12002, 12004, 12006, 12009, 12011, 12029, 12030, 65004, 65005, 65006, 65007)
         for (code in known) {
             val msg = ReplyApi.actionErrorMsg(code)
             assertTrue("code=$code 应有专属中文提示", msg.isNotEmpty())
             assertFalse("code=$code 不应落到兜底文案", msg.startsWith("操作失败（错误码"))
         }
+    }
+
+    // ---- 置顶评论（bilibili-API/docs/comment/action.md:411-418） ----
+
+    @Test
+    fun topActionFor_oneMeansTopAndZeroMeansCancel() {
+        // 接口的 action 语义反直觉：1=设为置顶、0=取消置顶。
+        // 写反了不会报错，只会静默把"置顶"变成"取消"，所以必须钉死。
+        assertEquals("true 对应 action=1（设为置顶）", 1, ReplyApi.topActionFor(true))
+        assertEquals("false 对应 action=0（取消置顶）", 0, ReplyApi.topActionFor(false))
+    }
+
+    @Test
+    fun actionErrorMsg_explainsExistingTopAndNonRootReply() {
+        // 12029/12030 是置顶接口最容易撞到的两个码，必须给出可操作的中文提示
+        val existing = ReplyApi.actionErrorMsg(12029)
+        assertTrue("12029 要告诉用户已有置顶", existing.contains("置顶"))
+        assertTrue("12029 还要说明该怎么办（先取消原置顶）", existing.contains("取消"))
+        assertTrue("12030 要说明只能置顶一级评论", ReplyApi.actionErrorMsg(12030).contains("一级评论"))
     }
 
     @Test

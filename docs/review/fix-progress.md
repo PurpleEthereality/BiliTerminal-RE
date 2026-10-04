@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1675,4 +1675,57 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - `docs/architecture-map.md` §7.16「追番更新提醒」。
 - 接口依据：仓库自带快照 `bilibili-API/docs/user/space.md:4626-4795`（`type=1` 追番 / `type=2` 追剧、`ps` 定义域 1-30、53013 隐私未公开）。
 - 批次 5 至此四条全部完成：C13（§十五）→ C12（§十六）→ C14（§十七）→ C16（本条）。下一批（批次 6）：C3 C4 C6b C7 C8 C9 C10 C27。
+
+---
+
+## 十九、26.10.04 批次 6（1/8）：评论置顶 / 取消置顶（C3）
+
+对应调研报告 §12.4 的 C3「评论删除 / 置顶自己的评论」。删除本来就有，本次补上置顶/取消置顶，并把删除入口一起收进长按菜单。
+
+接口依据（仓库自带快照）：`bilibili-API/docs/comment/action.md:399-455` —— `POST https://api.bilibili.com/x/v2/reply/top`，参数 `type`/`oid`/`rpid` + `action`（**:417 写明 `0=取消置顶`、`1=设为置顶`**）+ `csrf`（:418）；响应只有 `code`/`message`/`ttl`，**没有 data**；错误码 :426 里与本功能相关的是 **12029「已经有置顶评论」**、**12030「不能置顶非一级评论」**、`-403`（权限不足）、`-404`（没有这条评论）。:407 原文：「只能置顶自己管理的评论区中的一级评论」。
+
+### 为什么这么做（取舍写在代码里，也记在这里）
+
+- **置顶的 `action` 语义是反的**（1=置顶、0=取消），很容易写反又很难在真机上发现，所以抽成纯函数 `ReplyApi.topActionFor(boolean)` 并单测钉死。
+- **服务端一个评论区只有一个置顶位**（否则回 12029），而 `model/Reply.java` 的 `isTop` 是逐条布尔。置顶成功后若不清旧标记，列表里会**同时出现两条「[置顶]」**。清理逻辑抽成纯函数 `Reply.clearTopFlags(List<Reply>)` 并单测。
+- **`[置顶]` 前缀是构造 `Reply` 时拼进显示文本的**（`Reply.java` 构造里 `TOP_TIP + htmlToString(...)` + `StringUtil.setTopSpan`），适配器绑定的是 `textView.text = reply.message`。所以运行时只翻 `isTop` 布尔值，界面**一点变化都没有**；新增 `Reply.setTopFlag(boolean)` 同步增删前缀（前缀永远在第 0 位，删除后表情/@/投票/超链接的 span 由 SpannableStringBuilder 自动平移），`clearTopFlags` 也改走它。
+- **入口收进长按菜单**（用户拍板）：原来删除是「点一下提示『长按删除』→ 长按两次且间隔 <6 秒」，交互藏在 cell 里一个小按钮上。现在长按弹 `AlertDialog` 菜单，**替换**原来的两次长按删除交互。
+- **置顶项只对 `isManager` 显示**（视频 UP 主 / 合作稿 staff，沿用已有的删除权限判据）。服务端允许「评论区管理员」置顶，但客户端目前没有这个判据；不显示必然失败的入口，权限最终仍以服务端 `-403` 为准。**评论区管理员的支持留待以后**。
+- **删除改为现取现用列表下标**：原实现捕获绑定时的 `realPosition`，弹窗期间列表若被刷新（翻页/删除）就会删错行；现在用 `replyList.indexOf(reply)`。
+
+### 改动
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/ReplyApi.java` | 新增**纯函数** `topActionFor(boolean top)`（`top ? 1 : 0`）；新增 `topReply(long oid, long rpid, int type, boolean top)` → POST `x/v2/reply/top`，`FormData` 带 `type`/`oid`/`rpid`/`action`/`csrf=NetWorkUtil.currentCsrf()`，返回 `code`；`actionErrorMsg` 补 `12029`→「已经有置顶评论了，请先取消原置顶」、`12030`→「只能置顶一级评论」 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/Reply.java` | 新增 `setTopFlag(boolean)`（同步 `[置顶]` 前缀与主色 span）；`clearTopFlags(List<Reply>)` 改为调用它；`import java.util.List` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/ReplyAdapter.kt` | 长按 `item_reply_delete` → `showManageMenu(reply)`（`AlertDialog.setItems`：UP 侧多一项「置顶评论/取消置顶」）；新增 `setReplyTop(reply, top)`（后台请求 → 成功则 `clearTopFlags` + `setTopFlag` + `notifyItemRangeChanged`）、`confirmDeleteReply(reply)`（二次确认弹窗）、`deleteReply(reply)`（原删除逻辑搬过来，下标改用 `indexOf`）；删除原来的「两次长按删除」`OnLongClickListener`；补 `import androidx.appcompat.app.AlertDialog` |
+
+### 单测
+
+- `app/src/test/java/com/RobinNotBad/BiliClient/api/ReplyApiTest.kt` +2 例：`topActionFor_oneMeansTopAndZeroMeansCancel`（钉死反直觉语义）；`actionErrorMsg_explainsExistingTopAndNonRootReply`（12029/12030 文案含「置顶/取消」「一级评论」），并把已知错误码清单扩到含 12029/12030。
+- `app/src/test/java/com/RobinNotBad/BiliClient/model/ReplyParseActionTest.kt` +3 例：`clearTopFlags_removesEveryTopMark`、`clearTopFlags_withoutAnyTopMarkReturnsZero`、`clearTopFlags_toleratesNullListAndNullItems`。
+- **`setTopFlag` 本身没写 JVM 单测**：它操作 `SpannableStringBuilder` 与 `StringUtil.setTopSpan`（依赖 `ColorScheme`，JVM 下是 not-mocked）。单测里 `message` 为 null，只翻状态，所以 `clearTopFlags` 的断言仍然成立；前缀增删留真机验证。
+
+**验证**：`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → BUILD SUCCESSFUL in 54s；`app/build/test-results/testDebugUnitTest` **29 个 XML / 238 个用例 / 0 失败 / 0 错误**（批次 5 后 233 例，本次 +5 例）。中途失败过一次：断言写了 `actionErrorMsg(12029).contains("已有")`，而文案是「已经**有**置顶评论了…」——`"已有"` 不是 `"已经有"` 的子串，改为断言 `contains("置顶")` + `contains("取消")` 后通过。
+
+### 真机验证清单（JVM 单测覆盖不到的部分，发布前逐条走一遍）
+
+1. **最重要的一条**：置顶成功后退出重进评论页，「[置顶]」前缀**是否还在**。服务端字段 `reply_control.is_up_top`（`model/Reply.java:88-92` 在读）**不在接口快照的字段表里**，是逆向出来的未文档化字段；若重进后标记丢了，说明翻页/懒加载接口不返回它，需要改从顶层 `data.top` / `data.upper`（`bilibili-API/docs/comment/list.md:92-98`、`:1001-1007`）判定。
+2. 自己的稿件下长按操作按钮 → 菜单出现「置顶评论」「删除评论」；别人的评论区（非 UP/staff）→ 只有「删除评论」。
+3. 置顶后本条正文出现「[置顶]」前缀且是主色，列表里**有且只有一条**带前缀。
+4. 已有一条置顶时置顶另一条 → 旧条目前缀消失、新条目前缀出现（换置顶，不该出现两条）。
+5. 长按「取消置顶」→ 前缀消失。
+6. 置顶一条二级评论（楼中楼）→ 提示「只能置顶一级评论」（12030）。
+7. 点「删除评论」→ 弹二次确认；确认后该行消失、剩余行不错位；在评论详情页删掉根评论应返回上一页。
+8. 删除弹窗点「取消」→ 什么都不发生（不请求、不刷新）。
+9. 断网状态下置顶/删除 → 只报错提示，不崩、不改变界面状态。
+10. 手表端操作用表冠滚动 + 触摸长按，确认菜单在小屏上可点、不会被裁掉。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C3 行改为「删除 + 置顶/取消置顶已实现（26.10.04 批次 6）」。
+- `docs/architecture-map.md` 的 `ReplyApi` 方法表补齐 `dislikeReply`/`deleteReply`/`topReply`/`getRepliesLazy`/`getReplyCount`/`sendDynamicReply`。
+- 接口依据：`bilibili-API/docs/comment/action.md:399-455`（置顶）、`:285-328`（点踩，批次 2）。
+- 批次 6 进度：C3（本条）→ C4 → C6b → C7 → C8 → C9 → C10 → C27。
 

@@ -16,6 +16,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.annotation.NonNull
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
@@ -447,58 +448,12 @@ class ReplyAdapter(
             }
 
             if (isManager || reply.sender!!.mid == SharedPreferencesUtil.getLong("mid", 0)) {
-                val onDeleteClick = View.OnClickListener { MsgUtil.showMsg("长按删除") }
-                replyHolder.item_reply_delete.setOnClickListener(onDeleteClick)
-                val onDeleteLongClick = object : View.OnLongClickListener {
-                    private var longClickPosition: Int = -1
-                    private var longClickTime: Long = -1
-
-                    override fun onLongClick(view: View): Boolean {
-                        val currentTime = System.currentTimeMillis()
-                        if (longClickPosition == realPosition && currentTime - longClickTime < 6000) {
-                            CenterThreadPool.run {
-                                try {
-                                    val result = ReplyApi.deleteReply(oid, reply.rpid, replyType)
-                                    if (result == 0) {
-                                        (context as Activity).runOnUiThread {
-                                            // 数据改动必须和 notify 一样在主线程执行：
-                                            // 原来 removeAt 在后台线程做、notify 在主线程做，
-                                            // 主线程读到的可能还是旧列表，会删错行甚至下标越界崩溃
-                                            if (realPosition >= 0 && realPosition < replyList.size) {
-                                                replyList.removeAt(realPosition)
-                                                notifyItemRemoved(position)
-                                                // adapter 第 0 位是"写评论"头部，所以剩余待刷新项数要 +1
-                                                notifyItemRangeChanged(position, replyList.size + 1 - position)
-                                            }
-                                            longClickPosition = -1
-                                            MsgUtil.showMsg("删除成功~")
-                                            if (realPosition == 0 && isDetail) {
-                                                (context as Activity).finish()
-                                            }
-                                        }
-                                    } else {
-                                        var msg = "操作失败：" + result
-                                        when (result) {
-                                            -404 -> msg = "没有这条评论！"
-                                            -403 -> msg = "权限不足！"
-                                        }
-                                        val finalMsg = msg
-                                        (context as Activity).runOnUiThread { MsgUtil.showMsg(finalMsg) }
-                                    }
-                                } catch (e: Exception) {
-                                    (context as Activity).runOnUiThread { MsgUtil.err(e) }
-                                }
-                            }
-                        } else {
-                            longClickPosition = realPosition
-                            longClickTime = currentTime
-                            MsgUtil.showMsg("再次长按删除")
-                        }
-                        return true
-                    }
-                }
-                replyHolder.item_reply_delete.setOnLongClickListener(onDeleteLongClick)
                 replyHolder.item_reply_delete.visibility = View.VISIBLE
+                replyHolder.item_reply_delete.setOnClickListener { MsgUtil.showMsg("长按操作") }
+                replyHolder.item_reply_delete.setOnLongClickListener {
+                    showManageMenu(reply)
+                    true
+                }
             } else
                 replyHolder.item_reply_delete.visibility = View.GONE
 
@@ -516,6 +471,106 @@ class ReplyAdapter(
                 else
                     intent.putExtra("parentSender", "")
                 context.startActivity(intent)
+            }
+        }
+    }
+
+    /**
+     * 评论管理菜单（长按最后一列的操作按钮弹出）。
+     *
+     * <p>取代原来「连点两次长按才删除」的交互：删除、置顶、取消置顶都收进一个弹窗，
+     * 用户看得见每条操作是干什么的，也不必再记「再长按一次」。
+     *
+     * <p>置顶项只在 [isManager] 为 true（视频 UP 主 / 合作稿 staff）时出现。
+     * 服务端对置顶的硬性要求是「本评论区的一级评论」（错误码 12030）且一个区只有一个
+     * 置顶位（12029），最终以服务端判定为准；这里不展示必然失败的入口只是为了少打扰，
+     * 评论区管理员（非 UP）的场景留给以后，判定逻辑与权限完全分开。
+     */
+    private fun showManageMenu(reply: Reply) {
+        val actions = ArrayList<Pair<String, () -> Unit>>()
+        if (isManager) {
+            actions.add((if (reply.isTop) "取消置顶" else "置顶评论") to
+                    { setReplyTop(reply, !reply.isTop) })
+        }
+        actions.add("删除评论" to { confirmDeleteReply(reply) })
+        AlertDialog.Builder(context)
+            .setItems(actions.map { it.first }.toTypedArray()) { _, which ->
+                actions[which].second()
+            }
+            .show()
+    }
+
+    /**
+     * 置顶 / 取消置顶一条评论。
+     *
+     * <p>两个容易踩的点：
+     * ① 服务端一个评论区只有一个置顶位（再置顶别的会回 12029），而 [Reply.isTop] 是逐条布尔，
+     * 所以置顶成功后必须把本地其它条目的标记一起清掉，否则列表里会同时出现两条「[置顶]」；
+     * ② `[置顶]` 前缀是构造 [Reply] 时拼进显示文本的，只改布尔值界面不会变，
+     * 因此统一走 [Reply.setTopFlag] 让它同步增删前缀，再 notify 重新绑定。
+     */
+    private fun setReplyTop(reply: Reply, top: Boolean) {
+        CenterThreadPool.run {
+            try {
+                val code = ReplyApi.topReply(oid, reply.rpid, replyType, top)
+                (context as Activity).runOnUiThread {
+                    if (code == 0) {
+                        if (top) Reply.clearTopFlags(replyList)
+                        reply.setTopFlag(top)
+                        notifyItemRangeChanged(0, itemCount)
+                        MsgUtil.showMsg(if (top) "置顶成功~" else "已取消置顶")
+                    } else {
+                        MsgUtil.showMsg(ReplyApi.actionErrorMsg(code).ifEmpty { "操作失败（$code）" })
+                    }
+                }
+            } catch (e: Exception) {
+                (context as Activity).runOnUiThread { MsgUtil.err(e) }
+            }
+        }
+    }
+
+    private fun confirmDeleteReply(reply: Reply) {
+        AlertDialog.Builder(context)
+                .setTitle("删除评论")
+                .setMessage("删除后无法恢复，确定删除这条评论吗？")
+                .setPositiveButton("删除") { _, _ -> deleteReply(reply) }
+                .setNegativeButton("取消", null)
+                .show()
+    }
+
+    private fun deleteReply(reply: Reply) {
+        CenterThreadPool.run {
+            try {
+                val result = ReplyApi.deleteReply(oid, reply.rpid, replyType)
+                (context as Activity).runOnUiThread {
+                    if (result == 0) {
+                        // 数据改动必须和 notify 一样在主线程执行：原来 removeAt 在后台线程做、
+                        // notify 在主线程做，主线程读到的可能还是旧列表，会删错行甚至下标越界崩溃。
+                        // 位置现取现用（列表可能在弹窗打开期间被刷新过），不再用绑定时捕获的下标。
+                        val index = replyList.indexOf(reply)
+                        if (index >= 0 && index < replyList.size) {
+                            replyList.removeAt(index)
+                            // adapter 第 0 位是"写评论"头部（详情页里是根评论占第 0 位），
+                            // 列表项下标换算成 adapter 下标要 +1
+                            val adapterPosition = if (isDetail && index == 0) 0 else index + 1
+                            notifyItemRemoved(adapterPosition)
+                            notifyItemRangeChanged(adapterPosition, replyList.size + 1 - adapterPosition)
+                        }
+                        MsgUtil.showMsg("删除成功~")
+                        if (index == 0 && isDetail) {
+                            (context as Activity).finish()
+                        }
+                    } else {
+                        val msg = when (result) {
+                            -404 -> "没有这条评论！"
+                            -403 -> "权限不足！"
+                            else -> "操作失败：$result"
+                        }
+                        MsgUtil.showMsg(msg)
+                    }
+                }
+            } catch (e: Exception) {
+                (context as Activity).runOnUiThread { MsgUtil.err(e) }
             }
         }
     }

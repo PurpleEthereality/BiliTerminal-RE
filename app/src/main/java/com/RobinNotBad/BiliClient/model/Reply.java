@@ -21,6 +21,7 @@ import org.json.JSONObject;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -184,5 +185,59 @@ public class Reply implements Serializable {
     public void parseAction(int action) {
         this.liked = isLikedAction(action);
         this.disliked = isDislikedAction(action);
+    }
+
+    /**
+     * 纯逻辑：清掉一批评论里的置顶标记，返回被清掉的条数。
+     *
+     * <p>服务端一个评论区**只有一个置顶位**（再置顶别的评论会回 12029），
+     * 而 {@link #isTop} 是逐条布尔。置顶成功后若不清理旧标记，列表里会同时
+     * 出现两条带「[置顶]」前缀的评论。抽成纯函数便于 JVM 单测。
+     *
+     * <p>走 {@link #setTopFlag(boolean)} 而不是直接改字段，是因为显示文本里的「[置顶]」
+     * 前缀是构造时就拼好的，只翻布尔值会导致 {@code notifyItemChanged} 之后界面纹丝不动。
+     *
+     * @param replies 要清理的评论列表，允许为 null
+     * @return 真正被清掉的条数（用于判断要不要刷新列表）
+     */
+    public static int clearTopFlags(List<Reply> replies) {
+        if (replies == null) return 0;
+        int cleared = 0;
+        for (Reply reply : replies) {
+            if (reply != null && reply.isTop) {
+                reply.setTopFlag(false);
+                cleared++;
+            }
+        }
+        return cleared;
+    }
+
+    /**
+     * 同步「置顶」状态到显示文本：置顶时补上 {@code [置顶]} 前缀与主色 span，取消时切掉。
+     *
+     * <p>为什么要动文本而不是只改 {@link #isTop}：前缀在构造方法里就拼进了 {@link #message}，
+     * 适配器绑定时是 {@code textView.text = reply.message}，只翻布尔值重新绑定看不出任何变化。
+     * 前缀永远在第 0 位，所以取消置顶时按长度切掉即可；后面的 span（表情、@、投票、
+     * 超链接）由 SpannableStringBuilder 自动平移。
+     *
+     * <p>JVM 单测里 {@link #message} 为 null（没有构造过），此时只翻状态，
+     * 所以这个方法和 {@link #clearTopFlags(List)} 都能在纯 JVM 下断言。
+     *
+     * @param top 目标状态
+     */
+    public void setTopFlag(boolean top) {
+        if (this.isTop == top) return;
+        CharSequence text = this.message;
+        if (text instanceof SpannableStringBuilder) {
+            SpannableStringBuilder builder = (SpannableStringBuilder) text;
+            if (top) {
+                builder.insert(0, TOP_TIP);
+                StringUtil.setTopSpan(builder);
+            } else if (builder.length() >= TOP_TIP.length()
+                    && TOP_TIP.contentEquals(builder.subSequence(0, TOP_TIP.length()))) {
+                builder.delete(0, TOP_TIP.length());
+            }
+        }
+        this.isTop = top;
     }
 }

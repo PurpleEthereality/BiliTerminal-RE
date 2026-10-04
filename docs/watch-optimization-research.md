@@ -639,7 +639,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 |---|---|---|
 | C1 | 弹幕点击菜单（点赞/复制/举报） | 无计划 |
 | C2 | 评论举报 | 无计划 |
-| C3 | 评论删除 / 置顶自己的评论 | **删除已实现**（`adapter/ReplyAdapter.kt:385` → `api/ReplyApi.java:327` `x/v2/reply/del`）；**置顶 = 想要实现** |
+| C3 | 评论删除 / 置顶自己的评论 | **删除 + 置顶/取消置顶已实现（26.10.04 批次 6）**：删除走 `api/ReplyApi.java` 的 `deleteReply` → `x/v2/reply/del`；置顶走新增的 `ReplyApi.topReply(oid, rpid, type, top)` → `x/v2/reply/top`（**注意接口语义反直觉：`action` 0=取消置顶、1=设为置顶**，已抽成纯函数 `topActionFor(boolean)` 并单测）。UI 侧把原来「连点两次长按才删除」的交互换成**长按弹菜单**（`adapter/ReplyAdapter.kt` 的 `showManageMenu`）：UP 主/合作稿 staff 看到「置顶评论/取消置顶 + 删除评论」，普通用户只有「删除评论」。服务端一个评论区**只有一个置顶位**（再置顶别的回 12029），所以置顶成功后要清掉本地其它条目的标记（纯函数 `Reply.clearTopFlags` + `Reply.setTopFlag` 同步显示文本里的 `[置顶]` 前缀）；`actionErrorMsg` 补齐 12029/12030 文案 |
 | C4 | 评论楼中楼排序 / 定位 | 想要实现 |
 | C5 | 评论保存（收藏评论） | 无计划（接口亦未核实） |
 | C6 | 评论图片（发图） | **已实现**（`activity/reply/WriteReplyActivity.kt:127`；`api/ReplyApi.java:218/231`；`:40` `BIZ_REPLY= new_reply`）；**「上传/发送无进度无反馈」= 想要实现（独立 bug）** |
