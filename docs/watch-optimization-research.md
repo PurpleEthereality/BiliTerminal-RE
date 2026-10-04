@@ -31,7 +31,7 @@
 | 9 | 弹幕点击菜单（点赞/复制/举报） | 功能 | 1~2 天 | PiliPlus 有，本项目暂无 |
 | 10 | 动态编辑/置顶/定时发布 | 功能 | 2~3 天 | 发布链路已有，改/顶缺接口封装 |
 
-**优先清单的落地情况（截至 26.10.04）**：#4 自动跳过片头/片尾**已实现并提交**（`cefd844`，见 `docs/architecture-map.md` §7.7 与 `player/ViewPointSkip.kt`）；#1 已被拍板撤销（x86 保留）；其余各项的最终裁决（想要实现 / 暂缓 / 无计划）一律见 §12。
+**优先清单的落地情况（截至 26.10.04）**：#2 csrf 实时化、#3 死参数裁决、#6 列表增量 4 处真 bug、#7 图片档位、#8 崩溃页独立进程**均已实现**（批次 2/3，提交 `94a2b80` / `a683954`）；#4 自动跳过片头/片尾**已实现并提交**（`cefd844`，见 `docs/architecture-map.md` §7.7 与 `player/ViewPointSkip.kt`）；#1 已被拍板撤销（x86 保留）；#5 Baseline Profile 暂缓；**E 组（E4/E5/E6，队列第 4 批）也已于批次 4 落地**（见 §12.5/§12.7 与 `docs/review/fix-progress.md` §十四）。其余各项的最终裁决（想要实现 / 暂缓 / 无计划）一律见 §12。
 
 **本文还包含**：§7.4 是把 B 站客户端全部功能模块（视频/番剧/动态/评论/私信/账号/直播/搜索/本地共 9 组）逐条对照本项目覆盖情况的矩阵，标注 ✅已有 / ❌未做 / ➖建议不做，用于把"B 站有哪些功能"收敛成可判定的待办清单；§10 是**手表相关接口速查 + 风控硬约束**（含 11 条实测约束与错误码语义），供动手实现时直接查。
 
@@ -312,6 +312,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | P2 | 打开 viewBinding | `app/build.gradle:114-118` | 分期迁移；先对新代码启用 |
 | P2 | OkHttp 连接池接线 | `NetWorkUtil` 构建 OkHttpClient 处 | 26.10.04 拍板**暂缓**（§12.3 B4）；相关两个 getter 已在批次 3 删除 |
 | P2 | 崩溃页独立进程 | `AndroidManifest.xml` | ✅ 26.10.04 批次 3 已实现：`:error_activity` 独立进程 + 错误进程最小初始化 + 删掉 300ms 硬等 |
+| P2 | 更新包完整性校验 | `util/UpdateManager.kt` / `activity/DownloadActivity.kt` | ✅ 26.10.04 批次 4 已实现：新增 `util/ApkVerifier.kt`（**包名一致 + 签名集合与已安装应用一致**，读不到签名失败关闭），两条安装链路都已接线；**未用哈希**（与安装包同一响应，无增量价值，见 §12.5 E6） |
 | P3 | ffmpeg 裁剪重编 | `ijkplayer-java` / so | 唯一能显著减体积的手段，成本高，需 NDK 工具链 |
 
 ### 7.2 功能新增（已剔除本项目已有项）
@@ -322,7 +323,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | **P0** | 弹幕点击菜单 | PiliPlus | 点弹幕 → 悬停 → 点赞/复制/举报；手表上"复制"价值有限，"举报/屏蔽"可留 |
 | P1 | ~~SponsorBlock~~ **自动空降** | PiliPlus | ⚠️ **纠偏**：SponsorBlock 官方 README 只服务 YouTube（支持 Invidious），**全文未提 B 站**。B 站生态的"空降"只能靠 ①官方 PGC 片头片尾/章节看点（`x/player/wbi/v2` 的 `view_points`）②高能进度条 `https://bvc.bilivideo.com/pbp/data`（返回 `step_sec` + `events.default[]`）③自建众包。→ **不要引入 SponsorBlock 依赖** |
 | P1 | 画中画（PiP） | PiliPlus | 全库无 `enterPictureInPicture`；手表上价值中等（小屏 PiP 体验有限），可延后 |
-| P1 | 评论点踩 | PiliPlus | ⚠️ **已确认是死视图**：`adapter/ReplyAdapter.kt:495` 只有 `val dislikeBtn: ImageView = itemView.findViewById(R.id.dislikeBtn)`，全库再无第二处引用，既无点击监听也无状态绑定 —— 点了没反应。接口是现成的：`x/v2/reply/hate`（需登录 + csrf） |
+| P1 | 评论点踩 | PiliPlus | ✅ **26.10.04 批次 2 已实现**（原为死视图）：`adapter/ReplyAdapter.kt` 已绑监听与「已踩」高亮，走 `ReplyApi.dislikeReply()` → `x/v2/reply/hate`；`model/Reply.java` 新增 `disliked` 与 `parseAction()`（原来把 `action==2`「已踩」错当成「无操作」）。点踩/点赞服务端互斥，客户端同步撤另一侧状态 |
 | P1 | 评论举报 / 删除 / 置顶自己的评论 | PiliPlus | 接口 `x/v2/reply/report`、`/del`、`/top`（后两个需 csrf） |
 | P1 | 评论楼中楼排序/定位 | PiliPlus | 已有 `activity/reply/ReplyInfoActivity.kt`（楼中楼），排序/定位待补；游标接口 `x/v2/reply/dialog/cursor` |
 | P1 | 动态编辑 / 置顶 / 定时发布 | PiliPlus | 发布链路已有（`DynamicApi.publishComplex`）；缺的接口都已确认存在：置顶 `x/dynamic/feed/space/set_top` + `/rm_top`、删除 `dynamic_svr/rm_dynamic`、传图 `x/dynamic/feed/draw/upload_bfs`、投票 `vote_svr/create_vote`（后三者需 csrf） |
@@ -684,9 +685,9 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | E1 | 拆分 `PlayerActivity` | 暂缓 | 实测 **3494 行**，大重构且无界面测试兜底 |
 | E2 | 拆分 `DownloadService` | 想要实现 | 65KB |
 | E3 | 补单元测试 | 想要实现 | 持续投入；现状见 §12.6 |
-| E4 | `SettingsKeys` 收敛收尾 | 想要实现 | `PLAYER`/`PLAY_QN` 常量与 14 处字面量并存 |
-| E5 | 删死方法 `SharedPreferencesUtil.beginBatchEdit` | 想要实现 | 全库仅剩定义 |
-| E6 | 更新 APK 签名 / 哈希校验 | 想要实现 | 防中间人替换安装包 |
+| E4 | `SettingsKeys` 收敛收尾 | **已实现（26.10.04 批次 4）** | 勘误：字面量是 **13 处**不是 14 处（`SettingMainActivity.kt:118` 的 `"player"` 是分组 id 不是 SP 键；`SharedPreferencesUtil.java:59` 是定义）。13 处全部改调 `SettingsKeys.PLAYER`/`PLAY_QN`，并删掉 `SharedPreferencesUtil.player` 死字段；`SettingsKeysTest` 2 例钉死键名 |
+| E5 | 删死方法 `SharedPreferencesUtil.beginBatchEdit` | **已实现（26.10.04 批次 4）** | 连同同类的 `applyBatch(Runnable)` 一起删（两个都零调用且都是"拿到 editor 就丢"的假批量 API）；保留真正在用的 `edit(Consumer<Editor>)` |
+| E6 | 更新 APK 签名 / 哈希校验 | **已实现（26.10.04 批次 4）** | 新增 `util/ApkVerifier.kt`：客户端校验**包名一致 + 签名与已安装应用一致**，接进 `UpdateManager.downloadApk` 与 `DownloadActivity.installApk` 两条安装链路。**发布侧零改动**。未做哈希校验的理由：MD5/SHA-256 与安装包来自同一响应，能改包的人也能改元数据；签名才是无密钥伪造不了的。边界：防不住"同一签名者发布的坏包"；系统安装器本身也会拒绝换签名包，本校验的价值是早失败 + 说清原因 |
 | F1 | 创作中心 / 会员购 / 课堂 / 直播礼物 / 舰长 / 桌面小组件 / 多窗口 | 无计划 | 手表端无场景或成本极高 |
 | F2 | DLNA 投屏 / 超分辨率 / Live Photo / AI 原声翻译 / 互动视频增强 | 无计划 | 需解码或服务端能力，超出纯客户端 |
 | F3 | 关注粉丝列表管理 / 登录密码短信 / 风纪委员 / 入站考试 | 无计划 | 低频 / 与手表定位不符 |
@@ -696,20 +697,21 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 
 - **D2 / D3 / D5 原被本文 §8 列为待办，核实后为「已实现」**，相应条目作废（D5 只剩历史点击一个 10 分钟小项，已裁为暂缓）。
 - `activity/player/PlayerActivity.kt` 实际 **3494 行**（原述 3090 行）。
-- 单元测试实际 **24 个测试类 / 194 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
+- 单元测试实际 **26 个测试类 / 204 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 - **本文 §10.4 与用户裁决存在三处冲突，以本台账为准**：① §10.4 把「关注主播开播提醒」列为"高价值低成本、值得做"，用户裁为**无计划**；② §10.4 把「漫画」列入"明确不值得做"，用户裁为**想要实现（F4）**；③ §10.4 把「收藏夹批量整理」「发布动态/评论/弹幕」列入"明确不值得做"，用户分别裁为**想要实现（C19/C20）**与**想要实现（C7/C9/C10）**——即"需要输入"不是本项目的否决理由（无键盘只影响输入方式，不影响功能取舍）。
 
 ### 12.7 量化汇总与建议顺序
 
 | 结论 | 项数 |
 |---|---|
-| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地，剩 29） |
+| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地，剩 26） |
 | 暂缓 | 10 |
 | 无计划 | 25 |
 | 已经实现（勘误） | 4（D2 / D3 / D5 主体，另 C3·C6·C8 的「已实现」子项） |
 | **26.10.04 批次 1/2/3 落地** | 6（A2 A3 A4 A5 A6 + A10）+ 5（B1 B2 B3 B5 B8）；2 项勘误作废（A11 A12） |
+| **26.10.04 批次 4 落地** | 3（E4 E5 E6），另有 2 项勘误（E4 字面量 13 处而非 14 处；`applyBatch` 与 `beginBatchEdit` 同类一并删） |
 
-**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已实现，见 `docs/review/fix-progress.md` §十三）→ ④ E4 E5 E6 → ⑤ C12 C13 C14 C16 → ⑥ C3 C4 C6b C7 C8 C9 C10 C27 → ⑦ C18 C19 C20 C21 → ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
+**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已实现，见 §十四）→ ⑤ C12 C13 C14 C16 → ⑥ C3 C4 C6b C7 C8 C9 C10 C27 → ⑦ C18 C19 C20 C21 → ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
 
 ---
 

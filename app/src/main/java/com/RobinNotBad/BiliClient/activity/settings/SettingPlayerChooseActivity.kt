@@ -4,12 +4,12 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import android.view.View
 import android.widget.TextView
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.base.BaseActivity
 import com.RobinNotBad.BiliClient.util.MsgUtil
+import com.RobinNotBad.BiliClient.util.SettingsKeys
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.RobinNotBad.BiliClient.util.ToolsUtil
 import com.google.android.material.card.MaterialCardView
@@ -17,7 +17,7 @@ import com.RobinNotBad.BiliClient.ui.appearance.ColorScheme
 
 class SettingPlayerChooseActivity : BaseActivity() {
 
-    private var playerCurr: String = SharedPreferencesUtil.getString("player", "null")
+    private var playerCurr: String = SharedPreferencesUtil.getString(SettingsKeys.PLAYER, "null")
     private lateinit var terminalPlayer: MaterialCardView
     private lateinit var mtvPlayer: MaterialCardView
     private lateinit var aliangPlayer: MaterialCardView
@@ -80,7 +80,7 @@ class SettingPlayerChooseActivity : BaseActivity() {
 
     private fun updateQn() {
         if (findViewById<TextView>(R.id.qn_tv) != null) {
-            val savedVal = SharedPreferencesUtil.getInt("play_qn", 16)
+            val savedVal = SharedPreferencesUtil.getInt(SettingsKeys.PLAY_QN, 16)
             for (entry in SettingQualityActivity.qnMap.entries) {
                 if (entry.value == savedVal) {
                     (findViewById<TextView>(R.id.qn_tv)).text = entry.key
@@ -100,7 +100,6 @@ class SettingPlayerChooseActivity : BaseActivity() {
             val finalI = i
             cardViewList[i].setOnClickListener {
                 setChecked(finalI)
-                Log.e("debug", "点击了$finalI")
             }
         }
     }
@@ -132,7 +131,7 @@ class SettingPlayerChooseActivity : BaseActivity() {
                 }
             }
             playerCurr = playerList[checkPosition + 1]
-            SharedPreferencesUtil.putString("player", playerCurr)
+            SharedPreferencesUtil.putString(SettingsKeys.PLAYER, playerCurr)
         }
     }
 }

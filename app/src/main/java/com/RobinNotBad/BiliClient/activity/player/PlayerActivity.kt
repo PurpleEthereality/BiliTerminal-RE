@@ -398,7 +398,7 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         if (intent.hasExtra("qnStrList") && intent.hasExtra("qnValueList")) {
             qnStrList = intent.getStringArrayExtra("qnStrList")
             qnValueList = intent.getIntArrayExtra("qnValueList")
-            currentQuality = intent.getIntExtra("currentQuality", SharedPreferencesUtil.getInt("play_qn", 16))
+            currentQuality = intent.getIntExtra("currentQuality", SharedPreferencesUtil.getInt(SettingsKeys.PLAY_QN, 16))
         }
 
         isShortVideoMode = intent.getBooleanExtra("isShortVideoMode", false)
@@ -2687,7 +2687,7 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
 
                 playerData.title = newTitle
                 playerData.mid = mid
-                playerData.qn = SharedPreferencesUtil.getInt("play_qn", 16)
+                playerData.qn = SharedPreferencesUtil.getInt(SettingsKeys.PLAY_QN, 16)
                 playerData.pagenames = pagenames
                 playerData.cids = cids
                 playerData.currentPageIndex = currentPageIndex
@@ -3335,7 +3335,7 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     }
 
     private fun getTargetQuality(): Int {
-        val defaultQn = SharedPreferencesUtil.getInt("play_qn", 16)
+        val defaultQn = SharedPreferencesUtil.getInt(SettingsKeys.PLAY_QN, 16)
         if (qnValueList == null || qnValueList!!.isEmpty()) return if (currentQuality > 0) currentQuality else defaultQn
 
         for (qn in qnValueList!!) {

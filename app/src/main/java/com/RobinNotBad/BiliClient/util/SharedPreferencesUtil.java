@@ -56,7 +56,9 @@ public class SharedPreferencesUtil {
      * 且属于版本升级时自动打开更新日志页；首次安装只写回、不弹页。
      */
     public static String last_version = "last_version";
-    public static String player = "player";
+    // 26.10.04 批次 4（E4）：原来这里还有一个 `public static String player = "player";`，
+    // 零引用、也不是 final，纯属第三处「player」定义，已删除。
+    // 该 key 现在只有唯一来源：SettingsKeys.PLAYER（键名不变，仍是 "player"）。
     public static String padding_horizontal = "padding_horizontal";
     public static String padding_vertical = "padding_vertical";
     public static String cookie_refresh = "cookie_refresh";
@@ -151,20 +153,6 @@ public class SharedPreferencesUtil {
     /** 保存「我的」页面功能布局。 */
     public static void saveMySpaceLayout(MySpaceConfig.Layout layout) {
         MySpaceConfig.INSTANCE.save(layout, (key, value) -> { SharedPreferencesUtil.putString(key, value); return kotlin.Unit.INSTANCE; });
-    }
-
-    /**
-     * 批量写入 - 将多个键值对一次性提交，减少I/O次数
-     * 适用于需要同时更新多个设置的场景
-     */
-    public static void beginBatchEdit() {
-        sharedPreferences.edit(); // 该方法内部已延迟初始化editor
-    }
-
-    public static void applyBatch(Runnable batchOperation) {
-        SharedPreferences.Editor editor = sharedPreferences.edit();
-        // 将editor传入操作（通过ThreadLocal或回调）
-        batchOperation.run();
     }
 
     /**

@@ -292,7 +292,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 - **巨型类**：`activity/player/PlayerActivity.kt` 127 KB、`service/DownloadService.kt` 65 KB、`activity/video/ShortVideoPlayerActivity.kt` 35 KB。改播放/下载相关功能前先想清楚在哪个位置插入。
 - **Application 静态状态已收敛为一套**：26.10.02 起只有 `BiliTerminal.context` / `BiliTerminal.instance`（`BiliTerminal.kt` 伴生对象 `@JvmField`，`:43-44`），`BiliTerminalApp` 已整文件删除。**新代码一律用 `BiliTerminal`**。
-- **测试覆盖仍偏低**：`app/src/test/` 25 个文件（24 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **194 个用例**，对 364 个源文件（26.10.04 批次 3 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`NetWorkUtilTest`、`PerformanceManagerTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
+- **测试覆盖仍偏低**：`app/src/test/` 27 个文件（26 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **204 个用例**，对 364 个源文件（26.10.04 批次 4 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`NetWorkUtilTest`、`PerformanceManagerTest`、`ApkVerifierTest`、`SettingsKeysTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
 - **主题色表带缓存，失效点只有一处**：`ColorScheme.getCurrentTheme()`（26.09.11 起）缓存当前色表，**只由 `AppearanceManager.setTheme()` 经 `ColorScheme.invalidateCache()` 置空**。这是刻意的——36 个属性 getter 全走它，而列表滚动时一个 item 要调多次，此前每次都重读 SharedPreferences（热路径重复 IO）。**若将来给主题 key 增加第二个写入路径（比如直接 `SharedPreferencesUtil.putString(SettingsKeys.THEME, …)`），必须同步调用 `ColorScheme.invalidateCache()`，否则改主题后色表不跟着变且在 `onResume` 重建后依然错**。守卫测试：`ColorSchemeTest.themeCache_isInvalidatedOnEverySetTheme`、`colorGetters_doNotTouchSharedPreferencesAfterFirstRead`。
 - **主题体系有 3 个"裸 Activity"不参与**：`SplashActivity`、`GetIntentActivity` 不继承 `BaseActivity`（开屏/外链恒定 B站粉），`PlayerActivity` 自己 `setTheme` 但**不调 `applyWindowTheme`、也不参与 `onResume` 主题检测**。改主题相关行为时别以为全局都生效了。
 - **文案硬编码**：遗留页面标题/Toast 直接写中文字符串（Manifest 里 `android:label` 也是中文），只有设置页用 `desc_*` 资源。改文案按现有风格来，别顺手抽 `strings.xml`。
@@ -413,6 +413,26 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 - 档位计算是 `@JvmStatic` 纯函数（`levelFromScore` / `isLowPerfLevel` / `listImageQuality` / `listImageMaxWidth` / `hqImageQuality` / `hqImageMaxWidth`），接收 `(level, highPerformanceMode)`，因此可被 JVM 单测直接覆盖；对应的"喂当前状态"getter 只是转调。
 - **`getPageSize()` 只对 3 个接口生效**（`RecommendApi` popular/precious、`SeriesApi` 用户系列）。其余硬编码 `ps`/`page_size` **是有意为之**（`FavoriteApi.java:106 ps=100` 一次拉全、`MessageApi.java:380 page_size=35` 是 cursor 分页、`EmoteApi` 表情面板等），改它们要先确认分页语义。
 - **首次硬件检测不在主线程**：`init()` 无缓存时先置中档返回，检测在 `CenterThreadPool` 上跑完再 `applyPerformanceSettings()`。因此**冷启动最初几十毫秒内读到的是中档参数**，属于预期行为；单测 `PerformanceManagerTest.defaultsBeforeInit_areMedium` 锁住了这套默认值。
+
+### 7.11 更新包校验：`util/ApkVerifier.kt`（26.10.04 批次 4 新增）
+
+**任何"把 APK 交给系统安装器"的路径都必须先过 `ApkVerifier.verify(context, apkFile)`。** 目前有两条，都已接线：
+
+| 链路 | 校验落点 | 失败处理 |
+|---|---|---|
+| `util/UpdateManager.kt` → `downloadApk()` → `installApk()`（更新页走这条） | `writeResponseToFile` 之后、`onComplete` 之前 | **删掉下载的文件** + `onError("安装包校验失败：…")`。删文件是必须的：留残片会被下次 `Range` 续传当成"已下载一部分"，永远拼不出完整包 |
+| `activity/DownloadActivity.kt` → `installApk()`（最老的「下成 `.bak` 再改名安装」链路） | 方法开头 | 返回 `false`，由调用方走既有「安装失败，已保存到下载文件夹」分支（该方法**不在主线程**，不要在里面弹 Toast） |
+
+- 判定规则：包名一致 **且** 签名集合与已安装应用一致（`GET_SIGNATURES` + `getPackageArchiveInfo`）。**读不到签名一律判定失败**（失败关闭）——`ApkVerifierTest` 专门锁住这条。
+- 校验只防"下载链路被换包/串包/截断"，**防不住"同一签名者发布了坏包"**，也**不校验哈希**：MD5 与安装包来自同一个响应，能改包的人也能改元数据。系统安装器本身也会拒绝换签名包，本校验的价值是**早失败 + 中文原因**。
+- 纯逻辑全在 `ApkVerifier` 的 `isSamePackage` / `isSameSignature` / `signatureHex` 三个静态函数里，可 JVM 单测；只有 `verify()` 依赖 Android。
+
+### 7.12 设置 key 的唯一来源：`SettingsKeys`（26.10.04 批次 4）
+
+- **`player` / `play_qn` 两个键现在只有唯一来源：`util/SettingsKeys.kt:72` 的 `PLAYER`、`:74` 的 `PLAY_QN`。** 原来还有第三处定义 `SharedPreferencesUtil.player`（死字段，已删）和 13 处字面量（已全部改调常量）。看见新代码里直接写 `"player"` / `"play_qn"` 就是回退。
+- **别被同名假阳性骗了**：`activity/settings/SettingMainActivity.kt:118` 的 `"player"` 是设置页**分组 id / 跳转标记**，与 SharedPreferences 键只是字面量碰巧相同，**不是** `SettingsKeys.PLAYER`（该处已加注释）。
+- `SettingsKeysTest` 把两个键名字符串钉死。理由：键名是**磁盘协议**，改了不报错、只让用户设置静默回默认值（覆盖安装升级时才会被发现）。
+- 其余键（`mid`、`player_show_viewpoints` 等）仍散着字面量，尚未收敛；新增键请直接加进 `SettingsKeys`。
 
 ---
 
@@ -739,7 +759,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 **不可单测**（内部发网络 / 依赖 Context / 弹 UI）：`DynamicApi.analyzeDynamic`、`MessageApi` 全部解析（SpannableString）、`PrivateMsgApi.getPrivateMsgList`、`LikeCoinFavApi.getVideoStats`。
 
-**测试覆盖现状（26.10.04 批次 3 实测）**：`app/src/test/` 24 个测试类 / 194 个用例；api 层只有 4 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`，另有 `PlayerApiPbpTest`、`ReplyApiTest` 覆盖部分纯逻辑）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口；`PerformanceManagerTest` 覆盖档位换算与图片/分页参数（见 §7.10）。
+**测试覆盖现状（26.10.04 批次 4 实测）**：`app/src/test/` 26 个测试类 / 204 个用例；api 层只有 4 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`，另有 `PlayerApiPbpTest`、`ReplyApiTest` 覆盖部分纯逻辑）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口；`PerformanceManagerTest` 覆盖档位换算与图片/分页参数（见 §7.10）；`ApkVerifierTest` 覆盖更新包校验的判定规则（见 §7.11）；`SettingsKeysTest` 把 `player`/`play_qn` 两个磁盘键名钉死（见 §7.12）。
 
 ### API 层的坑
 
@@ -750,7 +770,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 5. **参数写错**：`PlayerApi.java:308` `.put("fnvar",0)`（应为 `fnver`）；`DanmakuApi.java:93` `segment_index` 从 1 开始（`:80` 的 javadoc 却说从 0，调用点 `:133`/`:144`）。**（`ReplyApi.likeReply` 硬编码 `type=1` 已于 26.09 修复：`ReplyApi.java:296-297` 改为显式 `REPLY_TYPE_VIDEO` 的兼容重载，真实类型由 `ReplyAdapter.kt:328/347` 传入。）**
 6. **硬编码**：弹幕 XML 地址重复 3 处（`PlayerApi.java:110,248,326`）；URL 散落在方法体内，无常量表。**（`AppInfoApi` 的 4 处明文 `http://` 已于 26.09.13 全部改为 `https://`，见 `AppInfoApi.java:143,162,184,207` 与 §6.4。）**
 7. **全局可变状态**：`SearchApi.java:24-25` 的 `static seid/search_keyword`（多入口搜索会串）、`ConfInfoApi.java:41-43` 的 WBI 缓存、`LoginApi.java:29-30`。
-8. **SharedPreferences key 混用（csrf 部分已于 26.10.04 批次 2 收敛）**：字面量 `"csrf"`（`HistoryApi:32,84`、`WatchLaterApi:49,60`、`DanmakuApi:33`）与常量 `SharedPreferencesUtil.csrf`（`EmoteApi:50`）曾并存，现已统一改调 `NetWorkUtil.currentCsrf()`（见 §6.1）。其余 key（`mid`、`player_show_viewpoints` 等）仍有字面量，收敛待 E4。
+8. **SharedPreferences key 混用（csrf 部分已于 26.10.04 批次 2 收敛，`player`/`play_qn` 于批次 4 收敛）**：字面量 `"csrf"`（`HistoryApi:32,84`、`WatchLaterApi:49,60`、`DanmakuApi:33`）与常量 `SharedPreferencesUtil.csrf`（`EmoteApi:50`）曾并存，现已统一改调 `NetWorkUtil.currentCsrf()`（见 §6.1）；`"player"`/`"play_qn"` 的 13 处字面量已全部改调 `SettingsKeys.PLAYER`/`PLAY_QN`，第三处定义 `SharedPreferencesUtil.player` 死字段已删（见 §7.12）。其余 key（`mid`、`player_show_viewpoints` 等）仍有字面量，尚未收敛。
 
 ---
 

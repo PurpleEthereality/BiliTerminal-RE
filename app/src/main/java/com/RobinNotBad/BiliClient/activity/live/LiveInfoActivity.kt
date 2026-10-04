@@ -27,6 +27,7 @@ import com.RobinNotBad.BiliClient.util.AnimationUtils
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.GlideUtil
 import com.RobinNotBad.BiliClient.util.MsgUtil
+import com.RobinNotBad.BiliClient.util.SettingsKeys
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.RobinNotBad.BiliClient.util.StringUtil
 import com.RobinNotBad.BiliClient.util.TerminalContext
@@ -169,7 +170,7 @@ class LiveInfoActivity : BaseActivity() {
                         }
                     }
                     play.setOnLongClickListener {
-                        if (SharedPreferencesUtil.getString("player", "null") != "terminalPlayer")
+                        if (SharedPreferencesUtil.getString(SettingsKeys.PLAYER, "null") != "terminalPlayer")
                             MsgUtil.showMsgLong("若无法播放请更换为内置播放器")
                         val intent = Intent()
                         intent.setClass(this, SettingPlayerChooseActivity::class.java)
@@ -223,7 +224,7 @@ class LiveInfoActivity : BaseActivity() {
                             scrollView.requestFocus()
                         }
                     }
-                    if (SharedPreferencesUtil.getString("player", "null") != "terminalPlayer")
+                    if (SharedPreferencesUtil.getString(SettingsKeys.PLAYER, "null") != "terminalPlayer")
                         MsgUtil.showMsgLong("直播可能只有内置播放器可以正常播放")
 
                 }.onFailure { e ->

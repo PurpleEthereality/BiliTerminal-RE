@@ -16,6 +16,7 @@ import com.RobinNotBad.BiliClient.model.PlayerData
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.Logu
 import com.RobinNotBad.BiliClient.util.MsgUtil
+import com.RobinNotBad.BiliClient.util.SettingsKeys
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import org.json.JSONException
 import java.io.IOException
@@ -106,7 +107,7 @@ class JumpToPlayerActivity : BaseActivity() {
 
         download = intent.getIntExtra("download", 0)
 
-        data.qn = if (data.qn != -1) data.qn else SharedPreferencesUtil.getInt("play_qn", 16)
+        data.qn = if (data.qn != -1) data.qn else SharedPreferencesUtil.getInt(SettingsKeys.PLAY_QN, 16)
 
         requestVideo()
     }

@@ -93,12 +93,13 @@
 
 - 视频卡片解析**重复 21 处**（`RankingApi`/`RecommendApi`×4/`WatchLaterApi`/`SearchApi`×3/`SeriesApi`/`FavoriteApi`×2/`UserInfoApi`/`HistoryApi`/`BangumiApi`/`MessageApi`×3/`DynamicApi`×2/`VideoInfo.java`），改一处要 grep 其余。旧文档写「7 份」、26.08 快照写「19 处」，26.10.04 实测 21 处（`SearchApi` 的番剧搜索分支与 `DynamicApi:826` 为漏计项）。
 - `PlayerApi.java:308` 的 `fnvar` 应为 `fnver`；`DanmakuApi.java:93` 的 `segment_index` 起始值与注释不符（`:80` 的 javadoc 说从 0 开始，调用点 `:133`/`:144` 实际从 1 起）。
-- `SettingsKeys.PLAYER` / `PLAY_QN` 是**死常量**：实际代码用字面量 `"player"` / `"play_qn"`（14 处），`SharedPreferencesUtil` 里还有第三处定义，收敛未完成。
+- `SettingsKeys.PLAYER` / `PLAY_QN` 已收敛（26.10.04 批次 4）：13 处字面量全部改调常量、`SharedPreferencesUtil.player` 死字段已删，**新代码不要再写 `"player"` / `"play_qn"` 字面量**；`SettingMainActivity.kt:118` 的 `"player"` 是分组 id 不是 SP 键，别顺手替换。其余键（`mid` 等）仍有字面量（详见 `docs/architecture-map.md` §7.12）。
 - `BaseActivity.kt:282` 用 `if (this !is InstanceActivity) setTopbarExit()` 做**向下判断**——任何「让 `RefreshMainActivity` 继承 `RefreshListActivity`」的方案都会把顶栏行为从「打开菜单」变成「点击即返回」。
 - **`cell_video_list` / `cell_dynamic_video` 的 id 是跨包事实协议**：改 id 会同时打破 `PrivateMsgAdapter`、`DynamicHolder`、`NoticeHolder`、`OpusContentAdapter`。
 - **`notifyItemRangeInserted` 的起点由 adapter 的 `getItemCount()` 决定，`+1` 多数是"头部占位"**：`ReplyAdapter` / `UserDynamicAdapter` / 系列详情内部 adapter 的 `getItemCount()` 都是 `data.size + 1`，通知起点要 `sizeBefore + 1`；而 `VideoCardAdapter` / `ArticleCardAdapter` / `LiveCardAdapter` 无头部、起点就是 `sizeBefore`。**看到 `+1` 先读 `getItemCount()` 再判越界**（26.10.04 批次 3 修掉 4 处真 bug，详见 `docs/architecture-map.md` §7.9）。
 - **崩溃页跑在 `:error_activity` 独立进程**（26.10.04 起）：`CatchActivity` 不经过 `PerformanceManager.init` / `ErrorCatch.init` / 未读轮询 / 更新检查，加依赖前先确认它不需要这些初始化；判进程用 `BiliTerminal.currentProcessName()`（读 `/proc/self/cmdline`，`minSdk 24` 用不了 API 28 的 `Application.getProcessName()`）。
 - **设备档位参数一律从 `PerformanceManager` 取**（图片质量/宽度、分页大小）：`GlideUtil` 里的 `QUALITY_*` / `MAX_W_*` 四个常量已于 26.10.04 删除，**不要在任何调用点重新写死**，否则又变回"两处真相"（详见 `docs/architecture-map.md` §7.10）。
+- **任何"把 APK 交给系统安装器"的路径都必须先过 `ApkVerifier.verify(context, apkFile)`**（26.10.04 批次 4 新增）：现有两条链路（`UpdateManager.downloadApk`→`installApk`、`DownloadActivity.installApk`）都已接线；下载链路上校验失败要**删掉残片**，否则下次 `Range` 续传会把它当成"已下载一部分"。判定为「包名一致 且 签名集合一致」，**读不到签名一律失败关闭**（详见 `docs/architecture-map.md` §7.11）。
 - **`model/` 里 `VideoFolder`/`VideoMeta`/`LocalVideo` 实现 `Parcelable`，且字段名就是磁盘 JSON 存储格式**：删改字段必须两端同步。
 - `player/` 包不是公共层：`VideoPlayerCore.kt` 已是 `IjkPlayerBridge` 的功能超集，但**还不能直接替换**——`PlayerState`/`IjkOption` 仍定义在 `IjkPlayerBridge.kt:17-36`（删旧类前先搬家），且 `VideoPlayerCore.release()` 有一次性 `released` 标志，`onViewRecycled` 后复用会**泄漏 native 播放器**。动手前先决定它的去留，含糊着抽公共层会造出第 3 套实现。
 - **手表右滑返回由 `android:windowSwipeToDismiss` 控制**，它在窗口层直接 `finish()`，**不走 `onBackPressed`**，所以只 override `onBackPressed` 拦不住。且 `onCreate` 里的 `setTheme(ColorScheme.themeResId(theme))` 会覆盖清单上声明的 `Theme.NoSwipe*` —— 要真正禁用它，必须调 `ColorScheme.themeResId(theme, noSwipe = true)` 换用 `Theme.*.NoSwipe.AppCompat`（issue #1 的根因）。

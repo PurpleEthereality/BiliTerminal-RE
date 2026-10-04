@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -889,7 +889,7 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - [x] 移除 Hilt 等死依赖与 ksp/serialization 插件（26.09.11 已完成）
 - [x] 处置 `BiliTerminalApp.kt`：Hilt 注解已摘，但该类仍被 `SplashActivity` 的 UETool 逻辑引用（5 处静态方法），既非完全死代码也非 Application 入口 —— **26.10.02 修复轮次已解决**：类整体删除，UETool 的静态方法与常量移入 `BiliTerminal.kt` 伴生对象，`SplashActivity` 的 7 处调用改指向 `BiliTerminal.`，`proguard-rules.pro` 里该类的 keep 规则一并删除
 - [x] 清空 23 个空目录（di/data/network/ui 等）（26.09.11 已完成，实测空目录 = 0）
-- [ ] 删除幻觉方法（`SharedPreferencesUtil.beginBatchEdit` 等；实测仅剩定义无调用）—— 26.10.02 修复轮次已删 `TerminalContext.leaveDetailPage()` / `getTerminalKey()`、`CenterThreadPool.getThreadPoolInstance()` 与死类 `SSLSocketFactoryCompat`；**`SharedPreferencesUtil.beginBatchEdit`（`:160`）仍只剩定义**
+- [x] 删除幻觉方法（`SharedPreferencesUtil.beginBatchEdit` 等；实测仅剩定义无调用）—— 26.10.02 修复轮次已删 `TerminalContext.leaveDetailPage()` / `getTerminalKey()`、`CenterThreadPool.getThreadPoolInstance()` 与死类 `SSLSocketFactoryCompat`；**`SharedPreferencesUtil.beginBatchEdit` 与同类的 `applyBatch` 已于 26.10.04 批次 4 删除**（E5，见 §十四）
 - [x] 统一 Cookie 写入锁（26.09.08 已修，第四轮）
 
 ### P1 安全
@@ -900,16 +900,16 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - [x] 组件导出面收敛：22 个多余 `exported="true"` 改 false（26.09.13 第三十轮）
 - [x] `TestActivity` 改为仅 Debug 包（清单下移 `src/debug` + `BuildConfig.DEBUG` 门控，26.09.13 第三十轮）
 - [x] 敏感日志清理（PrivateMsgApi/NetWorkUtil.post）—— 26.10.02 修复轮次：`PrivateMsgApi` 的逐条私信正文 `Log.e` 已删除（改为只记条数）；`QRLoginFragment` 的 4 行 token/完整 Cookie 日志在 26.09.08 第四轮已删
-- [ ] 更新 APK 签名/哈希校验
+- [ ] 更新 APK 签名/哈希校验 —— **26.10.04 批次 4 已实现客户端侧（E6）**：新增 `util/ApkVerifier.kt` 校验包名 + 签名一致，接进 `UpdateManager.downloadApk` 与 `DownloadActivity.installApk` 两条安装链路；**发布侧（哈希/证书指纹）未做**，见 §十四
 - [x] 危险权限收敛 —— 26.10.02 修复轮次：主清单已删 `ACCESS_WIFI_STATE`（无任何 `WifiManager` 引用）与 `READ_PHONE_STATE`（无 `TelephonyManager` 引用），`SYSTEM_ALERT_WINDOW` 下移到 `src/debug/AndroidManifest.xml` 只给 UETool 用；`MANAGE_EXTERNAL_STORAGE` 已不在主清单。**有意保留** `REQUEST_INSTALL_PACKAGES`（应用内更新装 APK 必需）与 `READ_EXTERNAL_STORAGE`（minSdk 24 读取外部存储）
 
 ### P2 工程化
 
 - [ ] 拆分 PlayerActivity（实测 **3494 行**；26.10.04 拍板 → **E1：暂缓**）
 - [ ] 拆分 DownloadService（65KB；26.10.04 拍板 → **E2：想要实现**）
-- [ ] 补单元测试（当前 **21 个测试类 / 165 用例**；26.10.04 拍板 → **E3：想要实现**。历史：26.09.11 新增 `ColorSchemeTest` 14、`CornerStyleTest` 10、`FontStyleTest` 13、`AppearanceManagerTest` 11；26.09.13 新增 `ViewCapabilityProbeTest` 4；26.10.03 新增 `ViewPointSkipTest` 9；26.10.04 新增 `PlayerApiPbpTest` 9）
+- [ ] 补单元测试（当前 **26 个测试类 / 204 用例**；26.10.04 拍板 → **E3：想要实现**。历史：26.09.11 新增 `ColorSchemeTest` 14、`CornerStyleTest` 10、`FontStyleTest` 13、`AppearanceManagerTest` 11；26.09.13 新增 `ViewCapabilityProbeTest` 4；26.10.03 新增 `ViewPointSkipTest` 9；26.10.04 新增 `PlayerApiPbpTest` 9，批次 2 新增 `ReplyApiTest` 9 / `ReplyParseActionTest` 4 / `NetWorkUtilTest` +6，批次 3 新增 `PerformanceManagerTest` 10，批次 4 新增 `SettingsKeysTest` 2 / `ApkVerifierTest` 8）
 - [ ] `AsyncLayoutInflaterX` 生命周期：`cancel()` 已实现但无人调用，`BaseActivity.asyncInflate` 回调可能落到已销毁 Activity（26.10.04 拍板 → **A12：想要实现**）
-- [ ] `SettingsKeys` 收敛收尾：`PLAYER` / `PLAY_QN` 与 14 处字面量、`SharedPreferencesUtil` 第三处定义并存（26.10.04 拍板 → **E4：想要实现**）
+- [x] `SettingsKeys` 收敛收尾：`PLAYER` / `PLAY_QN` 与字面量、`SharedPreferencesUtil` 第三处定义并存 —— **26.10.04 批次 4 已完成（E4）**：13 处字面量（台账写 14 处）全部改调常量，`SharedPreferencesUtil.player` 死字段已删，`SettingsKeysTest` 2 例钉死键名；`SettingMainActivity.kt:118` 的分组 id `"player"` 是假阳性、保持不动，见 §十四
 
 ---
 
@@ -1119,7 +1119,7 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 
 | 台账编号 | 事项 | 结论 | 本报告对应位置 |
 |---|---|---|---|
-| A1 | csrf 实时化铺开到 11 个 api 类 | 想要实现 | 源自调研报告 §5.1（本报告未单列） |
+| A1 | csrf 实时化铺开到 11 个 api 类 | **已实现（26.10.04 批次 2，实为 13 个 api 类 41 处）** | §十二 |
 | A2 | `AnnouncementsActivity` 下拉刷新卡死 | **已实现（26.10.04 批次 1）** | §五 P0 界面卡死 第 1 条 |
 | A3 | `PopularActivity` 不复位 refreshing | **已实现（26.10.04 批次 1）** | §五 P0 界面卡死 第 3 条 |
 | A4 | `CollectionInfoActivity` 缺 onFailure + 死变量 | **已实现（26.10.04 批次 1）** | §五 P0 界面卡死 第 2、5 条 |
@@ -1128,16 +1128,16 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 | A7 | `SetupUIActivity` WebView 输入校验 | 暂缓 | §五 P0 功能正确性 末条 |
 | A8 | `TutorialManagerActivity` 教程键污染 | 暂缓 | §五 P0 界面卡死 第 8 条 |
 | A9 | `TestActivity` 硬编码专栏 id | 无计划 | §五 P0 界面卡死 第 7 条 |
-| A10 | 评论点踩死视图（`adapter/ReplyAdapter.kt:495`） | 想要实现 | 新增（本报告未列） |
+| A10 | 评论点踩死视图（`adapter/ReplyAdapter.kt:495`） | **已实现（26.10.04 批次 2）** | §十二 |
 | A11 | 禁右滑主题被 `setTheme` 覆盖失效 | **核实为已实现，原条作废** | 已由 issue #1 修复（见 §七），提交 `25e6886`、`20e69c1` |
 | A12 | `AsyncLayoutInflaterX` 生命周期 | **核实为已实现，原条作废** | 提交 `d676a77`；`BaseActivity.kt:353-358` 已调 `cancel()` |
 | C6b | 评论发图无进度 / 无反馈 | 想要实现 | 新增（发图本体已实现） |
 | E1 | 拆分 `PlayerActivity`（实测 3494 行） | 暂缓 | §五 P2 第 1 条 |
 | E2 | 拆分 `DownloadService` | 想要实现 | §五 P2 第 2 条 |
 | E3 | 补单元测试 | 想要实现 | §五 P2 第 3 条 |
-| E4 | `SettingsKeys` 收敛 | 想要实现 | §五 P2 第 5 条 |
-| E5 | 删 `SharedPreferencesUtil.beginBatchEdit` | 想要实现 | §五 P1 架构清理 第 4 条 |
-| E6 | APK 签名 / 哈希校验 | 想要实现 | §五 P1 安全 末条 |
+| E4 | `SettingsKeys` 收敛 | **已实现（26.10.04 批次 4）** | §十四 |
+| E5 | 删 `SharedPreferencesUtil.beginBatchEdit` | **已实现（26.10.04 批次 4，`applyBatch` 一并删）** | §十四 |
+| E6 | APK 签名 / 哈希校验 | **已实现客户端侧（26.10.04 批次 4，包名 + 签名；哈希不采用）** | §十四 |
 
 ### 已核实为「已经实现」，相应旧条目作废
 
@@ -1148,16 +1148,16 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 ### 数字勘误
 
 - `activity/player/PlayerActivity.kt` 实测 **3494 行**（原述 3090 行）。
-- 单元测试实测 **21 个测试类 / 165 个用例**（原述 16 类 / 112 例）。
+- 单元测试实测 **26 个测试类 / 204 个用例**（原述 16 类 / 112 例；批次 1 后 21/165，批次 2 后 23/184，批次 3 后 24/194，批次 4 后 26/204）。
 - JVM 单测可用 `org.json`（`app/build.gradle` 已有 `testImplementation 'org.json:json:20231013'`），但**纯解析函数禁止调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 
 ### 建议落地顺序（26.10.04 已由项目所有者确认为 8 批）
 
-1. **A 组快修**：A2 A3 A4 A5 A6（+ 核实 A11 A12 已实现）→ **已完成，见 §十一**
-2. **A1** csrf 实时化铺开到 11 个 api 类 + **A10** 评论点踩
-3. **B1 B2 B3** + **B5**（限推荐/热门/搜索三页）+ **B8**
-4. **E4 E5 E6**
-5. **C12 C13 C14 C16**（私信与通知链）
+1. **A 组快修**：A2 A3 A4 A5 A6（+ 核实 A11 A12 已实现）→ **✅ 已完成，见 §十一**
+2. **A1** csrf 实时化铺开到 13 个 api 类 + **A10** 评论点踩 → **✅ 已完成，见 §十二**
+3. **B1 B2 B3** + **B5**（限推荐/热门/搜索三页）+ **B8** → **✅ 已完成，见 §十三**
+4. **E4 E5 E6** → **✅ 已完成，见 §十四**
+5. **C12 C13 C14 C16**（私信与通知链）→ 下一批
 6. **C3 C4 C6b C7 C8 C9 C10 C27**
 7. **C18 C19 C20 C21**（收藏与关注整理）
 8. **E2** 拆分 `DownloadService` + **F4** 漫画（追漫列表 / 漫画详情 / 长条阅读器）
@@ -1352,4 +1352,87 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 
 - 调研报告 §0 优先清单（第 2~8 项标注落地状态）、§4.2（补「已按 §12.3 B1/B2/B3 处理完毕」）、§7.1（P0/P1 表更新）、§9（加「已被 §12.7 取代」声明）、§12.3（B1/B2/B3/B5/B8 台账更新为「已实现（26.10.04 批次 3）」）、§12.6（单测数字 → 24 类 / 194 例）、§12.7（批次 3 完成）。
 - 下一批（批次 4）：E4 E5 E6。
+
+## 十四、26.10.04 批次 4：SettingsKeys 收敛收尾 + 删假批量 API + 更新包校验
+
+> 台账来源：调研报告 §12.5 D/E/F 组的 E4 / E5 / E6。三项均已落地。
+> 决策：E4 选「13 处字面量改调常量 + 删死字段」；E5 选「`beginBatchEdit` 与 `applyBatch` 一并删」；E6 选「客户端校验包名与签名一致」，**发布侧零改动**。
+
+### E4 `SettingsKeys` 收敛收尾：`player` / `play_qn`
+
+**问题**：同一个 key 有三处定义 —— `util/SettingsKeys.kt:72` 的 `PLAYER`、`:74` 的 `PLAY_QN`，以及 `util/SharedPreferencesUtil.java:59` 的 `public static String player = "player"`（非 final、零引用）；而真正读写时用的**全是字面量**，常量形同虚设。
+
+| 处理 | 内容 |
+|---|---|
+| 删除 | `util/SharedPreferencesUtil.java:59` 的 `public static String player` 死字段（原地留注释说明该 key 现在只有唯一来源） |
+| 改调常量 | 13 处字面量全部改为 `SettingsKeys.PLAYER` / `SettingsKeys.PLAY_QN`：`api/PlayerApi.java:251`（`getString("player", "")`，默认值是空串不是 `"null"`，**保持原样**）、`:436`（switch 的取值）、`model/VideoInfo.java:126`、`activity/player/PlayerActivity.kt:401/2690/3338`、`activity/live/LiveInfoActivity.kt:172/226`、`activity/settings/SettingPlayerChooseActivity.kt:20/83/135`、`activity/settings/SettingQualityActivity.kt:49`、`activity/video/JumpToPlayerActivity.kt:109` |
+| 补 import | `PlayerApi.java`、`VideoInfo.java`、`LiveInfoActivity.kt`、`SettingPlayerChooseActivity.kt`、`SettingQualityActivity.kt`、`JumpToPlayerActivity.kt`（`PlayerActivity.kt` 原本已 import） |
+| **不动** | `activity/settings/SettingMainActivity.kt:118` 的 `"player"` —— 它是设置页分组的 **id/跳转标记**，与 SharedPreferences 键只是字面量碰巧相同。已在该处加注释，防止后人"顺手替换" |
+
+顺带清理：`SettingPlayerChooseActivity.kt:103` 的 `Log.e("debug", "点击了$finalI")` 与其后失效的 `import android.util.Log`（同类残留见 §十三 B5）。
+
+**勘误**：台账（调研报告 §7.1 / §12.5）记「14 处字面量」；逐处核对后是 **13 处**（`SettingMainActivity.kt:118` 是分组 id，不是 SP 键；`SharedPreferencesUtil.java:59` 是定义不是用法）。
+
+**新增单测** `app/src/test/java/com/RobinNotBad/BiliClient/util/SettingsKeysTest.kt`（2 例）：把 `PLAYER == "player"`、`PLAY_QN == "play_qn"` 钉死。理由：key 字符串就是**磁盘协议**，改了不报错、只是用户设置静默回默认值——收敛到常量之后，这层保护才真正生效。
+
+### E5 删除假批量 API
+
+`util/SharedPreferencesUtil.java` 里两个零调用且**误导**的方法已删（真正的批量入口 `edit(Consumer<Editor>)` 保留，`util/AccountManager.java:202` 在用）：
+
+| 已删 | 为什么是坑 |
+|---|---|
+| `beginBatchEdit()` | 方法体只有 `sharedPreferences.edit();` —— editor 拿到就丢，什么都没做；注释「该方法内部已延迟初始化editor」是错的 |
+| `applyBatch(Runnable)` | 同样拿到 editor 就丢，注释说「将editor传入操作（通过ThreadLocal或回调）」但代码里根本没有传 |
+| 保留 `edit(java.util.function.Consumer<SharedPreferences.Editor>)` | 真的把 editor 交给调用方并在最后 `apply()`，是唯一的批量写入入口 |
+
+### E6 更新包校验（包名 + 签名）
+
+**问题**：`util/UpdateManager.kt` 下载完 APK 直接交给系统安装器，中间零校验；被替换/截断/串包时用户只看到系统那句笼统的「解析软件包时出现问题」。
+
+**新增 `app/src/main/java/com/RobinNotBad/BiliClient/util/ApkVerifier.kt`**：
+
+| 成员 | 作用 |
+|---|---|
+| `isSamePackage(expected, actual)` | 纯函数：包名一致；`actual` 为 null/空判不一致 |
+| `isSameSignature(expected, actual)` | 纯函数：证书十六进制串集合一致，**与顺序无关、忽略大小写**；任一侧为空 → 失败关闭（false） |
+| `signatureHex(bytes)` | 纯函数：证书字节 → 小写十六进制，每字节固定两位（含前导零） |
+| `verify(context, apkFile): Result` | Android 侧：`getPackageArchiveInfo(..., GET_SIGNATURES)` 取包名与签名，与 `getPackageInfo(packageName, GET_SIGNATURES)` 比对；包名不符 / 签名不符 / 读不到自身签名 / 包无法解析，都返回 `Result(false, 中文原因)` |
+
+**接线（两条安装链路都覆盖）**：
+
+- `util/UpdateManager.kt` `downloadApk()`：`writeResponseToFile` 之后、`onComplete` 之前校验；不通过则**删掉文件**（留残片会被下次 `Range` 续传当成"已下载一部分"，永远修不好）并 `onError("安装包校验失败：…")`。
+- `activity/DownloadActivity.kt` `installApk()`：最老的「下载成 `.bak` 再改名安装」自更新链路，开头加同一校验，不通过返回 `false` 走既有的「安装失败，已保存到下载文件夹」分支（该方法不在主线程，不在里面弹提示）。
+
+**为什么没做哈希校验**：发布侧现有的 MD5（说明里的「APK 校验值（MD5）」+ `md5sums.txt` 附件）与安装包来自**同一个响应**，能改包的人也能改元数据，对真正的中间人几乎没有增量价值；而签名是攻击者没有私钥就伪造不出来的。代价与边界：系统安装器本身也会拒绝「同包名不同签名」，本校验的价值是**早失败 + 说清原因**；它防不住「同一签名者发布的坏包」（那属于发布侧被攻破）。
+
+**新增单测** `app/src/test/java/com/RobinNotBad/BiliClient/util/ApkVerifierTest.kt`（8 例）：包名一致/不同/缺失、签名顺序无关、大小写无关、多一个签名也算不一致、**任一侧为空都失败关闭**、十六进制补齐两位（`0x0A → "0a"`、`0x00 → "00"`、`0xFF → "ff"`）、输出恒为小写。
+
+### 验证
+
+- `:app:testDebugUnitTest` + `:app:assembleDebug`（`--offline --no-configuration-cache`）：**BUILD SUCCESSFUL in 53s**；**26 个 XML / 204 用例 / 0 失败 0 错误**（批次 3 后为 24/194，+2 类 +10 例）。
+- 未增删 `res/` 文件，单次 gradle 调用即可（无需 clean 两段式）。
+- 唯一警告仍是既有代码的弃用项（`PlayerActivity.kt` 的 MediaSession 常量、`JumpToPlayerActivity.kt:96` 的 `getParcelableExtra`、`UpdateManager.kt:45` 的 `versionCode`）。
+
+### 真机验证清单（JVM 单测覆盖不到的部分，发布前逐条走一遍）
+
+**E4**：
+1. 设置页切播放器（内置 / 小电视 / 凉腕）→ 重启应用后选择**仍保留**（收敛只改调用方式，不能改键名）。
+2. 设置页切清晰度（360P/720P/1080P）→ 重启应用后清晰度**仍保留**；进播放器默认按该清晰度起播。
+3. 直播页长按播放按钮 → 提示文案仍按「当前是否内置播放器」正确出现（该判断也读了同一个 key）。
+4. 升级安装（覆盖安装旧版本）→ 上面两项的旧设置**不能丢**（键名一致性的真机证据）。
+
+**E5**：无行为变化（删的是零调用方法），只需确认应用能正常启动、设置项读写正常。
+
+**E6**：
+5. 正常更新一次（或手动触发检查更新后下载）→ 能正常进系统安装器、能装上，说明**没有误杀**自家包。
+6. 把下载目录里的更新包 `util/UpdateManager` 产物（`.../cache/update/bili_terminal_update.apk`）换成另一个应用的 APK，再触发一次下载完成 → 应提示「安装包校验失败：安装包包名不符（…）」，且该文件被删除、没有进安装器。
+7. 同一路径放一个**同包名但用 debug 密钥重签**的 APK（本地 `assembleDebug` 产物即可，前提是 release 与 debug 签名不同）→ 应提示「安装包签名与当前应用不一致，已拒绝安装」。
+8. 把更新包删一半（或写 0 字节）→ 应提示「安装包无法解析，文件可能已损坏」或「安装包不存在或为空」。
+9. `adb logcat` 确认失败后重试能重新完整下载（残片已删，不会 206 续传到坏包上）。
+
+### 交叉引用
+
+- 调研报告 §12.5（E4/E5/E6 三行改「已实现（26.10.04 批次 4）」）、§12.6（单测数字 → 26 类 / 204 例）、§12.7（批次 4 完成，8 批顺序第 4 批标 ✅）。
+- `docs/architecture-map.md` 新增 §7.11「更新包校验」+ §7.12「设置 key 的唯一来源」。
+- 下一批（批次 5，按调研报告 §12.7 的 8 批顺序）：C12 C13 C14 C16。
 

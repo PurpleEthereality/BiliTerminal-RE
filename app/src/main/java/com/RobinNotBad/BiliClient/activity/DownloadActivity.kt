@@ -12,6 +12,7 @@ import androidx.core.content.FileProvider
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.base.BaseActivity
 import com.RobinNotBad.BiliClient.api.AppInfoApi
+import com.RobinNotBad.BiliClient.util.ApkVerifier
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.FileUtil
 import com.RobinNotBad.BiliClient.util.MsgUtil
@@ -174,6 +175,11 @@ class DownloadActivity : BaseActivity() {
 
     private fun installApk(apkFile: File): Boolean {
         return try {
+            // 26.10.04 批次 4（E6）：这条是最老的「下载成 .bak 再改名安装」自更新链路，
+            // 与 UpdateManager 那条一样，先校验包名与签名再交给系统安装器。
+            // 不通过时返回 false，由调用方按既有的「安装失败」分支处理（本方法不在主线程，
+            // 不在这里弹提示）。
+            if (!ApkVerifier.verify(this, apkFile).ok) return false
             val uri: Uri
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 uri = FileProvider.getUriForFile(this, packageName + ".FileProvider", apkFile)

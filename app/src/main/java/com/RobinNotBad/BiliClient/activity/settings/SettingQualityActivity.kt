@@ -7,6 +7,7 @@ import com.RobinNotBad.BiliClient.activity.base.BaseActivity
 import com.RobinNotBad.BiliClient.adapter.QualityChooseAdapter
 import com.RobinNotBad.BiliClient.listener.OnItemClickListener
 import com.RobinNotBad.BiliClient.ui.widget.recycler.CustomLinearManager
+import com.RobinNotBad.BiliClient.util.SettingsKeys
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import java.util.LinkedHashMap
 
@@ -46,7 +47,7 @@ class SettingQualityActivity : BaseActivity() {
     private fun save(position: Int) {
         val str = adapter.getName(position)
         if (qnMap.containsKey(str))
-            SharedPreferencesUtil.putInt("play_qn", qnMap[str]!!)
+            SharedPreferencesUtil.putInt(SettingsKeys.PLAY_QN, qnMap[str]!!)
         finish()
     }
 }

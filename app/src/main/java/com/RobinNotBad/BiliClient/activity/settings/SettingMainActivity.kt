@@ -115,6 +115,8 @@ class SettingMainActivity : InstanceActivity() {
             R.drawable.icon_player,
             "播放与播放器",
             "选择播放器、清晰度与内置播放器设置",
+            // 注意：这个 "player" 是分组 id / 跳转标记，**不是** SharedPreferences 的
+            // SettingsKeys.PLAYER 键，两者只是字面量碰巧相同，别顺手替换。
             "player",
             SettingPlayerChooseActivity::class.java
         )

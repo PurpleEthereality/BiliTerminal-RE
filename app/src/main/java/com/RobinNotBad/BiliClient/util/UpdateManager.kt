@@ -214,6 +214,17 @@ object UpdateManager {
                 }
 
                 val result = writeResponseToFile(response, existingFile, onProgress)
+
+                // 26.10.04 批次 4（E6）：交给系统安装器之前先自查包名与签名。
+                // 不通过就删掉文件（继续留残片会被下次的 Range 续传当成"已下载一部分"，永远修不好），
+                // 并把中文原因交给调用方展示。
+                val verifyResult = ApkVerifier.verify(context, result)
+                if (!verifyResult.ok) {
+                    result.delete()
+                    CenterThreadPool.runOnUiThread { onError("安装包校验失败：${verifyResult.message}") }
+                    return@run
+                }
+
                 CenterThreadPool.runOnUiThread { onComplete(result) }
             } catch (e: CancellationException) {
             } catch (e: IOException) {

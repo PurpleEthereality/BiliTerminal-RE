@@ -25,6 +25,7 @@ import com.RobinNotBad.BiliClient.service.DownloadService;
 import com.RobinNotBad.BiliClient.util.FileUtil;
 import com.RobinNotBad.BiliClient.util.Logu;
 import com.RobinNotBad.BiliClient.util.NetWorkUtil;
+import com.RobinNotBad.BiliClient.util.SettingsKeys;
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil;
 import com.RobinNotBad.BiliClient.util.ToolsUtil;
 
@@ -248,7 +249,7 @@ public class PlayerApi {
 
         playerData.danmakuUrl = "https://comment.bilibili.com/" + playerData.cid + ".xml";
 
-        boolean html5 = !download && SharedPreferencesUtil.getString("player", "").equals("mtvPlayer");
+        boolean html5 = !download && SharedPreferencesUtil.getString(SettingsKeys.PLAYER, "").equals("mtvPlayer");
         // html5方式现在已经仅对小电视播放器保留了
 
         String url = "https://api.bilibili.com/x/player/wbi/playurl?"
@@ -433,7 +434,7 @@ public class PlayerApi {
         Logu.v("准备跳转", "--------");
 
         Intent intent = new Intent();
-        switch (SharedPreferencesUtil.getString("player", "null")) {
+        switch (SharedPreferencesUtil.getString(SettingsKeys.PLAYER, "null")) {
             case "terminalPlayer":
                 intent.setClass(context, PlayerActivity.class);
                 intent.putExtra("url", playerData.videoUrl);
