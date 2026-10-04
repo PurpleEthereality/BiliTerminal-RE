@@ -1,7 +1,6 @@
 package com.RobinNotBad.BiliClient.activity.search
 
 import android.os.Bundle
-import android.util.Log
 import android.view.View
 
 import androidx.annotation.NonNull
@@ -42,7 +41,6 @@ class SearchBangumiFragment : SearchFragment() {
 
     private fun continueLoading(page: Int) {
         CenterThreadPool.run {
-            Log.e("debug", "加载下一页")
             try {
                 // 番剧走独立的 search_type=media_bangumi，data.result 就是一个番剧条目数组
                 val result = SearchApi.searchType(keyword, page, "media_bangumi")

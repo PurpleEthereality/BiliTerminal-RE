@@ -13,7 +13,9 @@ import com.RobinNotBad.BiliClient.model.VideoCard
 
 class SeriesCardAdapter(
     val context: Context,
-    val seasonList: List<Series>
+    // 26.10.04 批次 3（B5）：类型由 List 改为 MutableList —— 翻页时要往同一个列表里追加，
+    // 否则 notifyItemRangeInserted 报出的数量与 getItemCount() 对不上。
+    val seasonList: MutableList<Series>
 ) : RecyclerView.Adapter<VideoCardHolder>() {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoCardHolder {

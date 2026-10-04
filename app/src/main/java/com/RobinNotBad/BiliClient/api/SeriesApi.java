@@ -4,6 +4,7 @@ import com.RobinNotBad.BiliClient.model.PageInfo;
 import com.RobinNotBad.BiliClient.model.Series;
 import com.RobinNotBad.BiliClient.model.VideoCard;
 import com.RobinNotBad.BiliClient.util.NetWorkUtil;
+import com.RobinNotBad.BiliClient.util.PerformanceManager;
 import com.RobinNotBad.BiliClient.util.StringUtil;
 
 import org.json.JSONArray;
@@ -25,7 +26,8 @@ public class SeriesApi {
 
     public static int getUserSeries(long mid, int page, List<Series> seasonList) throws IOException, JSONException {
         String url = "https://api.bilibili.com/x/polymer/web-space/seasons_series_list?";
-        url += "mid=" + mid + "&page_num=" + page + "&page_size=20";
+        // 26.10.04 批次 3（B1+B5）：页大小按设备档位取（低端 10 / 其余 20）
+        url += "mid=" + mid + "&page_num=" + page + "&page_size=" + PerformanceManager.getPageSize();
         JSONObject all = NetWorkUtil.getJson(ConfInfoApi.signWBI(url), NetWorkUtil.webHeaders);
 
         if (all.has("data") && !all.isNull("data")) {

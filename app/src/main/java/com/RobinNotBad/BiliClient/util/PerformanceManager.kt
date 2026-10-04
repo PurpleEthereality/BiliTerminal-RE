@@ -93,19 +93,29 @@ object PerformanceManager {
     }
 
     /**
-     * 根据硬件分数获取性能等级
+     * 根据硬件分数换算性能等级（纯函数，便于 JVM 单测）
      */
-    fun getPerformanceLevel(): Int {
-        val score = getHardwareScore()
-        return when {
-            score >= 65 -> PERF_LEVEL_HIGH
-            score >= 35 -> PERF_LEVEL_MEDIUM
-            else -> PERF_LEVEL_LOW
-        }
+    @JvmStatic
+    fun levelFromScore(score: Int): Int = when {
+        score >= 65 -> PERF_LEVEL_HIGH
+        score >= 35 -> PERF_LEVEL_MEDIUM
+        else -> PERF_LEVEL_LOW
     }
 
     /**
+     * 检测设备性能等级。
+     *
+     * 注意：内部会读 sysfs / `/proc/cpuinfo`（见 [getHardwareScore]），**不要在冷启动主线程调用**，
+     * 首次检测请走 [init] 里的后台路径。
+     */
+    fun getPerformanceLevel(): Int = levelFromScore(getHardwareScore())
+
+    /**
      * 初始化性能管理器
+     *
+     * 26.10.04 批次 3（B2）：首次运行（没有档位缓存）**不再在冷启动主线程同步检测**。
+     * [getHardwareScore] 要读 sysfs、失败时还会整文件扫 `/proc/cpuinfo`，在低端手表上足够卡出一帧白屏。
+     * 现在的顺序是：先按中档立即生效 → 把检测丢到 [CenterThreadPool] → 结果出来后写缓存并重跑 [applyPerformanceSettings]。
      */
     fun init(context: Context) {
         if (initialized) return
@@ -118,27 +128,44 @@ object PerformanceManager {
                 highPerformanceMode = SharedPreferencesUtil.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
             }
 
-            // 检测设备性能等级
             if (SharedPreferencesUtil.sharedPreferences.contains(KEY_DEVICE_PERFORMANCE_LEVEL)) {
+                // 有缓存：直接读，零硬件探测
                 currentPerfLevel = SharedPreferencesUtil.getInt(KEY_DEVICE_PERFORMANCE_LEVEL, PERF_LEVEL_MEDIUM)
+                applyPerformanceSettings()
+                Logu.i("PerformanceManager", "初始化完成: perfLevel=$currentPerfLevel, highPerfMode=$highPerformanceMode")
             } else {
-                currentPerfLevel = getPerformanceLevel()
-                SharedPreferencesUtil.putInt(KEY_DEVICE_PERFORMANCE_LEVEL, currentPerfLevel)
+                // 首次运行：先按中档生效，检测放后台
+                currentPerfLevel = PERF_LEVEL_MEDIUM
+                applyPerformanceSettings()
+                CenterThreadPool.run { detectAndApplyPerformanceLevel() }
             }
+        }
+    }
 
-            // 高性能手机自动启用高性能模式
-            if (currentPerfLevel == PERF_LEVEL_HIGH && !SharedPreferencesUtil.sharedPreferences.contains(KEY_HIGH_PERFORMANCE_MODE)) {
+    /**
+     * 后台检测设备性能等级（仅首次运行、没有档位缓存时跑一次）
+     *
+     * 检测完必须重跑 [applyPerformanceSettings]：这时才可能从"中档"切到低档/高档，
+     * 而列表与图片缓存参数是每次调用现取的，所以后续页面会自然跟上。
+     */
+    private fun detectAndApplyPerformanceLevel() {
+        try {
+            val score = getHardwareScore()
+            val level = levelFromScore(score)
+            currentPerfLevel = level
+            SharedPreferencesUtil.putInt(KEY_DEVICE_PERFORMANCE_LEVEL, level)
+
+            // 高性能设备自动启用高性能模式（用户手动设过就不覆盖）
+            if (level == PERF_LEVEL_HIGH && !SharedPreferencesUtil.sharedPreferences.contains(KEY_HIGH_PERFORMANCE_MODE)) {
                 highPerformanceMode = true
                 SharedPreferencesUtil.putBoolean(KEY_HIGH_PERFORMANCE_MODE, true)
             }
 
             applyPerformanceSettings()
-            // 惰性日志：Logu.i 的开关在函数体内部判断，参数会先求值。
-            // 这里若不加判断，每次冷启动都会在主线程重跑 getHardwareScore()（读 sysfs / cpuinfo），
-            // 即使 release 版日志已关闭——而该结果只用于日志，不参与任何逻辑。
-            if (Logu.LOGI_ENABLED) {
-                Logu.i("PerformanceManager", "初始化完成: perfLevel=$currentPerfLevel, highPerfMode=$highPerformanceMode, score=${getHardwareScore()}")
-            }
+            Logu.i("PerformanceManager", "后台检测完成: perfLevel=$level, score=$score, highPerfMode=$highPerformanceMode")
+        } catch (e: Exception) {
+            // 检测失败保持中档即可，不影响使用
+            Logu.e("PerformanceManager", "性能检测失败: ${e.message}")
         }
     }
 
@@ -153,19 +180,24 @@ object PerformanceManager {
     }
 
     /**
-     * 获取高性能模式状态
-     */
-    fun isHighPerformanceMode(): Boolean = highPerformanceMode
-
-    /**
      * 获取当前设备性能等级
      */
     fun getCurrentPerfLevel(): Int = currentPerfLevel
 
     /**
+     * 是否低端档位（纯函数，便于 JVM 单测）
+     *
+     * 语义：低端设备 **且** 用户没手动开高性能模式——低端机手动开高性能后不再按低端处理，
+     * 与 [isEffectiveHighPerf] 保持一致。
+     */
+    @JvmStatic
+    fun isLowPerfLevel(level: Int, highPerformanceMode: Boolean): Boolean =
+        level == PERF_LEVEL_LOW && !highPerformanceMode
+
+    /**
      * 是否低性能设备
      */
-    fun isLowPerfDevice(): Boolean = currentPerfLevel == PERF_LEVEL_LOW && !highPerformanceMode
+    fun isLowPerfDevice(): Boolean = isLowPerfLevel(currentPerfLevel, highPerformanceMode)
 
     /**
      * 是否高性能设备或启用了高性能模式
@@ -229,46 +261,65 @@ object PerformanceManager {
         else -> 10
     }
 
-    /** 图片加载质量 */
-    fun getImageQuality(): Int = when {
-        isLowPerfDevice() -> GlideUtil.QUALITY_LOW
-        isEffectiveHighPerf() -> GlideUtil.QUALITY_HIGH
-        else -> GlideUtil.QUALITY_HIGH
-    }
+    // ----- 图片请求档位（26.10.04 批次 3 / B1+B3 接线）-----
+    //
+    // 现状：GlideUtil.url()/url_hq() 之前写死 512w/60q 与 1024w/80q，档位形同不存在。
+    // 接入时发现台账"中/高档一律 HIGH(80q/1024w)"对列表图是反优化：手表屏宽 450px 左右，
+    // 512w 已够，1080p 手机列表也只要 512w；再往上只白烧 4 倍像素与内存。
+    // 所以列表图改成"低档 320w/50q、其余 512w/60q"，只有 url_hq()（详情大图）保留 1024w/80q。
+    // 换算抽成带参数的纯函数（除 0 外都要能被 JVM 单测覆盖），下面的 getter 只负责喂当前档位。
+    //
+    // 注意：低端档位同时并入 `highPerformanceMode`（用户在设置里手动开的高性能模式），
+    // 与 [isLowPerfDevice] 保持一致。
 
-    /** 图片最大宽度 */
-    fun getImageMaxWidth(): Int = when {
-        isLowPerfDevice() -> GlideUtil.MAX_W_LOW
-        isEffectiveHighPerf() -> GlideUtil.MAX_W_HIGH
-        else -> GlideUtil.MAX_W_HIGH
-    }
+    /** 列表/卡片图质量（低端 50，其余 60） */
+    @JvmStatic
+    fun listImageQuality(level: Int, highPerformanceMode: Boolean): Int =
+        if (isLowPerfLevel(level, highPerformanceMode)) 50 else 60
 
-    /** OkHttp连接池大小 */
-    fun getOkHttpConnectionPoolSize(): Int = when {
-        isLowPerfDevice() -> 2
-        else -> 5
-    }
+    /** 列表/卡片图最大宽度（低端 320，其余 512） */
+    @JvmStatic
+    fun listImageMaxWidth(level: Int, highPerformanceMode: Boolean): Int =
+        if (isLowPerfLevel(level, highPerformanceMode)) 320 else 512
 
-    /** OkHttp连接保活时间（分钟） */
-    fun getOkHttpKeepAliveMinutes(): Int = when {
-        isLowPerfDevice() -> 3
-        else -> 5
-    }
+    /** 大图质量（低端 60，其余 80） */
+    @JvmStatic
+    fun hqImageQuality(level: Int, highPerformanceMode: Boolean): Int =
+        if (isLowPerfLevel(level, highPerformanceMode)) 60 else 80
 
-    /** 是否启用图片过渡动画 */
-    fun isImageTransitionEnabled(): Boolean = isEffectiveHighPerf()
+    /** 大图最大宽度（低端 512，其余 1024） */
+    @JvmStatic
+    fun hqImageMaxWidth(level: Int, highPerformanceMode: Boolean): Int =
+        if (isLowPerfLevel(level, highPerformanceMode)) 512 else 1024
+
+    /** 列表/卡片图质量（供 GlideUtil.url 调用） */
+    @JvmStatic
+    fun getImageQuality(): Int = listImageQuality(currentPerfLevel, highPerformanceMode)
+
+    /** 列表/卡片图最大宽度（供 GlideUtil.url 调用） */
+    @JvmStatic
+    fun getImageMaxWidth(): Int = listImageMaxWidth(currentPerfLevel, highPerformanceMode)
+
+    /** 大图质量（供 GlideUtil.url_hq 调用） */
+    @JvmStatic
+    fun getHqImageQuality(): Int = hqImageQuality(currentPerfLevel, highPerformanceMode)
+
+    /** 大图最大宽度（供 GlideUtil.url_hq 调用） */
+    @JvmStatic
+    fun getHqImageMaxWidth(): Int = hqImageMaxWidth(currentPerfLevel, highPerformanceMode)
 
     /** 是否启用硬件位图解码 */
     fun isHardwareBitmapEnabled(): Boolean = isEffectiveHighPerf()
 
-    /** 是否启用视频预加载 */
-    fun isVideoPreloadEnabled(): Boolean = isEffectiveHighPerf()
-
-    /** 列表分页大小 */
-    fun getPageSize(): Int = when {
-        isLowPerfDevice() -> 10
-        else -> 20
-    }
+    /**
+     * 列表分页大小
+     *
+     * 26.10.04 批次 3（B1+B5）：只接到"纯追加列表"的三处
+     * （`api/RecommendApi.java` 的热门 / 入站必刷、`api/SeriesApi.java` 的系列视频列表）。
+     * 其余接口的 ps 是各接口自己的选择（如收藏夹一次拉 100 条、私信游标 35 条），**故意不接**。
+     */
+    @JvmStatic
+    fun getPageSize(): Int = if (isLowPerfDevice()) 10 else 20
 
     // ===== 硬件信息获取 =====
 

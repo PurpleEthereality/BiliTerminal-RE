@@ -11,6 +11,9 @@ class UserSeriesActivity : RefreshListActivity() {
 
     private var mid: Long = 0
 
+    // 26.10.04 批次 3（B5）：翻页要往首屏那个列表里追加，所以得留住 adapter 引用。
+    private var seasonAdapter: SeriesCardAdapter? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -42,16 +45,20 @@ class UserSeriesActivity : RefreshListActivity() {
 
                     runOnUiThread {
                         val adapter = SeriesCardAdapter(this@UserSeriesActivity, seasonList)
+                        seasonAdapter = adapter
                         setAdapter(adapter)
                         setRefreshing(false)
                         hideEmptyView()
                     }
                 } else {
                     runOnUiThread {
-                        val recyclerView = this@UserSeriesActivity.recyclerView
-                        val adapter = recyclerView.adapter as? SeriesCardAdapter
+                        // 26.10.04 批次 3（B5）修正：原实现只 notifyItemRangeInserted，
+                        // 从没把新数据加进 adapter 的列表 —— 报出的新增数和 getItemCount() 对不上，
+                        // RecyclerView 会判为不一致（"Inconsistency detected"）直接崩。
+                        val adapter = seasonAdapter
                         if (adapter != null) {
-                            val oldSize = adapter.itemCount
+                            val oldSize = adapter.seasonList.size
+                            adapter.seasonList.addAll(seasonList)
                             adapter.notifyItemRangeInserted(oldSize, seasonList.size)
                         }
                         onLoadComplete()

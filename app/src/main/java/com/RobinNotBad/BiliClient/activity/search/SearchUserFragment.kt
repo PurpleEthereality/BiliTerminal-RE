@@ -2,7 +2,6 @@ package com.RobinNotBad.BiliClient.activity.search
 
 import android.annotation.SuppressLint
 import android.os.Bundle
-import android.util.Log
 import android.view.View
 
 import androidx.annotation.NonNull
@@ -43,7 +42,6 @@ class SearchUserFragment : SearchFragment() {
 
     private fun continueLoading(page: Int) {
         CenterThreadPool.run {
-            Log.e("debug", "加载下一页")
             try {
                 val result = SearchApi.searchType(keyword, page, "bili_user") as JSONArray?
                 if (result != null) {

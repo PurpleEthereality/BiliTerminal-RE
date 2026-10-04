@@ -44,7 +44,8 @@ class PopularActivity : InstanceActivity() {
         loadPopular()
     }
 
-    @SuppressLint("NotifyDataSetChanged")
+    // 26.10.04 批次 3（B5）：本页早已改用 notifyItemRangeRemoved/Inserted，
+    // 原来的 @SuppressLint("NotifyDataSetChanged") 是残留，已清掉。
     private fun loadPopular() {
         page = 1
         if (firstRefresh) {

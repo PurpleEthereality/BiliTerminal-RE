@@ -56,12 +56,17 @@ ksp { arg("room.schemaLocation", ...) }                                     // �
 AndroidManifest.xml:27  android:name=".BiliTerminal"   ← 真实 Application（Kotlin）
         ↓
 BiliTerminal.onCreate()
+   ├─ 判进程名（读 /proc/self/cmdline）
+   │    ├─ 是 :error_activity（26.10.04 起崩溃页独立进程）
+   │    │    → 只做 SharedPreferencesUtil / context / Logu 开关，然后直接 return
+   │    └─ 主进程继续
    ├─ SharedPreferencesUtil.sharedPreferences = getSharedPreferences("default")
    ├─ context = getFitDisplayContext(this)      ← DPI 缩放包装 Context
-   ├─ PerformanceManager.init(this)             ← 设备分级
+   ├─ PerformanceManager.init(this)             ← 设备分级（26.10.04 起：有缓存直接读，
+   │                                                首次先落中档、检测丢 CenterThreadPool）
    ├─ 强制更新拦截：注册 ActivityLifecycleCallbacks，
    │    onActivityPreCreated 里把任何 Activity 换成 UpdateActivity 并 finish
-   ├─ ErrorCatch.init / Logu 开关
+   ├─ ErrorCatch.init / applyLogSwitches()
    ├─ 后台异步：动态更新数、消息未读数（仅已登录 mid != 0）
    └─ checkAppUpdate()                          ← 读 Gitee（失败回落 GitHub）的 releases/latest
         ↓
@@ -76,6 +81,7 @@ SplashActivity（LAUNCHER，typewriter 动画）
 
 **改功能注意**：
 - `BiliTerminal.onCreate()` 里所有初始化都包在 `if (context == null)` 内——**多进程/重复创建时只会跑一次**。新增全局初始化要放在这个块里，否则可能被跳过。
+- **`CatchActivity` 跑在 `:error_activity` 独立进程**（26.10.04 批次 3，`AndroidManifest.xml` 的 `android:process`）。主进程已崩溃时，同进程再启 Activity 容易被一起带走，所以崩溃页必须自给自足：它**不会**经过 `PerformanceManager.init`、`ErrorCatch.init`、未读轮询、更新检查。往 `CatchActivity` 加依赖前先确认那个依赖不要求这些初始化。判进程用 `BiliTerminal.currentProcessName()`（读 `/proc/self/cmdline`——`minSdk 24` 用不了 API 28 的 `Application.getProcessName()`）。
 - 首屏由**用户自定义菜单顺序**决定，不是硬编码 `RecommendActivity`。改导航时注意 `loadMenuEnabled()`。
 - `onActivityPreCreated` 的强制更新拦截会 **finish 掉任意 Activity**，调试时若被"莫名其妙踢到更新页"，检查 `force_update_required` 这个 SharedPreferences 键。
 
@@ -286,7 +292,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 - **巨型类**：`activity/player/PlayerActivity.kt` 127 KB、`service/DownloadService.kt` 65 KB、`activity/video/ShortVideoPlayerActivity.kt` 35 KB。改播放/下载相关功能前先想清楚在哪个位置插入。
 - **Application 静态状态已收敛为一套**：26.10.02 起只有 `BiliTerminal.context` / `BiliTerminal.instance`（`BiliTerminal.kt` 伴生对象 `@JvmField`，`:43-44`），`BiliTerminalApp` 已整文件删除。**新代码一律用 `BiliTerminal`**。
-- **测试覆盖仍偏低**：`app/src/test/` 24 个文件（23 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **184 个用例**，对 364 个源文件（26.10.04 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`NetWorkUtilTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
+- **测试覆盖仍偏低**：`app/src/test/` 25 个文件（24 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **194 个用例**，对 364 个源文件（26.10.04 批次 3 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`NetWorkUtilTest`、`PerformanceManagerTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
 - **主题色表带缓存，失效点只有一处**：`ColorScheme.getCurrentTheme()`（26.09.11 起）缓存当前色表，**只由 `AppearanceManager.setTheme()` 经 `ColorScheme.invalidateCache()` 置空**。这是刻意的——36 个属性 getter 全走它，而列表滚动时一个 item 要调多次，此前每次都重读 SharedPreferences（热路径重复 IO）。**若将来给主题 key 增加第二个写入路径（比如直接 `SharedPreferencesUtil.putString(SettingsKeys.THEME, …)`），必须同步调用 `ColorScheme.invalidateCache()`，否则改主题后色表不跟着变且在 `onResume` 重建后依然错**。守卫测试：`ColorSchemeTest.themeCache_isInvalidatedOnEverySetTheme`、`colorGetters_doNotTouchSharedPreferencesAfterFirstRead`。
 - **主题体系有 3 个"裸 Activity"不参与**：`SplashActivity`、`GetIntentActivity` 不继承 `BaseActivity`（开屏/外链恒定 B站粉），`PlayerActivity` 自己 `setTheme` 但**不调 `applyWindowTheme`、也不参与 `onResume` 主题检测**。改主题相关行为时别以为全局都生效了。
 - **文案硬编码**：遗留页面标题/Toast 直接写中文字符串（Manifest 里 `android:label` 也是中文），只有设置页用 `desc_*` 资源。改文案按现有风格来，别顺手抽 `strings.xml`。
@@ -391,6 +397,22 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 - **纯解析**：`api/PlayerApi.parseHighEnergyData(JSONObject)`（static，零网络、**不写日志**——`Logu` 走 `android.util.Log`，在 JVM 单测里会抛 not-mocked）。它按「根上的 modules → data 里的 modules → data 本身 → 根自己」四个候选依次找，**优先返回真正带 `events.default` 的那个**；都不带才退回第一个候选（至少留下 `step_sec`/`debug` 便于排查）。配套 `app/src/test/.../api/PlayerApiPbpTest.kt` 9 例。
 - **`buildPbpReferer(bvid, aid)`** 也是纯函数（bvid > av号 > 站点根），单测覆盖。
 - 网络侧 `getHighEnergyData(cid, aid, bvid)` 用 `new ArrayList<>(NetWorkUtil.webHeaders)` 复制一份请求头、只替换 `Referer`，**不动全局表**（全局表是 volatile copy-on-write 快照，见 `util/NetWorkUtil.java:521` 的注释）。调用点 `activity/player/PlayerActivity.kt` 的 `loadHighEnergyData()` 从 Intent 里取可选的 `bvid`——`PlayerData` 没有该字段，所以多数入口会落到 av 号 Referer。
+
+### 7.9 列表增量刷新：`notifyItemRangeInserted` 的起点由 adapter 的 `getItemCount()` 决定（26.10.04 批次 3）
+
+**核心事实：本项目大量 adapter 的 `getItemCount()` 是 `data.size + 1`（位置 0 塞一个头部），所以通知增量时起点要 `sizeBefore + 1`。看到 `+ 1` 不要条件反射当越界，先读对应 adapter 的 `getItemCount()`。**
+
+- **无头部**（直接用 list 构造）：`adapter/video/VideoCardAdapter.kt:70` `getItemCount() = videoCardList.size`、`adapter/article/ArticleCardAdapter.kt:123`、`adapter/LiveCardAdapter.kt:64` → 起点就是 `lastSize`。26.10.04 修掉的 3 个搜索页（`SearchVideoFragment` / `SearchArticleFragment` / `SearchLiveFragment`）原来写成 `lastSize + 1`，是**真越界**（第 2 页起 `IndexOutOfBounds` / `Inconsistency detected`）。
+- **有头部**：`adapter/ReplyAdapter.kt:556-558` `replyList.size + 1`、`adapter/dynamic/UserDynamicAdapter.kt:112-114` `dynamicList.size + 1`、`activity/video/series/SeriesInfoActivity` 的内部 adapter `data.size + 1` → 这些调用点的 `+ 1` 是**对的**（`ReplyFragment.kt:250`、`UserDynamicFragment.kt:89`、`SeriesInfoActivity.kt:86`），已核实、别动。`adapter/user/FollowGroupAdapter.kt:108` 的 `groupPosition + 1` 是分组结构，同理。
+- **通知前必须先改数据，且同在主线程**：`ReplyFragment.kt:238` 的注释就是这个约定。反面教材是 `activity/video/series/UserSeriesActivity.kt`——原来只 `notifyItemRangeInserted(oldSize, seasonList.size)` 却**从没 `addAll` 进 adapter 的 list**，报出的数量和真实条数永远对不上；已改成记住第 1 页的 adapter、第 2 页起先 `seasonList.addAll(...)` 再通知（`adapter/video/SeriesCardAdapter.kt` 的 `seasonList` 因此由 `List` 放宽为 `MutableList`）。
+- 配套：`activity/RefreshListActivity` 的 `getRecyclerViewCacheSize()` / `getRecyclerViewPrefetchCount()` 来自 `PerformanceManager`，与 `notifyItemRangeInserted` 无关，别混为一谈。
+
+### 7.10 设备档位参数的唯一出口：`PerformanceManager`（26.10.04 批次 3 整理）
+
+- **图片质量/宽度、分页大小都必须从 `PerformanceManager` 取**，不要再在调用点写死：`GlideUtil.url()` 走 `getImageQuality()`/`getImageMaxWidth()`（列表图：低端 320w/50q，其余 512w/60q），`GlideUtil.url_hq()` 走 `getHqImageQuality()`/`getHqImageMaxWidth()`（低端 512w/60q，其余 1024w/80q）。`GlideUtil` 原有的 `QUALITY_*` / `MAX_W_*` 四个常量已删除——**再引入一份常量就等于恢复"两处真相"**。
+- 档位计算是 `@JvmStatic` 纯函数（`levelFromScore` / `isLowPerfLevel` / `listImageQuality` / `listImageMaxWidth` / `hqImageQuality` / `hqImageMaxWidth`），接收 `(level, highPerformanceMode)`，因此可被 JVM 单测直接覆盖；对应的"喂当前状态"getter 只是转调。
+- **`getPageSize()` 只对 3 个接口生效**（`RecommendApi` popular/precious、`SeriesApi` 用户系列）。其余硬编码 `ps`/`page_size` **是有意为之**（`FavoriteApi.java:106 ps=100` 一次拉全、`MessageApi.java:380 page_size=35` 是 cursor 分页、`EmoteApi` 表情面板等），改它们要先确认分页语义。
+- **首次硬件检测不在主线程**：`init()` 无缓存时先置中档返回，检测在 `CenterThreadPool` 上跑完再 `applyPerformanceSettings()`。因此**冷启动最初几十毫秒内读到的是中档参数**，属于预期行为；单测 `PerformanceManagerTest.defaultsBeforeInit_areMedium` 锁住了这套默认值。
 
 ---
 
@@ -717,7 +739,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 **不可单测**（内部发网络 / 依赖 Context / 弹 UI）：`DynamicApi.analyzeDynamic`、`MessageApi` 全部解析（SpannableString）、`PrivateMsgApi.getPrivateMsgList`、`LikeCoinFavApi.getVideoStats`。
 
-**测试覆盖现状（26.10.04 实测）**：`app/src/test/` 19 个测试类 / 147 个用例，api 层只有 4 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口。
+**测试覆盖现状（26.10.04 批次 3 实测）**：`app/src/test/` 24 个测试类 / 194 个用例；api 层只有 4 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`，另有 `PlayerApiPbpTest`、`ReplyApiTest` 覆盖部分纯逻辑）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口；`PerformanceManagerTest` 覆盖档位换算与图片/分页参数（见 §7.10）。
 
 ### API 层的坑
 

@@ -48,12 +48,10 @@ public class ErrorCatch implements Thread.UncaughtExceptionHandler {
         }
 
         throwable.printStackTrace();
-        // startActivity 是异步的，立即杀进程会让崩溃页来不及起来；
-        // 这里等一小段时间让 CatchActivity 完成启动、崩溃信息有机会落地。
-        try {
-            Thread.sleep(300);
-        } catch (InterruptedException ignored) {
-        }
+        // 26.10.04 批次 3（B8）：这里原本 sleep(300ms) 等崩溃页起来。
+        // 现在 CatchActivity 跑在独立进程 :error_activity（见 AndroidManifest），
+        // startActivity 的请求已经同步交给 AMS 了，本进程立刻死掉也不影响那边被拉起，
+        // 所以这 300ms 纯属白等——崩溃线程多卡 300ms，用户看到的就是多卡 300ms。
 
         // 交还给安装本处理器之前的处理器，让先注册的崩溃上报/终止逻辑仍有机会执行
         // （框架默认实现会自行结束进程；自定义实现若只是上报，则继续走下面的 killProcess）

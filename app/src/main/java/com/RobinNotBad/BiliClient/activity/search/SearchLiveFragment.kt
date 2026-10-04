@@ -2,7 +2,6 @@ package com.RobinNotBad.BiliClient.activity.search
 
 import android.annotation.SuppressLint
 import android.os.Bundle
-import android.util.Log
 import android.view.View
 
 import androidx.annotation.NonNull
@@ -45,7 +44,6 @@ class SearchLiveFragment : SearchFragment() {
 
     private fun continueLoading(page: Int) {
         CenterThreadPool.run {
-            Log.e("debug", "加载下一页")
             try {
                 val result = SearchApi.searchType(keyword, page, "live")
                 if (result != null) {
@@ -59,9 +57,10 @@ class SearchLiveFragment : SearchFragment() {
                     if (jsonArray != null) list.addAll(LiveApi.analyzeLiveRooms(jsonArray))
                     if (list.size == 0) bottom = true
                     else CenterThreadPool.runOnUiThread {
+                        // 26.10.04 批次 3（B5）：起点 lastSize + 1 → lastSize（原写法第 2 页越界）
                         val lastSize = roomList.size
                         roomList.addAll(list)
-                        liveCardAdapter!!.notifyItemRangeInserted(lastSize + 1, roomList.size - lastSize)
+                        liveCardAdapter!!.notifyItemRangeInserted(lastSize, list.size)
                     }
                 } else bottom = true
             } catch (e: Exception) {

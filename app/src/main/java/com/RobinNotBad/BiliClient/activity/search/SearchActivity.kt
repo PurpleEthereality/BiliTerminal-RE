@@ -86,8 +86,6 @@ class SearchActivity : InstanceActivity() {
         tutorial_show = SharedPreferencesUtil.getBoolean("tutorial_pager_$classname", true)
 
         asyncInflate(R.layout.activity_search) { _, _ ->
-            Log.e("debug", "进入搜索页")
-
             // 教程改由 BaseActivity 按 Tutorials 注册表集中触发
 
             handler = Handler()

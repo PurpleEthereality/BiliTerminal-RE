@@ -196,8 +196,51 @@ class BiliTerminal : Application() {
         }
     }
 
+    /**
+     * 崩溃页 `CatchActivity` 所在进程的后缀（见 AndroidManifest 里它的 `android:process`）
+     */
+    private val errorProcessSuffix = ":error_activity"
+
+    /**
+     * 取当前进程名。
+     *
+     * 26.10.04 批次 3（B8）：minSdk 24 用不了 API 28 才有的 `Application.getProcessName()`，
+     * 只能读 `/proc/self/cmdline`——内核把进程名按 NUL 结尾写进去，`readLine` 会把那个 NUL 一起带回来。
+     */
+    private fun currentProcessName(): String = try {
+        java.io.RandomAccessFile("/proc/self/cmdline", "r").use { file ->
+            file.readLine()?.trimEnd('\u0000') ?: packageName
+        }
+    } catch (e: Exception) {
+        packageName
+    }
+
+    /**
+     * 日志开关（两个进程都要设：崩溃页自己也会打日志）
+     */
+    private fun applyLogSwitches() {
+        val debugBuild = isDebugBuild()
+        Logu.LOGV_ENABLED = SharedPreferencesUtil.getBoolean("dev_logv", debugBuild)
+        Logu.LOGD_ENABLED = SharedPreferencesUtil.getBoolean("dev_logd", debugBuild)
+        Logu.LOGI_ENABLED = SharedPreferencesUtil.getBoolean("dev_logi", debugBuild)
+    }
+
     override fun onCreate() {
         super.onCreate()
+
+        // 26.10.04 批次 3（B8）：崩溃页跑在独立进程 :error_activity 里，这里只做**最小初始化**——
+        // 够让崩溃页把堆栈显示出来即可。其余（教程键迁移、性能检测、强制更新、未读轮询、
+        // 自动更新检查、全局异常捕获）全部不碰：主进程刚崩溃、随时会被 killProcess，
+        // 错误进程里再跑网络与磁盘逻辑，只会把"崩溃页都打不开"变成第二种崩溃。
+        if (currentProcessName().endsWith(errorProcessSuffix)) {
+            if (context == null) {
+                SharedPreferencesUtil.sharedPreferences = getSharedPreferences("default", MODE_PRIVATE)
+                context = getFitDisplayContext(this)
+                applyLogSwitches()
+            }
+            return
+        }
+
         if (context == null) {
             SharedPreferencesUtil.sharedPreferences = getSharedPreferences("default", MODE_PRIVATE)
             context = getFitDisplayContext(this)
@@ -252,10 +295,7 @@ class BiliTerminal : Application() {
             val errorCatch = ErrorCatch.getInstance()
             errorCatch.init(context)
 
-            val debugBuild = isDebugBuild()
-            Logu.LOGV_ENABLED = SharedPreferencesUtil.getBoolean("dev_logv", debugBuild)
-            Logu.LOGD_ENABLED = SharedPreferencesUtil.getBoolean("dev_logd", debugBuild)
-            Logu.LOGI_ENABLED = SharedPreferencesUtil.getBoolean("dev_logi", debugBuild)
+            applyLogSwitches()
 
             if (SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.DYNAMIC_UPDATE_CHECK_ENABLE, true)
                 && SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0) != 0L

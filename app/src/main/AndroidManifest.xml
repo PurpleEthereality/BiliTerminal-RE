@@ -117,9 +117,13 @@
             android:exported="false"
             android:label="历史更新日志"
             android:screenOrientation="locked" />
+        <!-- 26.10.04 批次 3（B8）：崩溃页跑独立进程 :error_activity。
+             主进程此时已经处于"崩溃 + 即将 killProcess"的状态，同进程再启 Activity 很容易
+             因为内存/状态被破坏而二次崩溃；独立进程只做最小初始化，能把堆栈稳定显示出来。 -->
         <activity
             android:name=".activity.CatchActivity"
             android:exported="false"
+            android:process=":error_activity"
             android:label="崩溃捕捉"
             android:screenOrientation="locked" />
         <activity

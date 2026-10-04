@@ -2,7 +2,6 @@ package com.RobinNotBad.BiliClient.activity.video
 
 import android.annotation.SuppressLint
 import android.os.Bundle
-import android.util.Log
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.base.RefreshMainActivity
 import com.RobinNotBad.BiliClient.adapter.video.VideoCardAdapter
@@ -25,7 +24,6 @@ class RecommendActivity : RefreshMainActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setMenuClick()
-        Log.e("debug", "进入推荐页")
 
         setOnRefreshListener { refreshRecommend() }
         setOnLoadMoreListener { addRecommend() }
@@ -41,9 +39,9 @@ class RecommendActivity : RefreshMainActivity() {
         refreshRecommend()
     }
 
-    @SuppressLint("NotifyDataSetChanged")
+    // 26.10.04 批次 3（B5）：本页早已改用 notifyItemRangeRemoved/Inserted，
+    // 原来的 @SuppressLint("NotifyDataSetChanged") 与两处 Log.e("debug") 都是残留，已清掉。
     private fun refreshRecommend() {
-        Log.e("debug", "刷新")
         freshType = 3
         loadedBvids.clear()
         if (firstRefresh) {
@@ -58,7 +56,6 @@ class RecommendActivity : RefreshMainActivity() {
     }
 
     private fun addRecommend() {
-        Log.e("debug", "加载下一页")
         val requestFreshType = freshType
         freshType = if (freshType == 3) 4 else 3
         CenterThreadPool.run {

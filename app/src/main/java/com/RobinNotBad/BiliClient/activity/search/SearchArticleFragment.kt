@@ -2,7 +2,6 @@ package com.RobinNotBad.BiliClient.activity.search
 
 import android.annotation.SuppressLint
 import android.os.Bundle
-import android.util.Log
 import android.view.View
 import com.RobinNotBad.BiliClient.adapter.article.ArticleCardAdapter
 import com.RobinNotBad.BiliClient.api.SearchApi
@@ -39,7 +38,6 @@ class SearchArticleFragment : SearchFragment() {
 
     private fun continueLoading(page: Int) {
         CenterThreadPool.run {
-            Log.e("debug", "加载下一页")
             try {
                 val result = SearchApi.searchType(keyword, page, "article") as JSONArray?
                 if (result != null) {
@@ -48,9 +46,10 @@ class SearchArticleFragment : SearchFragment() {
                     SearchApi.getArticlesFromSearchResult(result, list)
                     if (list.size == 0) bottom = true
                     CenterThreadPool.runOnUiThread {
+                        // 26.10.04 批次 3（B5）：起点 lastSize + 1 → lastSize（原写法第 2 页越界）
                         val lastSize = articleCardList.size
                         articleCardList.addAll(list)
-                        articleCardAdapter!!.notifyItemRangeInserted(lastSize + 1, articleCardList.size - lastSize)
+                        articleCardAdapter!!.notifyItemRangeInserted(lastSize, list.size)
                     }
                 } else bottom = true
             } catch (e: Exception) {

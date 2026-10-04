@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1249,4 +1249,107 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 调研报告 §12.2（A1/A10 台账已更新为「已实现（26.10.04 批次 2）」）、§12.6（单测数字更新为 23 类 / 184 例）、§12.7（8 批顺序）。
 - `docs/architecture-map.md` §6.1（新增「csrf 唯一入口」说明、行数 605→709）、§7.3（测试清单与数量）、§9 第 8 条（key 混用已收敛 csrf 部分）。
 - 下一批（批次 3）：B1 B2 B3 B5（限推荐/热门/搜索）B8。
+
+---
+
+## 十三、26.10.04 批次 3：性能参数接线 + 列表增量刷新越界 + 崩溃页独立进程
+
+> 依据已拍板的 8 批顺序第 3 批（§十二 末尾）。五条实现口径经 ask 逐条确认：**① B1 分类处理（能接的接、接不了的删）；② B2 检测挪后台、先落默认中档；③ B3 图片档位改成对手表列表图有意义的粒度，不盲目照抄台账；④ B5 同类 bug 一次清干净；⑤ B8 独立进程 + 剪掉重初始化**。
+
+### B1 `PerformanceManager` 死参数裁决
+
+**问题**：`util/PerformanceManager.kt` 按硬件分档声明了一批运行时参数，但大量 getter 从未被调用；三个 `applyXxxPerfSettings()` 函数体各只有一行 `Logu.i`。
+
+**勘误**：台账 §12.3 B1 写「7 个死 getter」，实测 **8 个**（多一个 `isHighPerformanceMode()`）。
+
+| 分类 | 成员 | 处置 |
+|---|---|---|
+| 接线 | `getImageQuality` / `getImageMaxWidth` | 接进 `util/GlideUtil.java`（即 B3） |
+| 接线 | `getPageSize` | 接进 3 处「纯追加列表」分页（见下） |
+| 删除 | `isHighPerformanceMode` / `getOkHttpConnectionPoolSize` / `getOkHttpKeepAliveMinutes` / `isImageTransitionEnabled` / `isVideoPreloadEnabled` | 全库无引用，直接删（避免留 `@Deprecated` 噪音） |
+| 保留 | `isHardwareBitmapEnabled`（`helper/CustomGlideModule.kt:38` 在用）、`getGlideDiskCacheSizeMB` / `getGlideMemoryCacheSizeMB` / `getRecyclerViewCacheSize` / `getRecyclerViewPrefetchCount` / `isLowPerfDevice` / `setHighPerformanceMode` / `getCurrentPerfLevel` | 本来就在用 |
+
+**分页只接了 3 处**：`api/RecommendApi.java:84`（popular `ps`）、`:106`（precious `page_size`）、`api/SeriesApi.java:28`（用户系列 `page_size`）。**其余硬编码 ps 故意不接**，因为它们各自编码了接口语义：`FavoriteApi.java:106 ps=100`（收藏夹一次拉全）、`MessageApi.java:380 page_size=35`（cursor 分页，改大小会让游标错位）、`EmoteApi.java:94/120 ps=12`（表情面板整屏）等。这条边界已写进 `getPageSize()` 的 KDoc。
+
+### B2 首次硬件检测挪到后台
+
+**问题**：`PerformanceManager.init()` 在 `BiliTerminal.onCreate` 同步调用，首次冷启动（无 `KEY_DEVICE_PERFORMANCE_LEVEL` 缓存）要在主线程跑 `getHardwareScore()` → 读 `/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq`，失败还要逐行解析 `/proc/cpuinfo`。
+
+**改法**：`init()` 改双重检查；**有缓存** → 直接读缓存档位 + `applyPerformanceSettings()`；**无缓存** → 先 `currentPerfLevel = PERF_LEVEL_MEDIUM` + `applyPerformanceSettings()` 立即返回，把检测交给新增的 `detectAndApplyPerformanceLevel()` 在 `CenterThreadPool` 上跑（算完写缓存、必要时自动打开高性能、重跑 `applyPerformanceSettings()`、异常只记日志并保持中档）。顺带删掉了原先「`if (Logu.LOGI_ENABLED)` 才打日志」的短路绕法——那是为了省一次 `getHardwareScore()`，现在检测已在后台，不再需要。
+
+### B3 图片按档位下采样
+
+**问题**：`GlideUtil.url()/url_hq()` 对所有设备用同一组写死的质量/宽度。
+
+**口径修正（重要）**：台账原方案（低 256 / 中 320 / 高 512）与实际情况不符——服务端已按档位下发，把中/高端列表图从 512 提到 1024 等于像素 ×4，手表上纯属浪费。最终粒度：
+
+| 场景 | 低端设备 | 中/高端设备 |
+|---|---|---|
+| 列表图 `GlideUtil.url()` | **320w / 50q** | **512w / 60q**（与修复前完全一致） |
+| 大图 `GlideUtil.url_hq()` | **512w / 60q** | **1024w / 80q**（与修复前完全一致） |
+
+档位计算全部沉到 `PerformanceManager` 的 `@JvmStatic` 纯函数（`listImageQuality` / `listImageMaxWidth` / `hqImageQuality` / `hqImageMaxWidth`，接收 `level, highPerformanceMode`），`GlideUtil` 里原有的 `QUALITY_HIGH` / `QUALITY_LOW` / `MAX_W_HIGH` / `MAX_W_LOW` 四个常量**已删除**（避免两处真相）。另外把 `isLowPerfDevice()` 的判断抽成纯函数 `isLowPerfLevel(level, highPerformanceMode)` 以便单测。
+
+### B5 列表增量刷新越界
+
+**勘误**：台账 B5 说「推荐 / 热门页用全量刷新」——实际 `activity/video/RecommendActivity.kt:85` 与 `activity/video/PopularActivity.kt:96` **本来就是** `notifyItemRangeInserted`，那两条已达标。本次真正修的是 **4 处真 bug**：
+
+| 位置 | 问题 | 修法 |
+|---|---|---|
+| `activity/search/SearchVideoFragment.kt:55` | `notifyItemRangeInserted(lastSize + 1, videoCardList.size - lastSize)` —— 起点多算 1 | 改 `notifyItemRangeInserted(lastSize, list.size)` |
+| `activity/search/SearchArticleFragment.kt:53` | 同上 | 同上 |
+| `activity/search/SearchLiveFragment.kt:64` | 同上 | 同上 |
+| `activity/video/series/UserSeriesActivity.kt:50-56` | **根本没把新数据加进 adapter 的列表**，只报 `notifyItemRangeInserted(oldSize, seasonList.size)` → 报出的新增数与 `getItemCount()` 对不上，必撞 `Inconsistency detected` | 记住第 1 页的 adapter（`seasonAdapter`），第 2 页起 `seasonList.addAll(...)` 后再以 `oldSize = adapter.seasonList.size` 通知；`adapter/video/SeriesCardAdapter.kt` 的 `seasonList` 由 `List` 放宽为 `MutableList` |
+
+**判定坑（走了弯路，务必记住）**：`notifyItemRangeInserted(x + 1, …)` 在本项目**大多数是对的**——这些 adapter 的 `getItemCount()` 带一个头部占位（`data.size + 1`，位置 0 是标题/头部）。已逐一核实并**保持不动**：`activity/video/series/SeriesInfoActivity.kt:86`（`oldSize` 在 `addData` 之前取，内部 adapter 是 `data.size + 1`）、`activity/reply/ReplyFragment.kt:250`（`ReplyAdapter.getItemCount() = replyList.size + 1`）、`activity/user/info/UserDynamicFragment.kt:89`（`UserDynamicAdapter.getItemCount() = dynamicList.size + 1`）、`adapter/user/FollowGroupAdapter.kt:108`（分组结构）。**结论：判越界前必须先读对应 adapter 的 `getItemCount()`，看那 `+1` 是不是头部。**
+
+顺带清理：各搜索页的 `Log.e("debug","加载下一页")`（`SearchVideoFragment` / `SearchArticleFragment` / `SearchBangumiFragment` / `SearchLiveFragment` / `SearchUserFragment`）、`SearchActivity.kt:89` 的 `Log.e("debug","进入搜索页")`、`RecommendActivity` 的 3 处 `Log.e("debug", …)`，以及 `RecommendActivity` / `PopularActivity` 上已失效的 `@SuppressLint("NotifyDataSetChanged")`。**遗留（不在本批范围）**：`activity/reply/ReplyFragment.kt:241` 仍有 `Log.e("debug", …)`。
+
+### B8 崩溃页独立进程
+
+**问题**：`ErrorCatch` 在主进程崩溃后同进程启动 `CatchActivity`，极易二次崩溃把崩溃页一起带走；为此代码里塞了 `Thread.sleep(300)` 硬等。
+
+| 落点 | 改动 |
+|---|---|
+| `AndroidManifest.xml` | `.activity.CatchActivity` 加 `android:process=":error_activity"`（附注释说明理由） |
+| `BiliTerminal.kt` | 新增 `currentProcessName()`（读 `/proc/self/cmdline`，minSdk 24 用不了 API 28 的 `Application.getProcessName()`）；`onCreate()` 开头判进程名，错误进程只做最小初始化（SharedPreferences + 适配 Context + `applyLogSwitches()`）后 `return`，**不碰**性能检测、强制更新、`registerActivityLifecycleCallbacks`、`ErrorCatch.init`、未读轮询、更新检查 |
+| `BiliTerminal.kt` | 日志开关集中为 `applyLogSwitches()`（主进程分支改调它，避免两处重复） |
+| `ErrorCatch.java` | 删除 `Thread.sleep(300)` 及其 try/catch：`CatchActivity` 现在在独立进程，`startActivity` 已同步交给 AMS，本进程立刻死掉也会被拉起 |
+
+已核实 `activity/CatchActivity.kt` 用到的 `SharedPreferencesUtil` / `MsgUtil` / `CenterThreadPool` / `AppInfoApi.uploadStack` / `StringUtil.setCopy` / 跨进程 `stopService(DownloadService)` 都不需要主进程那套初始化；`BaseActivity.onCreate` 只读 SharedPreferences + 主题，最小初始化足够。
+
+### 验证
+
+- 新增单测 `app/src/test/java/com/RobinNotBad/BiliClient/util/PerformanceManagerTest.kt`（10 例）：档位分界（0/34/35/64/65/100）、`isLowPerfLevel` 三态、列表图与大图的低端降档 + **中档不被抬成 80q/1024w**（防以后改回）、未 init 时的默认中档参数。
+- 未给 `GlideUtil.url()/url_hq()` 写单测：其静态初始化会构造 Glide 的 `DrawableCrossFadeFactory`（依赖 android 类），档位逻辑已全沉到 `PerformanceManager` 纯函数并被覆盖。
+- `:app:testDebugUnitTest` + `:app:assembleDebug`：**BUILD SUCCESSFUL in 57s**；**24 个 XML / 194 用例 / 0 失败 0 错误**（批次 2 后为 23/184，+1 类 +10 例）。
+- 未增删 `res/` 文件，单次 gradle 调用即可（无需 clean 两段式）。
+
+### 真机验证清单（JVM 单测覆盖不到的部分，发布前逐条走一遍）
+
+**B1 / B3**：
+1. 低端手表（或设置页手动关掉高性能）刷推荐/热门/搜索结果 → 列表缩略图应更糊更小，滚动更跟手。
+2. 中/高端设备刷同样的列表 → **列表图观感应与升级前完全一致**（512w/60q 没变）；点进视频详情，封面等大图仍清晰（1024w/80q）。
+3. 低端设备进视频详情 → 大图降到 512w/60q，不再有"大图解码吃满内存"的卡顿。
+4. 设置页切「高性能模式」开/关 → 列表图档位应立即跟着变（切换后重新进列表页观察）。
+5. 推荐/热门/用户系列翻页 → 第 2 页起应正常追加、不闪退；`adb logcat` 无 `Inconsistency detected`。
+6. 低端设备首屏分页应变成 10 条/页，中高端 20 条/页。
+
+**B2**：
+7. 全新安装（或清除应用数据）后冷启动 → 首屏应立即出来（不再等硬件检测），随后在 logcat 里能看到一次「PerformanceManager 初始化完成 / 性能检测」后台日志。
+8. 冷启动后立刻连续快速滑动首页列表 → 不应有可感知的一次性卡顿。
+
+**B5**：
+9. 搜索「视频 / 专栏 / 直播」三类，各下滑加载第 2、3 页 → 无闪退、无 `Inconsistency detected`、列表项与数量正确（修复前第 2 页起会越界）。
+10. 用户投稿里的「系列」页下滑第 2 页 → 新条目正常出现在列表末尾且**数量对得上**（修复前根本不追加）。
+
+**B8**：
+11. 用 `adb shell am broadcast` 或调试开关人为触发一次崩溃 → 崩溃页应正常弹出并显示堆栈（即使主进程已被 kill）。
+12. 崩溃页点「重启」→ 能正常回到闪屏/主界面，且**不叠加**一个新的未处理异常。
+13. 崩溃页点「退出」→ 应用完全退出，`adb shell ps` 里主进程与 `:error_activity` 进程都不应残留。
+
+### 交叉引用
+
+- 调研报告 §0 优先清单（第 2~8 项标注落地状态）、§4.2（补「已按 §12.3 B1/B2/B3 处理完毕」）、§7.1（P0/P1 表更新）、§9（加「已被 §12.7 取代」声明）、§12.3（B1/B2/B3/B5/B8 台账更新为「已实现（26.10.04 批次 3）」）、§12.6（单测数字 → 24 类 / 194 例）、§12.7（批次 3 完成）。
+- 下一批（批次 4）：E4 E5 E6。
 

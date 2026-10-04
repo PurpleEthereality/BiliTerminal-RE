@@ -96,6 +96,9 @@
 - `SettingsKeys.PLAYER` / `PLAY_QN` 是**死常量**：实际代码用字面量 `"player"` / `"play_qn"`（14 处），`SharedPreferencesUtil` 里还有第三处定义，收敛未完成。
 - `BaseActivity.kt:282` 用 `if (this !is InstanceActivity) setTopbarExit()` 做**向下判断**——任何「让 `RefreshMainActivity` 继承 `RefreshListActivity`」的方案都会把顶栏行为从「打开菜单」变成「点击即返回」。
 - **`cell_video_list` / `cell_dynamic_video` 的 id 是跨包事实协议**：改 id 会同时打破 `PrivateMsgAdapter`、`DynamicHolder`、`NoticeHolder`、`OpusContentAdapter`。
+- **`notifyItemRangeInserted` 的起点由 adapter 的 `getItemCount()` 决定，`+1` 多数是"头部占位"**：`ReplyAdapter` / `UserDynamicAdapter` / 系列详情内部 adapter 的 `getItemCount()` 都是 `data.size + 1`，通知起点要 `sizeBefore + 1`；而 `VideoCardAdapter` / `ArticleCardAdapter` / `LiveCardAdapter` 无头部、起点就是 `sizeBefore`。**看到 `+1` 先读 `getItemCount()` 再判越界**（26.10.04 批次 3 修掉 4 处真 bug，详见 `docs/architecture-map.md` §7.9）。
+- **崩溃页跑在 `:error_activity` 独立进程**（26.10.04 起）：`CatchActivity` 不经过 `PerformanceManager.init` / `ErrorCatch.init` / 未读轮询 / 更新检查，加依赖前先确认它不需要这些初始化；判进程用 `BiliTerminal.currentProcessName()`（读 `/proc/self/cmdline`，`minSdk 24` 用不了 API 28 的 `Application.getProcessName()`）。
+- **设备档位参数一律从 `PerformanceManager` 取**（图片质量/宽度、分页大小）：`GlideUtil` 里的 `QUALITY_*` / `MAX_W_*` 四个常量已于 26.10.04 删除，**不要在任何调用点重新写死**，否则又变回"两处真相"（详见 `docs/architecture-map.md` §7.10）。
 - **`model/` 里 `VideoFolder`/`VideoMeta`/`LocalVideo` 实现 `Parcelable`，且字段名就是磁盘 JSON 存储格式**：删改字段必须两端同步。
 - `player/` 包不是公共层：`VideoPlayerCore.kt` 已是 `IjkPlayerBridge` 的功能超集，但**还不能直接替换**——`PlayerState`/`IjkOption` 仍定义在 `IjkPlayerBridge.kt:17-36`（删旧类前先搬家），且 `VideoPlayerCore.release()` 有一次性 `released` 标志，`onViewRecycled` 后复用会**泄漏 native 播放器**。动手前先决定它的去留，含糊着抽公共层会造出第 3 套实现。
 - **手表右滑返回由 `android:windowSwipeToDismiss` 控制**，它在窗口层直接 `finish()`，**不走 `onBackPressed`**，所以只 override `onBackPressed` 拦不住。且 `onCreate` 里的 `setTheme(ColorScheme.themeResId(theme))` 会覆盖清单上声明的 `Theme.NoSwipe*` —— 要真正禁用它，必须调 `ColorScheme.themeResId(theme, noSwipe = true)` 换用 `Theme.*.NoSwipe.AppCompat`（issue #1 的根因）。

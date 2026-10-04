@@ -5,6 +5,7 @@ import android.util.Log;
 
 import com.RobinNotBad.BiliClient.model.VideoCard;
 import com.RobinNotBad.BiliClient.util.NetWorkUtil;
+import com.RobinNotBad.BiliClient.util.PerformanceManager;
 import com.RobinNotBad.BiliClient.util.StringUtil;
 
 import org.json.JSONArray;
@@ -81,7 +82,8 @@ public class RecommendApi {
     }
 
     public static void getPopular(List<VideoCard> videoCardList, int page) throws JSONException, IOException {
-        String url = "https://api.bilibili.com/x/web-interface/popular?pn=" + page + "&ps=10";
+        // 26.10.04 批次 3（B1+B5）：页大小改为按设备档位取（低端 10 / 其余 20）
+        String url = "https://api.bilibili.com/x/web-interface/popular?pn=" + page + "&ps=" + PerformanceManager.getPageSize();
 
         JSONObject result = NetWorkUtil.getJson(url);
 
@@ -103,7 +105,8 @@ public class RecommendApi {
     }
 
     public static void getPrecious(List<VideoCard> videoCardList, int page) throws JSONException, IOException {
-        String url = "https://api.bilibili.com/x/web-interface/popular/precious?page=" + page + "&page_size=10";
+        // 26.10.04 批次 3（B1+B5）：页大小改为按设备档位取（低端 10 / 其余 20）
+        String url = "https://api.bilibili.com/x/web-interface/popular/precious?page=" + page + "&page_size=" + PerformanceManager.getPageSize();
 
         JSONObject result = NetWorkUtil.getJson(url);
 

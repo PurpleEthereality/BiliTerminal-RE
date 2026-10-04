@@ -13,21 +13,21 @@
 **三句话结论：**
 
 1. **在"手表原生适配"这一维度，本项目已经领先目前所有可查到的开源同类客户端。** 表冠（旋冠）滚动、圆屏 WindowInsets、杂牌手表 ROM 能力探针、`MediaSession` + 前台播放服务、听视频模式、多账号切换、高能进度条、AI 字幕、互动视频、番剧选集都已落地；而 `SpaceXC/WearBili`（已停更）与 `SpaceXC/Re-WearBili`（两年未更新）源码树里**既没有旋冠也没有 ambient 常亮屏**，`10miaomiao/bilimiao2` 的手表适配只是"应用内 DPI 缩小 + 默认全屏"。
-2. **性能上的主要问题不是"没做优化"，而是"做了优化却没接线"和"该增量刷新的地方用了全量刷新"。** `util/PerformanceManager.kt` 有 7 个自适应参数声明后从未被任何代码调用（图像质量、图片最大宽度、OkHttp 连接池/保活、图片过渡、视频预加载、分页大小）；三个 `applyXxxPerfSettings()` 函数体只有一行日志；全库 53 处 `notifyDataSetChanged`。
-3. **最值得投入的三个新方向**：把接口里已有数据的 `view_points` 变成**自动跳过片头/片尾**；加一个 **Baseline Profile 模块**做冷启动优化；**补齐 csrf 实时化**（现在只有 `api/HistoryApi.java` 修了，其余 10 个 api 类仍读静态快照，Cookie 轮换后点赞/投币/收藏/评论会静默返回 `-111`）。
+2. **性能上的主要问题不是"没做优化"，而是"做了优化却没接线"和"该增量刷新的地方用了全量刷新"。** `util/PerformanceManager.kt` 有 **8** 个自适应参数声明后从未被任何代码调用（图像质量、图片最大宽度、OkHttp 连接池/保活、图片过渡、视频预加载、分页大小、高性能判定）；三个 `applyXxxPerfSettings()` 函数体只有一行日志；全库 53 处 `notifyDataSetChanged`。→ **26.10.04 批次 3 已处理：4 个接线、5 个删除、4 处增量刷新真 bug（见 §12.3）**。
+3. **最值得投入的三个新方向**：把接口里已有数据的 `view_points` 变成**自动跳过片头/片尾**（✅ 26.10.03 已实现）；加一个 **Baseline Profile 模块**做冷启动优化（26.10.04 拍板暂缓）；**补齐 csrf 实时化**（✅ 26.10.04 批次 2 已把 14 个 api 类共 41 处收敛到 `NetWorkUtil.currentCsrf()`，原述"其余 10 个 api 类仍读静态快照"已过时）。
 
 **优先清单（按 收益 ÷ 成本 排序）：**
 
 | # | 事项 | 类型 | 成本 | 说明 |
 |---|---|---|---|---|
 | 1 | ~~删除 `x86` ABI~~、视发布需要关掉 `universalApk` | 体积 | — | **26.10.04 拍板：x86 ABI 保留、`universalApk` 维持现状，两项均不做**（见 §12.3 B10） |
-| 2 | csrf 实时化补齐到全部写操作 api | 正确性 | 半天 | 否则点赞/投币/评论在 Cookie 轮换后静默失败 |
-| 3 | `PerformanceManager` 死参数接线或删除 | 性能 | 半天 | 7 个 getter 零调用点 |
-| 4 | 自动跳过片头/片尾（复用已有 `view_points`） | 功能 | 1 天 | 数据已解析，只差自动跳转 |
-| 5 | Baseline Profile 模块 | 启动 | 1~2 天 | 纯增量模块，不改业务代码 |
-| 6 | 列表 `notifyDataSetChanged` → DiffUtil/ListAdapter | 流畅度 | 分期 | 全库 53 处 |
-| 7 | 图片统一按设备档位下采样 | 内存 | 1 天 | 服务端已按 512w 压缩，客户端再按 256px 解码 |
-| 8 | 崩溃页独立进程 | 稳定性 | 半天 | 借鉴 Re-WearBili 的 `android:process=":error_activity"` |
+| 2 | csrf 实时化补齐到全部写操作 api | 正确性 | 半天 | ✅ 26.10.04 批次 2 已实现（见 §12.3 A1） |
+| 3 | `PerformanceManager` 死参数接线或删除 | 性能 | 半天 | ✅ 26.10.04 批次 3 已实现（实测 8 个零调用，见 §12.3 B1） |
+| 4 | 自动跳过片头/片尾（复用已有 `view_points`） | 功能 | 1 天 | ✅ 26.10.03 已实现（`player/ViewPointSkip.kt` + `PlayerActivity`，见 §12.2 A9） |
+| 5 | Baseline Profile 模块 | 启动 | 1~2 天 | 26.10.04 拍板：暂缓（§12.3 B6） |
+| 6 | 列表 `notifyDataSetChanged` → DiffUtil/ListAdapter | 流畅度 | 分期 | 全库 53 处；✅ 26.10.04 批次 3 已修 4 处真 bug（见 §12.3 B5） |
+| 7 | 图片统一按设备档位下采样 | 内存 | 1 天 | ✅ 26.10.04 批次 3 已实现（见 §12.3 B3） |
+| 8 | 崩溃页独立进程 | 稳定性 | 半天 | ✅ 26.10.04 批次 3 已实现（见 §12.3 B8） |
 | 9 | 弹幕点击菜单（点赞/复制/举报） | 功能 | 1~2 天 | PiliPlus 有，本项目暂无 |
 | 10 | 动态编辑/置顶/定时发布 | 功能 | 2~3 天 | 发布链路已有，改/顶缺接口封装 |
 
@@ -176,6 +176,8 @@
 
 ### 4.2 `PerformanceManager` 的"自适应"名不副实
 
+> **26.10.04 批次 3 已按 §12.3 B1/B2/B3 处理完毕，本节描述的是处理前的状态。** 结论：死参数实测 **8 个**（多一个 `isHighPerformanceMode()`）；`getImageQuality`/`getImageMaxWidth` 已接进 `GlideUtil`、`getPageSize` 已接进 3 处分页，其余 5 个已删除；首次检测已挪到 `CenterThreadPool`；顺带删掉了下面提到的 `LOGI_ENABLED` 短路绕法。
+
 `util/PerformanceManager.kt`（320 行）设计上是按硬件打分（RAM/CPU 核数/主频/SDK，阈值 65 高、35 中）分档调节运行时参数。实际情况：
 
 **已接线（真的在用）：**
@@ -301,15 +303,15 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | 优先级 | 事项 | 位置 | 做法 |
 |---|---|---|---|
 | P0 | 去掉 `x86` ABI | `app/build.gradle:140-146` | `include 'armeabi-v7a', 'arm64-v8a'`；`universalApk` 按发布需要保留 |
-| P0 | csrf 实时化 | 见 §5.1 清单 | 把 `HistoryApi.currentCsrf()` 提为公共工具（如 `util/CookieUtil.kt`），替换全部静态快照读取 |
-| P0 | `PerformanceManager` 死参数 | `util/PerformanceManager.kt:233-271` | 三选一：接线 / 删除 / 标注 `@Deprecated` + TODO；三个 `applyXxxPerfSettings` 要么实现要么删 |
-| P1 | Baseline Profile | 新增 `baselineprofile` 模块 | 用 `androidx.baselineprofile` 插件 + `BaselineProfileGenerator`；**注意 AGENTS.md 的 clean 构建约定** |
-| P1 | 首次硬件检测挪后台 | `util/PerformanceManager.kt:125` | `CenterThreadPool.run { currentPerfLevel = getPerformanceLevel() }`，先落默认中档 |
-| P1 | 图片按档位降 `w` | `util/GlideUtil.java:url()` | 接入 `getImageMaxWidth()`，低档 256、中档 320、高档 512 |
-| P1 | 列表增量刷新 | 53 处 | 优先改造 `RefreshListActivity` 派生页；用 `DiffUtil.ItemCallback` |
+| P0 | csrf 实时化 | 见 §5.1 清单 | ✅ 26.10.04 批次 2 已实现：收敛到 `util/NetWorkUtil.java:432 currentCsrf()`（+ `:443 pickCsrf()` 纯逻辑），并在落 Cookie 时回写快照 |
+| P0 | `PerformanceManager` 死参数 | `util/PerformanceManager.kt` | ✅ 26.10.04 批次 3 已实现：`getImageQuality`/`getImageMaxWidth` 接进 `GlideUtil`、`getPageSize` 接进 3 处分页，其余 5 个删除 |
+| P1 | Baseline Profile | 新增 `baselineprofile` 模块 | 26.10.04 拍板**暂缓**（§12.3 B6）；用 `androidx.baselineprofile` 插件 + `BaselineProfileGenerator`，注意 AGENTS.md 的 clean 构建约定 |
+| P1 | 首次硬件检测挪后台 | `util/PerformanceManager.kt` | ✅ 26.10.04 批次 3 已实现：无缓存时先落中档立即返回，检测丢 `CenterThreadPool` |
+| P1 | 图片按档位降 `w` | `util/GlideUtil.java:url()` | ✅ 26.10.04 批次 3 已实现，但**粒度按手表口径修正**：列表图低端 320w/50q、其余 512w/60q；大图低端 512w/60q、其余 1024w/80q（不是原述的 256/320/512） |
+| P1 | 列表增量刷新 | 53 处 | ✅ 26.10.04 批次 3 已修 4 处真 bug（3 个搜索页起点 `+1`、`UserSeriesActivity` 根本没加数据）；`DiffUtil.ItemCallback` 化仍未做 |
 | P2 | 打开 viewBinding | `app/build.gradle:114-118` | 分期迁移；先对新代码启用 |
-| P2 | OkHttp 连接池接线 | `NetWorkUtil` 构建 OkHttpClient 处 | 接 `getOkHttpConnectionPoolSize()` / `getOkHttpKeepAliveMinutes()` |
-| P2 | 崩溃页独立进程 | `AndroidManifest.xml` | `android:process=":error_activity"`（借鉴 Re-WearBili） |
+| P2 | OkHttp 连接池接线 | `NetWorkUtil` 构建 OkHttpClient 处 | 26.10.04 拍板**暂缓**（§12.3 B4）；相关两个 getter 已在批次 3 删除 |
+| P2 | 崩溃页独立进程 | `AndroidManifest.xml` | ✅ 26.10.04 批次 3 已实现：`:error_activity` 独立进程 + 错误进程最小初始化 + 删掉 300ms 硬等 |
 | P3 | ffmpeg 裁剪重编 | `ijkplayer-java` / so | 唯一能显著减体积的手段，成本高，需 NDK 工具链 |
 
 ### 7.2 功能新增（已剔除本项目已有项）
@@ -448,6 +450,8 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 ---
 
 ## 9. 建议的落地顺序
+
+> **本节已被 §12.7「已确认的 8 批落地顺序」取代**，保留仅作调研记录；与 §12 冲突一律以 §12 为准。下面这段里的「x86 ABI」「11 个 api 类」「接线 `getOkHttpConnectionPoolSize`」等表述均为 26.10.04 拍板前的原稿。
 
 **迭代 1（1~2 天，纯收益、低风险）**
 1. 去掉 `x86` ABI。
@@ -617,14 +621,14 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 
 | 编号 | 事项 | 结论 | 依据 / 备注 |
 |---|---|---|---|
-| B1 | `PerformanceManager` 7 个死参数裁决 | 想要实现 | §7.1；7 个 getter 零调用点 |
-| B2 | 首次硬件检测挪到后台 | 想要实现 | `util/PerformanceManager.kt:125` |
-| B3 | 图片按档位降 w | 想要实现 | `GlideUtil.url()` 接入 `getImageMaxWidth()` |
+| B1 | `PerformanceManager` 死参数裁决 | **已实现（26.10.04 批次 3）** | **勘误**：实测是 **8 个** getter 零调用点，不是 7 个。按「分类处理」裁决：`getImageQuality` / `getImageMaxWidth` 接进 `GlideUtil`（即 B3）、`getPageSize` 接进列表分页；其余 **5 个直接删除** = `isHighPerformanceMode` / `getOkHttpConnectionPoolSize` / `getOkHttpKeepAliveMinutes` / `isImageTransitionEnabled` / `isVideoPreloadEnabled`。分页只接了「纯追加列表」的 3 处（`api/RecommendApi.java:84` popular、`:106` precious、`api/SeriesApi.java:28`），其余硬编码 ps **故意不接**（各有语义：`FavoriteApi.java:106 ps=100` 收藏夹一次拉全、`MessageApi.java:380 page_size=35` 是 cursor 分页、`EmoteApi.java:94/120 ps=12` 等），已在 `getPageSize()` KDoc 写明 |
+| B2 | 首次硬件检测挪到后台 | **已实现（26.10.04 批次 3）** | `PerformanceManager.init()` 改为「双重检查 + 有缓存直接读；**无缓存先置中档立即返回**，`getHardwareScore()` 丢进 `CenterThreadPool`，算完写 `KEY_DEVICE_PERFORMANCE_LEVEL` 再 `applyPerformanceSettings()`」。顺带删掉「`if (Logu.LOGI_ENABLED)` 才打日志」的绕法——原写法为了省一次 `getHardwareScore()` 反而使冷启动必须同步求值 |
+| B3 | 图片按档位降 w | **已实现（26.10.04 批次 3）** | **口径修正**：台账原样接会让中/高端列表图从 512 变 1024（像素 ×4，手表纯浪费）。最终粒度 = **列表图 低端 320w/50q、其余 512w/60q**（中档与现状一致）；**大图 `url_hq()` 低端 512w/60q、其余 1024w/80q**。`GlideUtil` 的 `QUALITY_HIGH/LOW`、`MAX_W_HIGH/LOW` 四个常量已删除（避免两处真相），档位统一由 `PerformanceManager` 的 `@JvmStatic` 纯函数给出 |
 | B4 | OkHttp 连接池 / 保活接线 | 暂缓 | §5.3 |
-| B5 | 列表增量刷新 | 想要实现 | **范围限定：推荐 / 热门 / 搜索三个高频页先行**（全库 53 处 `notifyDataSetChanged`） |
+| B5 | 列表增量刷新 | **已实现（26.10.04 批次 3）** | **勘误**：`RecommendActivity.kt:85` 与 `PopularActivity.kt:96` **本来就是** `notifyItemRangeInserted`，台账那两条已达标。**真 bug 4 处**：`SearchVideoFragment.kt:55` / `SearchArticleFragment.kt:53` / `SearchLiveFragment.kt:64` 起点写成 `lastSize + 1`（这三个 adapter 用列表直接构造、**无头部**，`VideoCardAdapter.getItemCount() = videoCardList.size`）→ 改为 `lastSize`；`UserSeriesActivity.kt:50-56` 更严重——**从未把新数据加进 adapter 的列表**，只报 `notifyItemRangeInserted(oldSize, seasonList.size)`，必然撞 RecyclerView "Inconsistency detected"。顺带删掉各搜索页的 `Log.e("debug","加载下一页")`、`RecommendActivity` 的 3 处 `Log.e("debug")` 与失效的 `@SuppressLint("NotifyDataSetChanged")`。**判定坑（已踩）**：`SeriesInfoActivity.kt:86` / `ReplyFragment.kt:250` / `UserDynamicFragment.kt:89` 里的 `+1` **是对的**——对应 adapter 的 `getItemCount()` 都带一个头部占位（`data.size + 1`）；本项目 `notifyItemRangeInserted` 的 `+1` 大多是头部，**必须先看 getItemCount() 再判越界** |
 | B6 | Baseline Profile 模块 | 暂缓 | §7.1 |
 | B7 | 打开 viewBinding | 无计划 | 用户口径：**老代码不动**，新代码可自行采用 |
-| B8 | 崩溃页独立进程 | 想要实现 | `android:process=":error_activity"` |
+| B8 | 崩溃页独立进程 | **已实现（26.10.04 批次 3）** | `AndroidManifest.xml` 给 `.activity.CatchActivity` 加 `android:process=":error_activity"`；`BiliTerminal.onCreate()` 用 `/proc/self/cmdline` 判进程名（minSdk 24 用不了 API 28 的 `Application.getProcessName()`），错误进程只做最小初始化（SharedPreferences / 适配 Context / 日志开关）后 `return`，不碰性能检测、强制更新、`ErrorCatch.init`、未读轮询；`ErrorCatch.uncaughtException` 里等崩溃页起来的 `Thread.sleep(300)` 已删除 |
 | B9 | ffmpeg 裁剪重编 | 无计划 | 体积收益不足以抵消风险 |
 | B10 | `universalApk` 是否只 release 关 | 无计划 | 单 arm64 9.64MB vs 通用 22.63MB（保留现状） |
 
@@ -692,20 +696,20 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 
 - **D2 / D3 / D5 原被本文 §8 列为待办，核实后为「已实现」**，相应条目作废（D5 只剩历史点击一个 10 分钟小项，已裁为暂缓）。
 - `activity/player/PlayerActivity.kt` 实际 **3494 行**（原述 3090 行）。
-- 单元测试实际 **23 个测试类 / 184 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
+- 单元测试实际 **24 个测试类 / 194 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 - **本文 §10.4 与用户裁决存在三处冲突，以本台账为准**：① §10.4 把「关注主播开播提醒」列为"高价值低成本、值得做"，用户裁为**无计划**；② §10.4 把「漫画」列入"明确不值得做"，用户裁为**想要实现（F4）**；③ §10.4 把「收藏夹批量整理」「发布动态/评论/弹幕」列入"明确不值得做"，用户分别裁为**想要实现（C19/C20）**与**想要实现（C7/C9/C10）**——即"需要输入"不是本项目的否决理由（无键盘只影响输入方式，不影响功能取舍）。
 
 ### 12.7 量化汇总与建议顺序
 
 | 结论 | 项数 |
 |---|---|
-| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地，剩 34） |
+| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地，剩 29） |
 | 暂缓 | 10 |
 | 无计划 | 25 |
 | 已经实现（勘误） | 4（D2 / D3 / D5 主体，另 C3·C6·C8 的「已实现」子项） |
-| **26.10.04 批次 1/2 落地** | 6（A2 A3 A4 A5 A6 + A10）与 2 项勘误作废（A11 A12） |
+| **26.10.04 批次 1/2/3 落地** | 6（A2 A3 A4 A5 A6 + A10）+ 5（B1 B2 B3 B5 B8）；2 项勘误作废（A11 A12） |
 
-**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已实现，提交见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8 → ④ E4 E5 E6 → ⑤ C12 C13 C14 C16 → ⑥ C3 C4 C6b C7 C8 C9 C10 C27 → ⑦ C18 C19 C20 C21 → ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
+**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已实现，见 `docs/review/fix-progress.md` §十三）→ ④ E4 E5 E6 → ⑤ C12 C13 C14 C16 → ⑥ C3 C4 C6b C7 C8 C9 C10 C27 → ⑦ C18 C19 C20 C21 → ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
 
 ---
 

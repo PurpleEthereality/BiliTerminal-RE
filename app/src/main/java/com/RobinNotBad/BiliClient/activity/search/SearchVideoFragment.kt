@@ -1,7 +1,6 @@
 package com.RobinNotBad.BiliClient.activity.search
 
 import android.os.Bundle
-import android.util.Log
 import android.view.View
 
 import androidx.annotation.NonNull
@@ -40,19 +39,19 @@ class SearchVideoFragment : SearchFragment() {
 
     private fun continueLoading(page: Int) {
         CenterThreadPool.run {
-            Log.e("debug", "加载下一页")
             try {
                 val result = SearchApi.search(keyword, page)
                 if (result != null) {
                     if (page == 1) showEmptyView(false)
                     val list = ArrayList<VideoCard>()
                     SearchApi.getVideosFromSearchResult(result, list, page == 1)
-                    Log.d("debug-size", list.size.toString())
                     if (list.size == 0) bottom = true
                     else CenterThreadPool.runOnUiThread {
+                        // 26.10.04 批次 3（B5）：起点写成了 lastSize + 1，第 2 页起会多算 1 格，
+                        // RecyclerView 直接抛 IndexOutOfBoundsException。正确起点就是插入前的 size。
                         val lastSize = videoCardList.size
                         videoCardList.addAll(list)
-                        videoCardAdapter!!.notifyItemRangeInserted(lastSize + 1, videoCardList.size - lastSize)
+                        videoCardAdapter!!.notifyItemRangeInserted(lastSize, list.size)
                     }
                 } else bottom = true
             } catch (e: Exception) {
