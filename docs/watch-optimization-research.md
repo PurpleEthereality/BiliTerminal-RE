@@ -646,7 +646,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | C7 | 动态编辑 | **已实现**（26.10.04 批次 6，与 PiliPlus 对齐）：先是 `api/DynamicApi.java` 解析服务端三点菜单里的 `THREE_POINT_EDIT` → `Dynamic.canEdit`，列表/详情长按（或点「管理」）弹 `AlertDialog` 菜单才出现「编辑动态」；提交走 `POST https://api.bilibili.com/x/dynamic/feed/edit/dyn`（整条 query 过 `ConfInfoApi.signWBI`，`platform=web`/`x-bili-device-req-json`/`w_dyn_req.upload_id`/`w_dyn_req.meta`，body 带 `dyn_id_str` 与 `dyn_req`）；编辑页复用 `activity/dynamic/send/SendDynamicActivity.kt`（`edit_dyn_id` 区分模式，只改正文，投票与带图入口隐藏）。**已知取舍**：`Dynamic` 不存原始正文，预填只能用 `content.toString()`，WEB 链接会丢 URL、@ 与表情退化为纯文本，保存即按纯文本重发 |
 | C8 | 动态置顶 / 删除 | **已全部实现**（26.10.04 批次 6）：删除与置顶都在 C7 新做的「管理」菜单里（`adapter/dynamic/DynamicHolder.kt`：`confirmDelete` / `toggleTop`）。置顶走 `api/DynamicApi.java` 的 `setDynamicTop(dynId, top)` → `POST /x/dynamic/feed/space/set_top` 或 `/rm_top`（只有 `dyn_str` 一个正文参数 + query `csrf`，要求 Cookie 里 `buvid3` 非空），菜单按 `Dynamic.isTop` 在「置顶动态 / 取消置顶」间切换，成功后本地翻 `isTop` 并刷新那一条。删除仍是老的 `rm_dynamic`（新版 `/x/dynamic/feed/operate/remove` 未接） |
 | C9 | 动态定时发布 | **已实现**（26.10.04 批次 6）：`SendDynamicActivity` 新增「定时发布」入口（固定档：10/30/60/120 分钟后、明天 12:00、不定时），结果 extra `timerPubTime`（秒级）交回 `DynamicActivity.writeDynamicLauncher`，由 `DynamicApi.buildPublishOption(false, null, null, timerSeconds)` 拼 `option.timer_pub_time`（**int 时间戳**，旧注释写的 `yyyy-MM-dd HH:mm` 是错的）并随 `publishComplex`/`publishTextContent`/`publishImageContent` 下发；定时成功不做本地插入（动态还没发出去）。**待真机确认**服务端是否接受「离现在太近」的时间，否则退回草稿箱方案 |
-| C10 | 动态话题页 | 想要实现 |
+| C10 | 动态话题页 | **已实现（26.10.04 批次 6）**：新增 `api/TopicApi.java`（纯解析 `parseTopic`/`parseTopics` + 两个接口）、`model/Topic.java`、`adapter/dynamic/TopicAdapter.kt` 与 `TopicDynamicAdapter.kt`、`activity/dynamic/DynamicTopicActivity.kt`（一个 Activity 两种形态：**无 `topic_id` = 话题广场，带 `topic_id` = 该话题动态列表**，广场点一项就用同一个 Activity 再开一次，返回即回广场）。话题动态列表走 `GET /x/polymer/web-dynamic/v1/feed/topic`（`topic_id`/`offset`/`page_size=20`/`source=Web`/`features`，整条 query 过 `ConfInfoApi.signWBI`；`items[]` 是 `{dynamic_card_item, topic_type}` 的**套壳**，取内层交给 `DynamicApi.analyzeDynamic` 复用；`has_more=false` 即到底）；广场走 `GET app.bilibili.com/x/topic/web/dynamic/rcmd`（`page_size=9`）。入口是动态页顶部动作卡片新增的「话题广场」按钮，**没走新菜单项**——`util/MenuConfig.kt` 的 `loadEnabled` 对老用户已存的 `menu_enabled` 直接返回，新增 key 不会自动出现。**两条取舍**：① 自建广场是必须的，话题 id 无法从动态正文反推（`RICH_TEXT_NODE_TYPE_TOPIC` 只带搜索页跳转链接，不指向话题 id）；② 发布器不加话题选择 |
 | C11 | 屏蔽带货动态 | 暂缓（用户「先等等」） |
 | C12 | 私信发图 | **已实现（26.10.04 批次 5）**：`api/PrivateMsgApi.java` 的 `buildImageContent`/`sizeToKb`/`imageTypeOf` + `PrivateMsgActivity` 的选图入口（`ACTION_GET_CONTENT` → `ImageApi.prepareImage` → `upload_bfs` → `msg_type=2`）；**拍照不做**（用户拍板）；已知取舍：不处理 EXIF 旋转 |
 | C13 | 私信删除 / 置顶 / 折叠 | **删除 + 置顶/取消置顶已实现（26.10.04 批次 5）**：`api/PrivateMsgApi.java` 的 `removeSession`/`setSessionTop`（注意 `op_type` 0=置顶 1=取消置顶）+ `model/PrivateMsgSession.topTs`，会话项长按弹菜单；**折叠消息（`batch_rm_dustbin`）不做**（用户拍板） |
@@ -697,22 +697,23 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 
 - **D2 / D3 / D5 原被本文 §8 列为待办，核实后为「已实现」**，相应条目作废（D5 只剩历史点击一个 10 分钟小项，已裁为暂缓）。
 - `activity/player/PlayerActivity.kt` 实际 **3494 行**（原述 3090 行）。
-- 单元测试实际 **31 个测试类 / 262 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例、C12 同文件 +4 例、C14 新增 `util/MsgNotifierTest` 5 例、C16 新增 `api/BangumiApiTest` 6 例 + `util/BangumiUpdateCheckerTest` 8 例 + `MsgNotifierTest`/`SettingsKeysTest` 各 +1 例；批次 6 的 C3 在 `api/ReplyApiTest` +2 例、`model/ReplyParseActionTest` +3 例，C4 新增 `model/ReplySortTest` 6 例，C6b 在 `api/ReplyApiTest` +2 例，C7 新增 `api/DynamicApiTest` 6 例、C8 同文件 +5 例、C9 同文件 +5 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
+- 单元测试实际 **32 个测试类 / 266 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例、C12 同文件 +4 例、C14 新增 `util/MsgNotifierTest` 5 例、C16 新增 `api/BangumiApiTest` 6 例 + `util/BangumiUpdateCheckerTest` 8 例 + `MsgNotifierTest`/`SettingsKeysTest` 各 +1 例；批次 6 的 C3 在 `api/ReplyApiTest` +2 例、`model/ReplyParseActionTest` +3 例，C4 新增 `model/ReplySortTest` 6 例，C6b 在 `api/ReplyApiTest` +2 例，C7 新增 `api/DynamicApiTest` 6 例、C8 同文件 +5 例、C9 同文件 +5 例，C10 新增 `api/TopicApiTest` 4 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 - **本文 §10.4 与用户裁决存在三处冲突，以本台账为准**：① §10.4 把「关注主播开播提醒」列为"高价值低成本、值得做"，用户裁为**无计划**；② §10.4 把「漫画」列入"明确不值得做"，用户裁为**想要实现（F4）**；③ §10.4 把「收藏夹批量整理」「发布动态/评论/弹幕」列入"明确不值得做"，用户分别裁为**想要实现（C19/C20）**与**想要实现（C7/C9/C10）**——即"需要输入"不是本项目的否决理由（无键盘只影响输入方式，不影响功能取舍）。
 
 ### 12.7 量化汇总与建议顺序
 
 | 结论 | 项数 |
 |---|---|
-| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C12 / C13 / C14 / C16 已于批次 5 落地，剩 22） |
+| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C12 / C13 / C14 / C16 已于批次 5 落地、C3 / C4 / C6b / C7 / C8 / C9 / C10 已于批次 6 落地，剩 15） |
 | 暂缓 | 10 |
 | 无计划 | 25 |
 | 已经实现（勘误） | 4（D2 / D3 / D5 主体，另 C3·C6·C8 的「已实现」子项） |
 | **26.10.04 批次 1/2/3 落地** | 6（A2 A3 A4 A5 A6 + A10）+ 5（B1 B2 B3 B5 B8）；2 项勘误作废（A11 A12） |
 | **26.10.04 批次 4 落地** | 3（E4 E5 E6），另有 2 项勘误（E4 字面量 13 处而非 14 处；`applyBatch` 与 `beginBatchEdit` 同类一并删） |
 | **26.10.04 批次 5 落地** | 4（C13 会话删除 + 置顶/取消置顶；C12 私信发图；C14 新消息通知栏提醒；C16 追番更新提醒），本批 4 项全部完成 |
+| **26.10.04 批次 6 落地** | 7 已完成（C3 评论置顶/删除菜单；C4 楼中楼排序；C6b 带图评论发送闸门；C7 动态编辑；C8 动态置顶/取消；C9 动态定时发布；C10 话题广场 + 话题动态列表），本批剩 C27 笔记仅查看 |
 
-**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（**批次 5 全部完成**：C13 ✅ 见 §十五；C12 ✅ 见 §十六；C14 ✅ 见 §十七；C16 ✅ 见 §十八，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27 → ⑦ C18 C19 C20 C21 → ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
+**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（**批次 5 全部完成**：C13 ✅ 见 §十五；C12 ✅ 见 §十六；C14 ✅ 见 §十七；C16 ✅ 见 §十八，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27（**批次 6 进行中**：C3 ✅ 见 §十九；C4 ✅ 见 §二十；C6b ✅ 见 §二十一；C7 ✅ 见 §二十二；C8 ✅ 见 §二十三；C9 ✅ 见 §二十四；C10 ✅ 见 §二十五；剩 C27）→ ⑦ C18 C19 C20 C21 → ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
 
 ---
 

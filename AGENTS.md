@@ -26,7 +26,7 @@
 
 - 网络请求包在 `CenterThreadPool.run { }` 里。
 - 列表页继承 `RefreshMainActivity`（菜单入口页）或 `RefreshListActivity`（返回式）；加载完必须 `setRefreshing(false)`，否则翻页永久卡死。`onLoad(page)` 的 page 已自增。
-- 新增菜单页改三处：`MenuActivity.btnNames`、`MenuConfig.ALL_ITEMS`、`AndroidManifest.xml`。
+- 新增菜单页改三处：`MenuActivity.btnNames`、`MenuConfig.ALL_ITEMS`、`AndroidManifest.xml`。**但新菜单 key 对老用户不会自动出现**——`MenuConfig.loadEnabled` 对已存的 `menu_enabled` 直接返回，只能靠「菜单设置」手动开。想让所有人都能立刻用到入口，别加菜单项，挂到既有页面（如动态页动作卡片）。
 - 新增设置项改三处：`util/SettingsKeys.kt`、设置页 `SettingSection`、`activity/settings/SettingsIndex.kt`。
 - 外观设置（配色 / 卡片圆角 / 字体）走 `ui/appearance/` 三模块：**模块只放候选值与纯函数，写入一律走 `AppearanceManager`**（它负责递增外观版本号）；模块里别做几何计算，也别在热路径上缓存。细则见 `docs/architecture-map.md` §8.7。
 - 新增设置子页面有两种形态，**先想清楚用哪种**：

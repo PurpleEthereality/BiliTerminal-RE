@@ -36,4 +36,15 @@
         app:layout_constraintStart_toEndOf="@id/write_dynamic"
         app:layout_constraintTop_toBottomOf="@id/live" />
 
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/topic"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="话题广场"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/write_dynamic" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>

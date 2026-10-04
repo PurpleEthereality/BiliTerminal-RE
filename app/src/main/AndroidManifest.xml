@@ -237,6 +237,11 @@
             android:label="动态"
             android:screenOrientation="locked" />
         <activity
+            android:name=".activity.dynamic.DynamicTopicActivity"
+            android:exported="false"
+            android:label="话题"
+            android:screenOrientation="locked" />
+        <activity
             android:name=".activity.settings.SettingTerminalPlayerActivity"
             android:exported="false"
             android:label="内置播放器设置"

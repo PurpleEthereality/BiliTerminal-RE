@@ -12,6 +12,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.ListChooseActivity
 import com.RobinNotBad.BiliClient.activity.dynamic.DynamicActivity
+import com.RobinNotBad.BiliClient.activity.dynamic.DynamicTopicActivity
 import com.RobinNotBad.BiliClient.activity.dynamic.send.SendDynamicActivity
 import com.RobinNotBad.BiliClient.activity.live.FollowLiveActivity
 import com.RobinNotBad.BiliClient.api.DynamicApi
@@ -79,6 +80,9 @@ class DynamicAdapter(
                 val intent = Intent(context, FollowLiveActivity::class.java)
                 context.startActivity(intent)
             }
+            writeDynamic.topic.setOnClickListener {
+                context.startActivity(Intent(context, DynamicTopicActivity::class.java))
+            }
         } else if (holder is RecentUpListHolder) {
             val recentUpListHolder = holder
             if (recentUpListHolder.recentUpAdapter == null) {
@@ -140,6 +144,7 @@ class DynamicAdapter(
         val write_dynamic: MaterialButton = itemView.findViewById(R.id.write_dynamic)
         val type: MaterialButton = itemView.findViewById(R.id.type)
         val live: MaterialButton = itemView.findViewById(R.id.live)
+        val topic: MaterialButton = itemView.findViewById(R.id.topic)
     }
 
     class RecentUpListHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {

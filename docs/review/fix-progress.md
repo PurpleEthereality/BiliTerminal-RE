@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1998,6 +1998,64 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 - 调研报告 §12.4 的 C9 行改为「已实现」；`docs/architecture-map.md` 新增 §7.20「定时发布」。
 - 接口依据：`bilibili-API/docs/dynamic/publish.md`（`option` 字段）；旧注释的 `yyyy-MM-dd HH:mm` 来自本仓库自己写错，非快照内容。
 - 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（§二十一）→ C7（§二十二）→ C8（§二十三）→ C9（本条）→ C10 → C27。
+
+---
+
+## 二十五、26.10.04 批次 6（7/8）：话题广场与话题动态列表（C10）
+
+### 为什么做
+
+调研把「动态话题页」列为想要实现，但一直没做，原因是**话题 id 拿不到**：动态正文里的话题节点（`RICH_TEXT_NODE_TYPE_TOPIC`）只带一个搜索页跳转链接，反推不出 `topic_id`。所以 C10 不能只做「点正文里的话题进话题页」，必须**自建话题广场作为 id 来源**——这一点已由用户拍板（A 方案：话题下动态列表 + 自建话题广场入口，发布器不加话题选择）。
+
+### 改动表
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/Topic.java` | **新增**：`id`/`name`/`discuss`/`dynamics`/`view` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/TopicApi.java` | **新增**：纯解析 `parseTopic(JSONObject)` / `parseTopics(JSONArray)`，接口 `getRecommendedTopics()`（`x/topic/web/dynamic/rcmd`）与 `getTopicDynamicList(list, topicId, offset)`（`x/polymer/web-dynamic/v1/feed/topic`，query 过 WBI，解套壳后交给 `DynamicApi.analyzeDynamic`） |
+| `app/src/main/res/layout/cell_topic.xml` | **新增**：广场一项的卡片（`topic_name` + `topic_stats`） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/TopicAdapter.kt` | **新增**：广场列表 adapter，点击回调交回 `Topic` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/TopicDynamicAdapter.kt` | **新增**：话题动态列表 adapter（第 0 位头部 `#话题名`，复用 `DynamicHolder` + 管理菜单） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/dynamic/DynamicTopicActivity.kt` | **新增**：一个 Activity 两种形态（有无 `topic_id`），继承 `RefreshListActivity` |
+| `app/src/main/AndroidManifest.xml` | 注册 `.activity.dynamic.DynamicTopicActivity`（`exported="false"` + `screenOrientation="locked"`） |
+| `app/src/main/res/layout/cell_dynamic_action.xml` | 动态页动作卡片新增整行按钮 `topic`（「话题广场」） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/DynamicAdapter.kt` | `WriteDynamic` 持 `topic` 按钮并绑点击 → 打开话题广场 |
+
+### 取舍
+
+- **广场入口放在动态页动作卡片，不进 `MenuConfig`**：`util/MenuConfig.kt` 的 `loadEnabled` 对老用户已存的 `menu_enabled` 直接返回，新增菜单 key **不会自动出现**，只有新用户/清过设置的人能看到；塞进动态页动作卡片则人人可见。
+- **一个 Activity 两种形态**：广场与话题列表共用一个 `DynamicTopicActivity`，广场点一项就用同一个类再 `startActivity` 一次（带 `topic_id`/`topic_name`），返回即回广场。省掉一个 Activity、一套布局和一次注册。
+- **解析必须“解套壳”**：话题列表接口返回的 `items[]` 是 `{dynamic_card_item, topic_type}`，动态本体在内层；解析内层时复用已有的 `public static Dynamic analyzeDynamic(JSONObject)`，不重复那 200 行。
+- **保留第 0 位头部占位**：`TopicDynamicAdapter` 的 `getItemCount() = dynamicList.size + 1`。不只是为了显示 `#话题名`——`DynamicHolder.getManageListener` 列表版在置顶/编辑成功后按 `realPosition + 1` 反推要刷新的行，去掉头部会刷错行；翻页通知起点因此是 `lastSize + 1`。
+- **没有复用 `DynamicAdapter`/`UserDynamicAdapter`**：前者硬绑 `context as DynamicActivity`，后者要 `UserInfo` 且第 0 位是用户信息头；话题页两者都不满足，只能新写，但 item 布局与 `DynamicHolder` 直接复用。
+- **不做发布器的话题选择**（用户拍板）：带话题发布要先有 id，而正文里拿不到 id；做话题搜索/选择器属另一件事。
+
+### 单测
+
+`api/TopicApiTest.kt` **4 例**：`parseTopic_readsEveryField`、`parseTopic_toleratesMissingFieldsAndNull`、`parseTopics_skipsNullEntriesAndItemsWithoutId`、`parseTopics_toleratesNullOrEmptyArray`。网络请求部分不测（与既有 api 测试一致）。
+
+### 验证
+
+`.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → **BUILD SUCCESSFUL in 1m 4s**；`app/build/test-results/testDebugUnitTest` **32 个 XML / 266 个用例 / 0 失败 / 0 错误**（C9 后 262 例，本次 +4 例）。新增了 `cell_topic.xml`（资源文件集合变化），本次未触发 build cache 回放陈旧资源（若报 `Unresolved reference 'R.layout.cell_topic'` 就走 AGENTS.md 的 clean + `--no-build-cache` 两步）。乱码自检 `git diff | Select-String '鐐|璇|鍒|锛|銆|鎴|鏂|锟'` 计数 0。
+
+### 真机验证清单
+
+1. 动态页顶部动作卡片能看到「话题广场」按钮，点进去是推荐话题列表（9 条），每项显示 `N 动态 · M 浏览`。
+2. 广场下拉刷新不崩、不显示空视图（除非服务端返回空）。
+3. 点一个话题 → 进入该话题的动态列表，顶栏标题是话题名，列表第 0 项显示 `#话题名`。
+4. 话题列表滚动到底能继续翻页；`has_more=false` 后不再请求（不再触发 loading）。
+5. 话题里点一条动态能进详情；返回后列表位置正常。
+6. 话题里长按自己动态的「管理」按钮，菜单里「编辑/删除」可用；启用后该条正确刷新（验证头部占位 +1 的行号没算错）。
+7. 话题为空 / 接口失败时显示空视图，点重试能恢复。
+8. 未登录状态下广场与话题列表仍可浏览（这两个接口不要求登录）；若 401 类错误，走 `loadFail` 提示而不是白屏。
+9. 手表上（小屏）广场项与动态卡片排版不重叠，`topic_stats` 不折行。
+10. 从话题页返回后回到广场（不是回到动态页），再返回才回动态页。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 C10 行改为「已实现」；`docs/architecture-map.md` 新增 §7.21「话题」。
+- 接口依据：`bilibili-API/docs/dynamic/topic.md:3-54`（话题动态列表，`items[]` 套壳结构）与 `:5314-5356`（推荐话题 `topic_items[]`）。
+- 批次 6 进度：C3（§十九）→ C4（§二十）→ C6b（§二十一）→ C7（§二十二）→ C8（§二十三）→ C9（§二十四）→ C10（本条）→ C27（仅剩这一项）。
 
 
 
