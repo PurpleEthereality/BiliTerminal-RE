@@ -208,11 +208,12 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 ## 6. 网络层
 
-### 6.1 `NetWorkUtil`（`util/NetWorkUtil.java`，605 行，唯一出口）
+### 6.1 `NetWorkUtil`（`util/NetWorkUtil.java`，709 行，唯一出口）
 
 - **单例 OkHttpClient**，`followRedirects(false)` + 自定义拦截器手写重定向（`b23.tv` 短链走 `RedirectHandler` 回调）。
 - **DNS 强制 IPv4**（`Inet4Selector`，注释称 IPv6 请求有异常）。
-- **Cookie 管理**：内存缓存 `cachedCookies` + `webHeaders` 静态 `ArrayList`（**索引 1 存 Cookie 字符串**）。`putCookie`/`setCookies` 有 `synchronized`，但 `saveCookiesFromResponse`（拦截器里任意线程调用）**没有锁**——并发 Set-Cookie 可能互相覆盖。
+- **Cookie 管理**：内存缓存 `cachedCookies` + `webHeaders` 静态 `ArrayList`（**索引 1 存 Cookie 字符串**）。`putCookie`/`setCookies` 的 `synchronized` 与 `saveCookiesLocked()`（`saveCookiesFromResponse` 的加锁主体）共用同一把 `NetWorkUtil.class` 锁。
+- **csrf 唯一入口**（26.10.04 批次 2，台账 A1）：`currentCsrf()`（`:432`）＝ `pickCsrf(getCachedCookies(), 快照)`（`:443`，纯逻辑、有单测），优先取实时 Cookie 里的 `bili_jct`，取不到才退回 `SharedPreferencesUtil.csrf` 快照；`saveCookiesLocked()`（`:510` 附近）在落 Cookie 时**顺手回写**快照。**所有 POST 的 csrf 都必须调它，不要再直接读 `SharedPreferencesUtil.csrf`**——`bili_jct` 随 Cookie 刷新轮换，用旧快照会静默拿 `-111`（现象是「点赞/评论偶尔点了没反应」）。原来 14 个 `api/` 类里散布 41 处直接读快照的代码已全部收敛到这一处。
 - **风控重试**：`executeJsonWithRiskRetry` 对 `code == -352 / -412` 重试；`executeWithDoctypeRetry` 对返回 `<!doctype`（被风控拦成 HTML）的响应重试。重试次数/间隔读 SharedPreferences（`api_retry_max_times`、`api_retry_interval_seconds`）。
 - **隐私模式**：`getJsonPrivacy()` 用 `buildGuestCookieString()` 剔除 `SESSDATA/bili_jct/DedeUserID/sid` 等登录 Cookie。
 - **参数构造**：`FormData` 类，内部 `URLEncoder.encode`，默认**不**自动加 `access_key`（注释：web 接口带 access_key 会触发风控）。
@@ -285,7 +286,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 - **巨型类**：`activity/player/PlayerActivity.kt` 127 KB、`service/DownloadService.kt` 65 KB、`activity/video/ShortVideoPlayerActivity.kt` 35 KB。改播放/下载相关功能前先想清楚在哪个位置插入。
 - **Application 静态状态已收敛为一套**：26.10.02 起只有 `BiliTerminal.context` / `BiliTerminal.instance`（`BiliTerminal.kt` 伴生对象 `@JvmField`，`:43-44`），`BiliTerminalApp` 已整文件删除。**新代码一律用 `BiliTerminal`**。
-- **测试覆盖仍偏低**：`app/src/test/` 20 个文件（19 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **147 个用例**，对 364 个源文件（26.10.04 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`NetWorkUtilTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
+- **测试覆盖仍偏低**：`app/src/test/` 24 个文件（23 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **184 个用例**，对 364 个源文件（26.10.04 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`NetWorkUtilTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
 - **主题色表带缓存，失效点只有一处**：`ColorScheme.getCurrentTheme()`（26.09.11 起）缓存当前色表，**只由 `AppearanceManager.setTheme()` 经 `ColorScheme.invalidateCache()` 置空**。这是刻意的——36 个属性 getter 全走它，而列表滚动时一个 item 要调多次，此前每次都重读 SharedPreferences（热路径重复 IO）。**若将来给主题 key 增加第二个写入路径（比如直接 `SharedPreferencesUtil.putString(SettingsKeys.THEME, …)`），必须同步调用 `ColorScheme.invalidateCache()`，否则改主题后色表不跟着变且在 `onResume` 重建后依然错**。守卫测试：`ColorSchemeTest.themeCache_isInvalidatedOnEverySetTheme`、`colorGetters_doNotTouchSharedPreferencesAfterFirstRead`。
 - **主题体系有 3 个"裸 Activity"不参与**：`SplashActivity`、`GetIntentActivity` 不继承 `BaseActivity`（开屏/外链恒定 B站粉），`PlayerActivity` 自己 `setTheme` 但**不调 `applyWindowTheme`、也不参与 `onResume` 主题检测**。改主题相关行为时别以为全局都生效了。
 - **文案硬编码**：遗留页面标题/Toast 直接写中文字符串（Manifest 里 `android:label` 也是中文），只有设置页用 `desc_*` 资源。改文案按现有风格来，别顺手抽 `strings.xml`。
@@ -727,7 +728,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 5. **参数写错**：`PlayerApi.java:308` `.put("fnvar",0)`（应为 `fnver`）；`DanmakuApi.java:93` `segment_index` 从 1 开始（`:80` 的 javadoc 却说从 0，调用点 `:133`/`:144`）。**（`ReplyApi.likeReply` 硬编码 `type=1` 已于 26.09 修复：`ReplyApi.java:296-297` 改为显式 `REPLY_TYPE_VIDEO` 的兼容重载，真实类型由 `ReplyAdapter.kt:328/347` 传入。）**
 6. **硬编码**：弹幕 XML 地址重复 3 处（`PlayerApi.java:110,248,326`）；URL 散落在方法体内，无常量表。**（`AppInfoApi` 的 4 处明文 `http://` 已于 26.09.13 全部改为 `https://`，见 `AppInfoApi.java:143,162,184,207` 与 §6.4。）**
 7. **全局可变状态**：`SearchApi.java:24-25` 的 `static seid/search_keyword`（多入口搜索会串）、`ConfInfoApi.java:41-43` 的 WBI 缓存、`LoginApi.java:29-30`。
-8. **SharedPreferences key 混用**：字面量 `"csrf"`（`HistoryApi:32,84`、`WatchLaterApi:49,60`、`DanmakuApi:33`）与常量 `SharedPreferencesUtil.csrf`（`EmoteApi:50`）并存。
+8. **SharedPreferences key 混用（csrf 部分已于 26.10.04 批次 2 收敛）**：字面量 `"csrf"`（`HistoryApi:32,84`、`WatchLaterApi:49,60`、`DanmakuApi:33`）与常量 `SharedPreferencesUtil.csrf`（`EmoteApi:50`）曾并存，现已统一改调 `NetWorkUtil.currentCsrf()`（见 §6.1）。其余 key（`mid`、`player_show_viewpoints` 等）仍有字面量，收敛待 E4。
 
 ---
 

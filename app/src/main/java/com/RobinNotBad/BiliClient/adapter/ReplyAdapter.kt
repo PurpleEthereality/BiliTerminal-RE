@@ -78,6 +78,27 @@ class ReplyAdapter(
         this.listener = listener
     }
 
+    /**
+     * 把「点踩/取消点踩」的结果落到本地状态与视图上。
+     *
+     * 服务端点踩成功会同时消去该评论的点赞，反向亦然（见 bilibili-API/docs/comment/action.md）。
+     * 所以这里必须把 liked/disliked 两个互斥状态一起改，否则界面上会出现「已赞 + 已踩」并存的假象，
+     * 下次重新拉取列表时又突然变回去，用户会以为按钮坏了。
+     */
+    private fun applyDislikeResult(holder: ReplyHolder, reply: Reply, disliked: Boolean) {
+        if (disliked && reply.liked) {
+            // 本地把点赞撤掉时，计数和图标要同步回落到未赞状态
+            reply.liked = false
+            reply.likeCount = (reply.likeCount - 1).coerceAtLeast(0)
+            holder.likeCount.text = StringUtil.toWan(reply.likeCount.toLong())
+            holder.likeCount.setTextColor(Color.rgb(0xff, 0xff, 0xff))
+            holder.likeCount.setCompoundDrawablesWithIntrinsicBounds(likeDrawable0, null, null, null)
+        }
+        reply.disliked = disliked
+        if (disliked) holder.dislikeBtn.setColorFilter(ColorScheme.LIKE_COLOR)
+        else holder.dislikeBtn.clearColorFilter()
+    }
+
     @NonNull
     override fun onCreateViewHolder(@NonNull parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         if (viewType == 0) {
@@ -205,6 +226,14 @@ class ReplyAdapter(
                         likeDrawable0, null, null, null)
             }
 
+            // 已踩状态：icon_dislike 是单色矢量，用同一套高亮色即可，不必再配一个图标资源。
+            // 这一步原来完全没做，所以「我踩过的评论」重进页面后看起来像没操作过。
+            if (reply.disliked) {
+                replyHolder.dislikeBtn.setColorFilter(ColorScheme.LIKE_COLOR)
+            } else {
+                replyHolder.dislikeBtn.clearColorFilter()
+            }
+
             if (reply.childCount != 0 && !(realPosition == 0 && isDetail)) {
                 replyHolder.childReplyCard.visibility = View.VISIBLE
                 replyHolder.childCount.setTextColor(ColorScheme.PRIMARY)
@@ -325,10 +354,14 @@ class ReplyAdapter(
                         if (!reply.liked) {
                             try {
                                 // 点赞必须带上评论所属的评论区类型：动态/专栏的评论传 1 会被服务端拒绝
-                                if (ReplyApi.likeReply(oid, reply.rpid, replyType, true) == 0) {
+                                val likeCode = ReplyApi.likeReply(oid, reply.rpid, replyType, true)
+                                if (likeCode == 0) {
                                     reply.liked = true
+                                    // 点赞会同时消去点踩（服务端语义），本地状态必须一起改
+                                    reply.disliked = false
                                     (context as Activity).runOnUiThread {
                                         MsgUtil.showMsg("点赞成功")
+                                        replyHolder.dislikeBtn.clearColorFilter()
                                         replyHolder.likeCount.text = StringUtil.toWan((++reply.likeCount).toLong())
                                         replyHolder.likeCount.setTextColor(ColorScheme.LIKE_COLOR)
                                         replyHolder.likeCount.setCompoundDrawablesWithIntrinsicBounds(
@@ -336,7 +369,9 @@ class ReplyAdapter(
                                                 null)
                                     }
                                 } else
-                                    (context as Activity).runOnUiThread { MsgUtil.showMsg("点赞失败") }
+                                    (context as Activity).runOnUiThread {
+                                        MsgUtil.showMsg(ReplyApi.actionErrorMsg(likeCode).ifEmpty { "点赞失败" })
+                                    }
                             } catch (e: IOException) {
                                 e.printStackTrace()
                             } catch (e: JSONException) {
@@ -344,7 +379,8 @@ class ReplyAdapter(
                             }
                         } else {
                             try {
-                                if (ReplyApi.likeReply(oid, reply.rpid, replyType, false) == 0) {
+                                val unlikeCode = ReplyApi.likeReply(oid, reply.rpid, replyType, false)
+                                if (unlikeCode == 0) {
                                     reply.liked = false
                                     (context as Activity).runOnUiThread {
                                         MsgUtil.showMsg("取消成功")
@@ -355,7 +391,9 @@ class ReplyAdapter(
                                                 null)
                                     }
                                 } else
-                                    (context as Activity).runOnUiThread { MsgUtil.showMsg("取消失败") }
+                                    (context as Activity).runOnUiThread {
+                                        MsgUtil.showMsg(ReplyApi.actionErrorMsg(unlikeCode).ifEmpty { "取消失败" })
+                                    }
                             } catch (e: IOException) {
                                 e.printStackTrace()
                             } catch (e: JSONException) {
@@ -365,6 +403,44 @@ class ReplyAdapter(
                     } finally {
                         // 成功、失败、未登录、抛异常都必须摘掉标志，
                         // 否则这条评论会永久卡在"正在处理中"，再也点不动
+                        likingRpids.remove(reply.rpid)
+                    }
+                }
+            }
+
+            replyHolder.dislikeBtn.setOnClickListener {
+                // 复用点赞那把锁：赞和踩在服务端互斥，两个请求并发会互相抵消，
+                // 所以「这条评论有反馈请求在飞」时，赞和踩都要一起挡住
+                if (!likingRpids.add(reply.rpid)) {
+                    MsgUtil.showMsg("正在处理中")
+                    return@setOnClickListener
+                }
+                CenterThreadPool.run {
+                    try {
+                        if (SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0) == 0L) {
+                            (context as Activity).runOnUiThread { MsgUtil.showMsg("还没有登录喵~") }
+                            return@run
+                        }
+                        val target = !reply.disliked
+                        try {
+                            val hateCode = ReplyApi.dislikeReply(oid, reply.rpid, replyType, target)
+                            if (hateCode == 0) {
+                                (context as Activity).runOnUiThread {
+                                    applyDislikeResult(replyHolder, reply, target)
+                                    MsgUtil.showMsg(if (target) "已点踩" else "已取消")
+                                }
+                            } else {
+                                val msg = ReplyApi.actionErrorMsg(hateCode)
+                                (context as Activity).runOnUiThread {
+                                    MsgUtil.showMsg(msg.ifEmpty { "操作失败" })
+                                }
+                            }
+                        } catch (e: IOException) {
+                            e.printStackTrace()
+                        } catch (e: JSONException) {
+                            e.printStackTrace()
+                        }
+                    } finally {
                         likingRpids.remove(reply.rpid)
                     }
                 }

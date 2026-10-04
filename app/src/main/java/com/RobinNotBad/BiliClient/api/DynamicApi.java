@@ -61,7 +61,7 @@ public class DynamicApi {
                 .put("type", 4)
                 .put("rid", 0)
                 .put("content", content)
-                .put("csrf", SharedPreferencesUtil.getString("csrf", ""))
+                .put("csrf", NetWorkUtil.currentCsrf())
                 .toString(), NetWorkUtil.webHeaders));
         try {
             ResponseBody body = resp.body();
@@ -87,7 +87,7 @@ public class DynamicApi {
      * @return 发送成功返回的动态id，失败返回-1
      */
     public static long publishComplex(@NonNull JSONArray contents, JSONArray pics, JSONObject option, JSONObject topic, int scene, JSONObject attachCard, Map<String, Object> otherArgs) throws IOException, JSONException {
-        String url = "https://api.bilibili.com/x/dynamic/feed/create/dyn?csrf=" + SharedPreferencesUtil.getString("csrf", "");
+        String url = "https://api.bilibili.com/x/dynamic/feed/create/dyn?csrf=" + NetWorkUtil.currentCsrf();
         JSONObject reqBody = new JSONObject()
                 .put("content", new JSONObject().put("contents", contents))
                 .put("scene", scene)
@@ -337,7 +337,7 @@ public class DynamicApi {
         Response resp = Objects.requireNonNull(NetWorkUtil.post(url, new NetWorkUtil.FormData()
                 .put("dynamic_id", dyid)
                 .put("content", text)
-                .put("csrf_token", SharedPreferencesUtil.getString("csrf", ""))
+                .put("csrf_token", NetWorkUtil.currentCsrf())
                 .toString(), NetWorkUtil.webHeaders));
         try {
             ResponseBody body = resp.body();
@@ -444,7 +444,7 @@ public class DynamicApi {
         Response resp = Objects.requireNonNull(NetWorkUtil.post(url, new NetWorkUtil.FormData()
                 .put("dynamic_id", dyid)
                 .put("up", up ? 1 : 2)
-                .put("csrf_token", SharedPreferencesUtil.getString("csrf", ""))
+                .put("csrf_token", NetWorkUtil.currentCsrf())
                 .toString(), NetWorkUtil.webHeaders));
         try {
             ResponseBody responseBody = resp.body();
@@ -461,7 +461,7 @@ public class DynamicApi {
         String url = "https://api.vc.bilibili.com/dynamic_svr/v1/dynamic_svr/rm_dynamic";
         Response resp = Objects.requireNonNull(NetWorkUtil.post(url, new NetWorkUtil.FormData()
                 .put("dynamic_id", dyid)
-                .put("csrf_token", SharedPreferencesUtil.getString("csrf", ""))
+                .put("csrf_token", NetWorkUtil.currentCsrf())
                 .toString(), NetWorkUtil.webHeaders));
         try {
             ResponseBody body = resp.body();

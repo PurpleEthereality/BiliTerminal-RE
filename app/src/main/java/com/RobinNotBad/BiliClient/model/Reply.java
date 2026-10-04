@@ -1,6 +1,8 @@
 package com.RobinNotBad.BiliClient.model;
 
 import static com.RobinNotBad.BiliClient.api.ReplyApi.TOP_TIP;
+import static com.RobinNotBad.BiliClient.api.ReplyApi.isDislikedAction;
+import static com.RobinNotBad.BiliClient.api.ReplyApi.isLikedAction;
 
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
@@ -38,6 +40,8 @@ public class Reply implements Serializable {
     public boolean upLiked;
     public boolean upReplied;
     public boolean liked;
+    /** 是否已点踩（服务端 action==2）。与 {@link #liked} 互斥，由 {@link #parseAction(int)} 统一判定。 */
+    public boolean disliked;
     public int childCount;
     public boolean isDynamic;
     public ArrayList<Reply> childMsgList = new ArrayList<>();
@@ -92,7 +96,7 @@ public class Reply implements Serializable {
         if (isTop) StringUtil.setTopSpan(messageSpannable);
 
         this.likeCount = replyJson.getInt("like");
-        this.liked = replyJson.getInt("action") == 1;
+        parseAction(replyJson.optInt("action", 0));
 
         if (content.has("emote") && !content.isNull("emote")) {
             ArrayList<Emote> emoteList = new ArrayList<>();
@@ -166,5 +170,19 @@ public class Reply implements Serializable {
         }
 
         this.message = messageSpannable;
+    }
+
+    /**
+     * 纯逻辑：把服务端评论的 {@code action} 字段落到 {@link #liked}/{@link #disliked} 两个互斥状态上。
+     *
+     * <p>0=无操作、1=已点赞、2=已点踩（bilibili-API/docs/comment/readme.md）。
+     * 旧实现只判 {@code action == 1}，于是「我踩过的评论」重进页面后显示成「没操作过」，
+     * UI 上就会允许再踩一次（服务端返回「已经点过踩了」）。
+     *
+     * @param action 服务端返回的 action 字段，未知值按「无操作」处理
+     */
+    public void parseAction(int action) {
+        this.liked = isLikedAction(action);
+        this.disliked = isDislikedAction(action);
     }
 }

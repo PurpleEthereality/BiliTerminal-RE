@@ -292,7 +292,7 @@ public class FavoriteApi {
         long mid = SharedPreferencesUtil.getLong("mid", 0);
         String addFid = buildMediaId(fid, mid);
         String url = "https://api.bilibili.com/medialist/gateway/coll/resource/deal";
-        String per = "rid=" + aid + "&type=2&add_media_ids=" + addFid + "&del_media_ids=&csrf=" + SharedPreferencesUtil.getString("csrf", "");
+        String per = "rid=" + aid + "&type=2&add_media_ids=" + addFid + "&del_media_ids=&csrf=" + NetWorkUtil.currentCsrf();
 
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, per, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-添加收藏", result.toString());
@@ -304,7 +304,7 @@ public class FavoriteApi {
         long mid = SharedPreferencesUtil.getLong("mid", 0);
         String delFid = buildMediaId(fid, mid);    //fid后面要加上mid的后两位而不是定值
         String url = "https://api.bilibili.com/medialist/gateway/coll/resource/batch/del";
-        String per = "resources=" + aid + ":2&media_id=" + delFid + "&csrf=" + SharedPreferencesUtil.getString("csrf", "");
+        String per = "resources=" + aid + ":2&media_id=" + delFid + "&csrf=" + NetWorkUtil.currentCsrf();
 
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, per, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-删除收藏", result.toString());
@@ -317,7 +317,7 @@ public class FavoriteApi {
                 .put("title", title)
                 .put("intro", intro != null ? intro : "")
                 .put("privacy", privacy)
-                .put("csrf", SharedPreferencesUtil.getString("csrf", ""));
+                .put("csrf", NetWorkUtil.currentCsrf());
         String data = formData.toString();
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, data, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-新建收藏夹", result.toString());
@@ -331,7 +331,7 @@ public class FavoriteApi {
                 .put("title", title)
                 .put("intro", intro != null ? intro : "")
                 .put("privacy", privacy)
-                .put("csrf", SharedPreferencesUtil.getString("csrf", ""));
+                .put("csrf", NetWorkUtil.currentCsrf());
         String data = formData.toString();
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, data, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-修改收藏夹", result.toString());
@@ -342,7 +342,7 @@ public class FavoriteApi {
         String url = "https://api.bilibili.com/x/v3/fav/folder/del";
         NetWorkUtil.FormData formData = new NetWorkUtil.FormData()
                 .put("media_ids", String.valueOf(mediaId))
-                .put("csrf", SharedPreferencesUtil.getString("csrf", ""));
+                .put("csrf", NetWorkUtil.currentCsrf());
         String data = formData.toString();
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, data, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-删除收藏夹", result.toString());

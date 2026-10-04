@@ -418,6 +418,34 @@ public class NetWorkUtil {
         return "";
     }
 
+    /**
+     * 取当前有效的 csrf。
+     *
+     * 不能只读 {@code SharedPreferencesUtil.csrf}：bilibili 会在**任意响应**里通过 Set-Cookie 轮换
+     * bili_jct，而那个字段只在「登录成功 / 刷新 Cookie 成功」那一刻写入。两者一旦错位，所有
+     * POST 都会拿到 -111，而 GET 一切正常 —— 表现出来只是「点赞/评论/收藏偶尔点了没反应」，
+     * 且同一份代码在不同设备/登录时机表现不同，极难复现。
+     *
+     * 这里是全库唯一入口：优先从实时 Cookie 派生，取不到再退回快照。所有 POST 的 csrf 参数
+     * 都应调本方法，不要再直接读 {@code SharedPreferencesUtil.csrf}。
+     */
+    public static String currentCsrf() {
+        return pickCsrf(getCachedCookies(), SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, ""));
+    }
+
+    /**
+     * {@link #currentCsrf()} 的纯逻辑部分（单独抽出以便 JVM 单测）。
+     *
+     * @param cookieString 实时 Cookie 串，可为 null
+     * @param storedCsrf   登录/刷新时写入的快照，可为 null
+     * @return 实时 Cookie 里的 bili_jct；没有则退回快照；都没有则空串
+     */
+    public static String pickCsrf(String cookieString, String storedCsrf) {
+        String live = getInfoFromCookie("bili_jct", cookieString);
+        if (live != null && !live.isEmpty()) return live;
+        return storedCsrf == null ? "" : storedCsrf;
+    }
+
     private static void saveCookiesFromResponse(Response response) {
         List<String> newCookies = response.headers("Set-Cookie");
 
@@ -476,6 +504,14 @@ public class NetWorkUtil {
                 SharedPreferencesUtil.putString(SharedPreferencesUtil.cookies, result);
                 cachedCookies = result;
                 refreshHeaders();
+                // 这里也是 bili_jct 轮换的唯一落点：顺手同步 csrf 快照，否则所有读快照的 POST
+                // 都会静默拿 -111（详见 currentCsrf() 的说明）。只在值真的变了时才写，避免每次
+                // 响应都多一次 SharedPreferences 写入。
+                String liveJct = getInfoFromCookie("bili_jct", result);
+                if (!liveJct.isEmpty()
+                        && !liveJct.equals(SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, ""))) {
+                    SharedPreferencesUtil.putString(SharedPreferencesUtil.csrf, liveJct);
+                }
             }
         }
     }

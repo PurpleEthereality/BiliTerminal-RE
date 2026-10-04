@@ -279,7 +279,7 @@ public class OpusApi {
      * @return resultCode
      */
     public static int likeOpus(long dynId, boolean up) throws IOException {
-        String csrf = SharedPreferencesUtil.getString("csrf", "");
+        String csrf = NetWorkUtil.currentCsrf();
         String url = "https://api.bilibili.com/x/dynamic/feed/dyn/thumb?csrf=" + csrf;
         JSONObject payload = new JSONObject();
         try {

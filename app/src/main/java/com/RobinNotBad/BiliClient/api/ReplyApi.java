@@ -179,7 +179,7 @@ public class ReplyApi {
     public static Pair<Integer, Reply> sendReply(long oid, long root, long parent, String text, int type) throws IOException, JSONException {
         String url = "https://api.bilibili.com/x/v2/reply/add";
         String arg = "oid=" + oid + "&type=" + type + (root == 0 ? "" : ("&root=" + root + "&parent=" + parent))
-                + "&message=" + URLEncoder.encode(text, "UTF-8") + "&jsonp=jsonp&csrf=" + SharedPreferencesUtil.getString("csrf", "");
+                + "&message=" + URLEncoder.encode(text, "UTF-8") + "&jsonp=jsonp&csrf=" + NetWorkUtil.currentCsrf();
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, arg, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-发送评论", result.toString());
         JSONObject reply = null;
@@ -276,7 +276,7 @@ public class ReplyApi {
         String arg = "oid=" + oid + "&type=" + type + (root == 0 ? "" : ("&root=" + root + "&parent=" + parent))
                 + "&message=" + URLEncoder.encode(text, "UTF-8")
                 + (pictures.isEmpty() ? "" : ("&pictures=" + URLEncoder.encode(pictures, "UTF-8")))
-                + "&jsonp=jsonp&csrf=" + SharedPreferencesUtil.getString("csrf", "");
+                + "&jsonp=jsonp&csrf=" + NetWorkUtil.currentCsrf();
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, arg, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-发送评论", result.toString());
         JSONObject reply = null;
@@ -310,10 +310,100 @@ public class ReplyApi {
      */
     public static int likeReply(long oid, long root, int type, boolean action) throws IOException, JSONException {
         String url = "https://api.bilibili.com/x/v2/reply/action";
-        String arg = "oid=" + oid + "&type=" + type + "&rpid=" + root + "&action=" + (action ? "1" : "0") + "&jsonp=jsonp&csrf=" + SharedPreferencesUtil.getString("csrf", "");
+        String arg = "oid=" + oid + "&type=" + type + "&rpid=" + root + "&action=" + (action ? "1" : "0") + "&jsonp=jsonp&csrf=" + NetWorkUtil.currentCsrf();
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, arg, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-点赞评论", result.toString());
         return result.getInt("code");
+    }
+
+    /**
+     * 点踩/取消点踩评论（{@code POST https://api.bilibili.com/x/v2/reply/hate}）。
+     *
+     * <p>服务端语义：点踩成功会同时消去该评论的点赞，反向亦然（见 bilibili-API/docs/comment/action.md）。
+     * 因此调用方成功后必须把 {@code liked}/{@code disliked} 两个状态**同时**改成互斥值，
+     * 否则本地状态会和下一次拉取到的 {@code action} 字段对不上。
+     *
+     * @param oid    目标评论区 id
+     * @param rpid   目标评论 rpid
+     * @param type   评论区类型（与 {@link #likeReply(long, long, int, boolean)} 同口径）
+     * @param action true=点踩 false=取消点踩
+     * @return 返回码（0 成功，其余见 {@link #actionErrorMsg(int)}）
+     */
+    public static int dislikeReply(long oid, long rpid, int type, boolean action) throws IOException, JSONException {
+        String url = "https://api.bilibili.com/x/v2/reply/hate";
+        String reqBody = new NetWorkUtil.FormData()
+                .put("type", type)
+                .put("oid", oid)
+                .put("rpid", rpid)
+                .put("action", action ? 1 : 0)
+                .put("csrf", NetWorkUtil.currentCsrf())
+                .toString();
+        JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, reqBody, NetWorkUtil.webHeaders).body()).string());
+        return result.getInt("code");
+    }
+
+    /**
+     * 纯逻辑：评论的 action 字段 → 是否已点赞。
+     *
+     * <p>该字段含义见 bilibili-API/docs/comment/readme.md：0=无、1=已点赞、2=已点踩。
+     * 原实现写成 {@code action == 1}，把 2（已点踩）和 0（无操作）混为一谈，
+     * 于是「我踩过的评论」重进页面后显示成「没操作过」。
+     */
+    public static boolean isLikedAction(int action) {
+        return action == 1;
+    }
+
+    /** 纯逻辑：评论的 action 字段 → 是否已点踩。见 {@link #isLikedAction(int)}。 */
+    public static boolean isDislikedAction(int action) {
+        return action == 2;
+    }
+
+    /**
+     * 纯逻辑：点赞/点踩接口错误码 → 给用户看的中文提示。
+     *
+     * <p>这些接口失败时不会抛异常，只回一个 code，所以「点了没反应」到底是
+     * 没登录、csrf 失效还是被限流，只能靠这张表区分，否则用户只看到一句「失败」。
+     *
+     * @param code 接口返回码
+     * @return 中文提示；成功（0）返回空串，表示无需提示
+     */
+    public static String actionErrorMsg(int code) {
+        switch (code) {
+            case 0:
+                return "";
+            case -101:
+                return "还没有登录喵~";
+            case -102:
+                return "账号已被封停";
+            case -111:
+                return "登录凭证已失效，请重新登录";
+            case -400:
+                return "请求错误";
+            case -404:
+                return "评论不存在";
+            case -509:
+                return "操作过于频繁，请稍后再试";
+            case 12002:
+                return "评论区已关闭";
+            case 12004:
+                return "禁止对该评论点赞或点踩";
+            case 12006:
+                return "没有这条评论";
+            case 12009:
+                return "评论主体类型不合法";
+            case 12011:
+                return "不合法的赞或踩";
+            case 65004:
+                return "取消赞失败：没有点过赞";
+            case 65005:
+                return "取消踩失败：没有点过踩";
+            case 65006:
+                return "已经点过赞了";
+            case 65007:
+                return "已经点过踩了";
+            default:
+                return "操作失败（错误码 " + code + "）";
+        }
     }
 
     /**
@@ -330,7 +420,7 @@ public class ReplyApi {
                 .put("type", type)
                 .put("oid", oid)
                 .put("rpid", rpid)
-                .put("csrf", SharedPreferencesUtil.getString("csrf", ""))
+                .put("csrf", NetWorkUtil.currentCsrf())
                 .toString();
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, reqBody, NetWorkUtil.webHeaders).body()).string());
         Log.e("debug-点赞评论", result.toString());

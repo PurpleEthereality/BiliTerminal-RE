@@ -95,7 +95,7 @@ public class LoginApi {
     public static void requestSSOs() throws JSONException, IOException {
         String listUrl = "https://passport.bilibili.com/x/passport-login/web/sso/list";
         JSONObject listResult;
-        try (Response listResponse = NetWorkUtil.post(listUrl, new NetWorkUtil.FormData().put("csrf", SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, "")).toString())) {
+        try (Response listResponse = NetWorkUtil.post(listUrl, new NetWorkUtil.FormData().put("csrf", NetWorkUtil.currentCsrf()).toString())) {
             ResponseBody listBody = listResponse.body();
             if (listBody == null) return;
             listResult = new JSONObject(listBody.string());

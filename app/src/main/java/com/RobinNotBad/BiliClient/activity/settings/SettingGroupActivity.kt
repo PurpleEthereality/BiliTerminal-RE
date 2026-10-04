@@ -23,6 +23,7 @@ import com.RobinNotBad.BiliClient.util.Aria2Util
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.FileUtil
 import com.RobinNotBad.BiliClient.util.MsgUtil
+import com.RobinNotBad.BiliClient.util.NetWorkUtil
 import com.RobinNotBad.BiliClient.util.PerformanceManager
 import com.RobinNotBad.BiliClient.util.SettingsKeys
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
@@ -204,7 +205,8 @@ class SettingGroupActivity : RefreshListActivity() {
         val cookies = SharedPreferencesUtil.getString(SharedPreferencesUtil.cookies, "")
         val accessToken = SharedPreferencesUtil.getString(SharedPreferencesUtil.access_key, "")
         val mid = SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0)
-        val csrf = SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, "")
+        // 显示"当前有效"的 csrf，而不是登录时的快照，否则这里的自检结果会误导排查
+        val csrf = NetWorkUtil.currentCsrf()
         val refreshToken = SharedPreferencesUtil.getString(SharedPreferencesUtil.refresh_token, "")
 
         val sb = StringBuilder()

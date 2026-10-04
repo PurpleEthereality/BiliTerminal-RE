@@ -49,7 +49,7 @@ public class EmoteApi {
     public static List<EmotePackage> getInUsePackages(String business) throws JSONException, IOException {
         String url = "https://api.bilibili.com/bapis/main.community.interface.emote.EmoteService/InUsePackages" + new NetWorkUtil.FormData().setUrlParam(true)
                 .put("business", business)
-                .put("csrf", SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, ""));
+                .put("csrf", NetWorkUtil.currentCsrf());
         JSONObject emotePackages = NetWorkUtil.getJson(url, NetWorkUtil.webHeaders);
         if (emotePackages.getInt("code") != 0)
             throw new JSONException(emotePackages.getString("message"));
@@ -89,7 +89,7 @@ public class EmoteApi {
     public static List<EmotePackage> getMyPackages(String business, int type, int pn) throws JSONException, IOException {
         String url = "https://api.bilibili.com/bapis/main.community.interface.emote.EmoteService/MyPackages" + new NetWorkUtil.FormData().setUrlParam(true)
                 .put("business", business)
-                .put("csrf", SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, ""))
+                .put("csrf", NetWorkUtil.currentCsrf())
                 .put("pn", pn)
                 .put("ps", 12)
                 .put("type", type);
@@ -115,7 +115,7 @@ public class EmoteApi {
     public static List<EmotePackage> getAllPackages(String business, int pn, String search) throws JSONException, IOException {
         String url = "https://api.bilibili.com/bapis/main.community.interface.emote.EmoteService/AllPackages" + new NetWorkUtil.FormData().setUrlParam(true)
                 .put("business", business)
-                .put("csrf", SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, ""))
+                .put("csrf", NetWorkUtil.currentCsrf())
                 .put("pn", pn)
                 .put("ps", 12)
                 .put("search", search);
@@ -151,7 +151,7 @@ public class EmoteApi {
         }
         String url = "https://api.bilibili.com/bapis/main.community.interface.emote.EmoteService/AllPackages" + new NetWorkUtil.FormData().setUrlParam(true)
                 .put("business", business)
-                .put("csrf", SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, ""))
+                .put("csrf", NetWorkUtil.currentCsrf())
                 .put("ids", idsSb.toString())
                 .put("type", isAdd ? 0 : 1);
         JSONObject emotePackages = NetWorkUtil.getJson(url, NetWorkUtil.webHeaders);

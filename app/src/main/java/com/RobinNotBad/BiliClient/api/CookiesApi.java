@@ -125,7 +125,7 @@ public class CookiesApi {
                         .put("key_id", "ec02")
                         .put("hexsign", o)
                         .put("context[ts]", String.valueOf(ts))
-                        .put("csrf", SharedPreferencesUtil.getString("csrf", "")),
+                        .put("csrf", NetWorkUtil.currentCsrf()),
                 "", genWebHeaders()).body()).string());
         if (result.has("data") && !result.isNull("data")) {
             JSONObject data = result.getJSONObject("data");

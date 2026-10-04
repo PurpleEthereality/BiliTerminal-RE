@@ -130,7 +130,9 @@ public class AccountManager {
 
         String refreshToken = SharedPreferencesUtil.getString(SharedPreferencesUtil.refresh_token, "");
         String accessKey = SharedPreferencesUtil.getString(SharedPreferencesUtil.access_key, "");
-        String csrf = SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, "");
+        // 存"当前有效"的 csrf 而不是登录时的快照：账号切换时会把它写回（见 :205），
+        // bili_jct 若已轮换，存快照会导致切回来以后所有 POST 拿 -111
+        String csrf = NetWorkUtil.currentCsrf();
 
         String avatar = "";
         String name = "UID:" + mid;

@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -1190,3 +1190,63 @@ java.lang.NoSuchMethodError: No virtual method hasOnLongClickListeners()Z
 
 - 调研报告 §12.2（A 组台账，已按本批结果更新）。
 - 本报告 §五「P0 界面卡死 / 未接线」6 条已全部勾除。
+
+## 十二、26.10.04 批次 2：A1 csrf 实时化 + A10 评论点踩
+
+> 依据已拍板的 8 批顺序第 2 批（§十）。四个实现细节经 ask 逐条确认：**① csrf 取用收敛为唯一入口；② 落 Cookie 时回写快照；③ 点踩做完整实现（能踩/能取消/显示已踩/与点赞互斥）；④ 验证方式 = JVM 纯函数单测 + 本文末尾真机清单**。
+
+### A1 csrf 实时化（风控类静默失败的根因）
+
+**问题**：`bili_jct` 随 Cookie 刷新轮换，而全库 14 个 `api/` 类里散布 41 处直接读 `SharedPreferencesUtil.csrf` **快照**（登录那一刻写入），POST 会静默拿 `-111`/`-412`，表现成「点赞/收藏/评论偶尔点了没反应」，且与登录时机相关、极难复现。
+
+| 落点 | 改动 |
+|---|---|
+| `util/NetWorkUtil.java` | 新增 `currentCsrf()`（`:432`）与纯逻辑 `pickCsrf(cookieString, storedCsrf)`（`:443`）：优先取实时 Cookie 里的 `bili_jct`，取不到才退回快照。**这是全库唯一入口。** |
+| `util/NetWorkUtil.java` | `saveCookiesLocked()`（`:510` 附近）落 Cookie 时顺手回写快照（只在值真的变了时写）——治根，不再依赖"登录那一刻"。 |
+| **13 个 api 类共 41 处** | `ArticleApi` 4、`CookiesApi` 1、`DanmakuApi` 4、`DynamicApi` 5、`EmoteApi` 4、`FavoriteApi` 5、`LikeCoinFavApi` 4、`LoginApi` 1、`OpusApi` 1、`PrivateMsgApi` 2、`ReplyApi` 4、`VoteApi` 3、`WatchLaterApi` 2 —— 全部改为 `NetWorkUtil.currentCsrf()`。 |
+| `api/HistoryApi.java` | 删除私有 `currentCsrf()`（唯一实现的 KDoc 并入 `NetWorkUtil`），3 处调用点改调公共入口。 |
+| `util/AccountManager.java:135` | 改调 `NetWorkUtil.currentCsrf()`（账号切换会写回 Cookie，存快照会导致切回账号后 POST 全 -111）。 |
+| `activity/settings/SettingGroupActivity.kt:208` | 设置页显示的 csrf 改为「当前有效值」，并补 `import ...util.NetWorkUtil`。 |
+
+**勘误**：台账原写「11 个 api 类」，实际为 **14 个类 / 41 处 + 2 处非 api 调用点**。
+
+### A10 评论点踩（`dislikeBtn` 是死按钮）
+
+**问题**：`app/src/main/res/layout/cell_reply_list.xml:70-82` 的 `dislikeBtn` 在布局里可见且有约束，但全库只有 `adapter/ReplyAdapter.kt` 里一行 `findViewById`，从不绑定监听也不设状态 → 纯装饰。且 `model/Reply.java` 把服务端 `action` 字段写成 `liked = action == 1`，把「已踩(2)」与「无操作(0)」混为一谈。
+
+| 落点 | 改动 |
+|---|---|
+| `api/ReplyApi.java` | 新增 `dislikeReply(oid, rpid, type, action)`（`POST x/v2/reply/hate`，参数 `type/oid/rpid/action/csrf`）+ 纯逻辑 `isLikedAction(int)`/`isDislikedAction(int)`/`actionErrorMsg(int)`（0/-101/-102/-111/-400/-404/-509/12002/12004/12006/12009/12011/65004~65007 → 中文提示，未知码保留原始数字）。 |
+| `model/Reply.java` | 新增字段 `public boolean disliked`；解析改为 `parseAction(replyJson.optInt("action", 0))`，落到两个互斥状态上。 |
+| `adapter/ReplyAdapter.kt` | `dislikeBtn` 绑定点击（复用点赞那把「处理中」互斥锁，因为赞/踩在服务端互斥）；新增 `applyDislikeResult()` 把结果落到状态与视图（已踩高亮 `ColorScheme.LIKE_COLOR`，点踩成功时同步撤掉本地点赞状态与计数）；点赞成功分支同时清掉本地已踩状态；失败提示改用 `actionErrorMsg(code)`（原来统一显示"失败"）。 |
+
+### 验证
+
+- 新增单测：`api/ReplyApiTest`（9 例：action 判定互斥 + 错误码翻译不落兜底）、`model/ReplyParseActionTest`（4 例）、`util/NetWorkUtilTest` 补 6 例 `pickCsrf`（实时值优先 / 缺失退回 / null / 空值 / 双空 / 非首段命中）。
+- `:app:testDebugUnitTest`：**23 个 XML，184 用例，0 失败 0 错误**（批次 1 后为 21/165）。
+- `:app:assembleDebug`：BUILD SUCCESSFUL。未增删 `res/` 文件，单次 gradle 调用即可。
+- 编码事故记录：批量替换 `api/` 目录 csrf 时曾用 PowerShell `Get-Content -Raw` + `WriteAllText` 把中文写成乱码（按 ANSI 解码），已 `git checkout` 还原后用 UTF-8 显式读写重做；`git diff` 已确认无 `鐐|璇|鍒` 等乱码签名。**教训：本仓库批量改文本必须走 edit 工具或显式 UTF-8 读写。**
+
+### 真机验证清单（JVM 单测覆盖不到的部分，发布前逐条走一遍）
+
+**A1**：
+1. 登录后进入任意视频，点赞/收藏/投币/发评论各一次，均应成功。
+2. **关键**：在网页端或另一设备触发一次 Cookie 刷新（或等 `bili_ticket` 续期）后，回到本机立刻点赞 → 仍应成功（这是本次修复的核心场景；修复前此步会静默失败）。
+3. 退出登录后点赞 → 提示「还没有登录喵~」，而不是点了没反应。
+4. 设置页「账号」组的 csrf 与当前 Cookie 里的 `bili_jct` 一致。
+5. 频繁操作触发风控后，重试一次应能成功（`-352/-412` 重试链 + 实时 csrf 配合）。
+
+**A10**：
+1. 评论列表点「踩」→ 图标高亮 + 提示「已点踩」；再点一次 → 取消。
+2. 先点赞再点踩 → 点赞图标与计数**自动回落**（互斥生效），反之亦然。
+3. **杀进程重进**同一条评论 → 已踩状态仍然显示（`parseAction` 生效；修复前显示成未操作）。
+4. 连点两次「踩」→ 第二次提示「正在处理中」，不发出第二条请求。
+5. 断网/被限流时提示具体原因（如「操作过于频繁，请稍后再试」），不是笼统的"失败"。
+6. 在**动态/专栏**评论区（`type != 1`）点踩也应成功（原先点赞的 `type` 硬编码为 1 会被服务端拒绝，点踩这里传的是真实 `replyType`）。
+
+### 交叉引用
+
+- 调研报告 §12.2（A1/A10 台账已更新为「已实现（26.10.04 批次 2）」）、§12.6（单测数字更新为 23 类 / 184 例）、§12.7（8 批顺序）。
+- `docs/architecture-map.md` §6.1（新增「csrf 唯一入口」说明、行数 605→709）、§7.3（测试清单与数量）、§9 第 8 条（key 混用已收敛 csrf 部分）。
+- 下一批（批次 3）：B1 B2 B3 B5（限推荐/热门/搜索）B8。
+

@@ -35,8 +35,7 @@ public class HistoryApi {
     public static void reportHistory(long aid, long cid, long progress) throws IOException {
         if (SharedPreferencesUtil.getBoolean(SharedPreferencesUtil.PRIVACY_MODE, false)) return;
         String url = "https://api.bilibili.com/x/v2/history/report";
-        //csrf 必须取"当前"值：见 currentCsrf() 的说明，读本地快照会因 bili_jct 轮换而静默失败
-        String csrf = currentCsrf();
+        String csrf = NetWorkUtil.currentCsrf();
         if (csrf.isEmpty()) Logu.e("history-report", "csrf 为空，上报必被服务端拒绝(-111)，请确认已登录");
         String per = "aid=" + aid + "&cid=" + cid
                 + "&progress=" + (progress >= 0 ? progress : "")
@@ -71,7 +70,7 @@ public class HistoryApi {
             Logu.d("history-report", "跳过 0 进度上报 epid=" + epid);
             return;
         }
-        String csrf = currentCsrf();
+        String csrf = NetWorkUtil.currentCsrf();
         if (csrf.isEmpty()) Logu.e("history-report", "csrf 为空，上报必被服务端拒绝(-111)，请确认已登录");
 
         long nowSec = System.currentTimeMillis() / 1000;
@@ -103,23 +102,7 @@ public class HistoryApi {
                         + " sub_type=" + seasonType + " progress=" + progress);
     }
 
-    /**
-     * 取当前有效的 csrf。
-     *
-     * 不能只读 {@code SharedPreferencesUtil.csrf}：该字段只在"登录成功 / 刷新 Cookie 成功"那一刻写入，
-     * 而 bilibili 会在任意响应里通过 Set-Cookie 轮换 bili_jct（{@link NetWorkUtil} 会把新 Cookie 落进
-     * cookies 字段，却不同步 csrf）。两者一旦错位，所有 POST 都会拿到 -111 而 GET 一切正常——
-     * 表现出来就只是"观看记录上报静默不生效"，且同一份代码在不同设备/登录时机表现不同。
-     * 这里与 MessageApi / CookieRefreshApi 保持同一口径：优先从实时 Cookie 派生，取不到再退回旧字段。
-     */
-    private static String currentCsrf() {
-        String csrf = NetWorkUtil.getInfoFromCookie("bili_jct",
-                SharedPreferencesUtil.getString(SharedPreferencesUtil.cookies, ""));
-        if (csrf != null && !csrf.isEmpty()) return csrf;
-        return SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, "");
-    }
-
-    /** 与 {@link #currentCsrf()} 同理：mid 也可能因换设备/刷新 Cookie 而与实时 Cookie 不一致。 */
+    /** 与 {@link NetWorkUtil#currentCsrf()} 同理：mid 也可能因换设备/刷新 Cookie 而与实时 Cookie 不一致。 */
     private static long currentMid() {
         String midStr = NetWorkUtil.getInfoFromCookie("DedeUserID",
                 SharedPreferencesUtil.getString(SharedPreferencesUtil.cookies, ""));
@@ -230,7 +213,7 @@ public class HistoryApi {
 
     public static int deleteHistory(long aid, String bvid) throws IOException, JSONException {
         String url = "https://api.bilibili.com/x/v2/history/delete";
-        String per = "kid=archive_" + aid + "&csrf=" + currentCsrf();
+        String per = "kid=archive_" + aid + "&csrf=" + NetWorkUtil.currentCsrf();
         JSONObject result = new JSONObject(NetWorkUtil.post(url, per, NetWorkUtil.webHeaders).body().string());
         return result.getInt("code");
     }

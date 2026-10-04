@@ -600,7 +600,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 
 | 编号 | 事项 | 结论 | 依据 / 备注 |
 |---|---|---|---|
-| A1 | csrf 实时化铺开到 11 个 api 类 | 想要实现 | §5.1；目前只有 `api/HistoryApi.java` 改成实时派生，其余仍读启动快照 |
+| A1 | csrf 实时化铺开（原述「11 个 api 类」） | **已实现（26.10.04 批次 2）** | **勘误**：实际是 **14 个 api 类共 41 处**（ArticleApi 4 / CookiesApi 1 / DanmakuApi 4 / DynamicApi 5 / EmoteApi 4 / FavoriteApi 5 / LikeCoinFavApi 4 / LoginApi 1 / OpusApi 1 / PrivateMsgApi 2 / ReplyApi 4 / VoteApi 3 / WatchLaterApi 2），另有 `util/AccountManager.java:135`、`activity/settings/SettingGroupActivity.kt:208`。全部收敛到唯一入口 `util/NetWorkUtil.java:432 currentCsrf()`（纯逻辑抽成 `:443 pickCsrf()`），并在 `saveCookiesLocked()` 落 Cookie 时回写快照（治根，不再依赖「登录那一刻」）；`api/HistoryApi.java` 的私有实现已删除 |
 | A2 | `AnnouncementsActivity` 下拉刷新卡死 | **已实现（26.10.04 批次 1）** | catch 分支缺 `setRefreshing(false)`（§5.2）；顺带发现该页**从未接下拉刷新**（`RefreshListActivity.kt:53` 默认 disabled），已一并接上 `setOnRefreshListener` + `setOnEmptyRetry` |
 | A3 | `PopularActivity` 不复位 refreshing | **已实现（26.10.04 批次 1）** | catch 只 `MsgUtil.err(e)`（§5.2）；已同时复位 `refreshing` 与转圈，并清掉 3 处 `Log.e("debug", …)` |
 | A4 | `CollectionInfoActivity` 缺 onFailure + 死变量 | **已实现（26.10.04 批次 1）** | `:42-71` 只有 `onSuccess`；`:37-39` 的 `seasonId`/`mid` 是死变量（全库无 putExtra 方）；已补 `onFailure` + `collection` 空值防御（原来 `collection!!` 在无合集视频上会崩）+ `setOnEmptyRetry` |
@@ -609,7 +609,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | A7 | `SetupUIActivity` WebView 输入校验 | 暂缓 | `activity/settings/setup/SetupUIActivity.kt:79,86,92` |
 | A8 | `TutorialManagerActivity` 读写 `tutorial_ver_$tag` 污染新教程系统 | 暂缓 | 与 `tutorial/Tutorials.kt` 的已读记账互相覆盖 |
 | A9 | `TestActivity:105` 硬编码专栏 id | 无计划 | 仅调试页，收益极低 |
-| A10 | 评论点踩死视图 | 想要实现 | `adapter/ReplyAdapter.kt:495` |
+| A10 | 评论点踩死视图 | **已实现（26.10.04 批次 2）** | `app/src/main/res/layout/cell_reply_list.xml:70-82` 的 `dislikeBtn` 原来只有 `adapter/ReplyAdapter.kt` 里的 `findViewById`、从不绑定监听；已补点击（`ReplyApi.dislikeReply()` → `x/v2/reply/hate`）、已踩高亮、与点赞**互斥**（服务端点踩会同时消去点赞，本地两个状态一起改）、错误码翻译 `ReplyApi.actionErrorMsg()`。配套：`model/Reply.java` 补 `disliked` 字段 + `parseAction()`（原实现把「已踩(2)」与「无操作(0)」混为一谈，踩过的评论重进页面显示成没操作过） |
 | A11 | 禁右滑主题被 `setTheme` 覆盖失效 | **核实为已实现，原条作废** | 已由 issue #1 修复：`activity/base/BaseActivity.kt:78-82` 按「禁用返回键」改用 noSwipe 主题，`ui/appearance/ColorScheme.kt:527`/`:544` 提供 `themeResId(theme, noSwipe)` 与 7 套 `*.NoSwipe.AppCompat`；`activity/player/PlayerActivity.kt:414-419` 同样处理。提交 `25e6886`、`20e69c1` |
 | A12 | `AsyncLayoutInflaterX` 生命周期 | **核实为已实现，原条作废** | `activity/base/BaseActivity.kt:66-70` 持有 `pendingAsyncInflater`，`:353-358 onDestroy()` 调用 `cancel()`；`util/AsyncLayoutInflaterX.java:261 public void cancel()`、`:78-84` 已 cancel/已销毁时丢弃结果。提交 `d676a77` |
 
@@ -692,19 +692,20 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 
 - **D2 / D3 / D5 原被本文 §8 列为待办，核实后为「已实现」**，相应条目作废（D5 只剩历史点击一个 10 分钟小项，已裁为暂缓）。
 - `activity/player/PlayerActivity.kt` 实际 **3494 行**（原述 3090 行）。
-- 单元测试实际 **21 个测试类 / 165 个用例**（原述 16 类 / 112 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
+- 单元测试实际 **23 个测试类 / 184 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 - **本文 §10.4 与用户裁决存在三处冲突，以本台账为准**：① §10.4 把「关注主播开播提醒」列为"高价值低成本、值得做"，用户裁为**无计划**；② §10.4 把「漫画」列入"明确不值得做"，用户裁为**想要实现（F4）**；③ §10.4 把「收藏夹批量整理」「发布动态/评论/弹幕」列入"明确不值得做"，用户分别裁为**想要实现（C19/C20）**与**想要实现（C7/C9/C10）**——即"需要输入"不是本项目的否决理由（无键盘只影响输入方式，不影响功能取舍）。
 
 ### 12.7 量化汇总与建议顺序
 
 | 结论 | 项数 |
 |---|---|
-| 想要实现 | 36 |
+| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地，剩 34） |
 | 暂缓 | 10 |
 | 无计划 | 25 |
 | 已经实现（勘误） | 4（D2 / D3 / D5 主体，另 C3·C6·C8 的「已实现」子项） |
+| **26.10.04 批次 1/2 落地** | 6（A2 A3 A4 A5 A6 + A10）与 2 项勘误作废（A11 A12） |
 
-建议落地顺序（仅建议，未拍板）：**A 组缺陷（A1/A2/A3/A4/A5/A6/A10/A11/A12，多为 10 分钟~半天）→ 性能三项（B5 限三页 / B2 / B3）→ 私信与通知链（C13/C14/C16）→ 动态与评论增强（C3 置顶 / C8 置顶 / C4 / C7 / C9 / C10）→ 收藏与关注整理（C18~C21）→ 大件（F4 漫画）**；E 组（E2~E6）作为穿插收尾。
+**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已实现，提交见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8 → ④ E4 E5 E6 → ⑤ C12 C13 C14 C16 → ⑥ C3 C4 C6b C7 C8 C9 C10 C27 → ⑦ C18 C19 C20 C21 → ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
 
 ---
 

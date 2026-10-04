@@ -42,7 +42,7 @@ public class VoteApi {
                 .put("info[type]", 0)       // 0=文字投票
                 .put("info[choice_cnt]", 1) // 先做单选
                 .put("info[duration]", 259200) // 三天
-                .put("csrf", SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, ""));
+                .put("csrf", NetWorkUtil.currentCsrf());
         // 添加选项（n 从 0 开始）
         for (int i = 0; i < draft.options.size(); i++) {
             formData.put("info[options][" + i + "][desc]", draft.options.get(i));
@@ -73,7 +73,7 @@ public class VoteApi {
      * @return code（0 成功）
      */
     public static int doVote(long voteId, List<Integer> votes) throws IOException {
-        String csrf = SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, "");
+        String csrf = NetWorkUtil.currentCsrf();
         long voterUid = SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0);
         String url = "https://api.bilibili.com/x/vote/do_vote?csrf=" + csrf;
 
@@ -230,7 +230,7 @@ public class VoteApi {
      * @return code（0 成功）
      */
     public static int deleteVote(long voteId) {
-        String csrf = SharedPreferencesUtil.getString(SharedPreferencesUtil.csrf, "");
+        String csrf = NetWorkUtil.currentCsrf();
         long uid = SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0);
         String url = "https://api.bilibili.com/x/vote/delete?csrf=" + csrf;
         JSONObject jsonBody = new JSONObject();

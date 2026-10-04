@@ -46,7 +46,7 @@ public class WatchLaterApi {
 
     public static int delete(long aid) throws IOException, JSONException {
         String url = "https://api.bilibili.com/x/v2/history/toview/del";
-        String per = "aid=" + aid + "&csrf=" + SharedPreferencesUtil.getString("csrf", "");
+        String per = "aid=" + aid + "&csrf=" + NetWorkUtil.currentCsrf();
 
         Response response = NetWorkUtil.post(url, per, NetWorkUtil.webHeaders);
 
@@ -57,7 +57,7 @@ public class WatchLaterApi {
 
     public static int add(long aid) throws IOException, JSONException {
         String url = "https://api.bilibili.com/x/v2/history/toview/add";
-        String per = "aid=" + aid + "&csrf=" + SharedPreferencesUtil.getString("csrf", "");
+        String per = "aid=" + aid + "&csrf=" + NetWorkUtil.currentCsrf();
 
         Response response = NetWorkUtil.post(url, per, NetWorkUtil.webHeaders);
 
