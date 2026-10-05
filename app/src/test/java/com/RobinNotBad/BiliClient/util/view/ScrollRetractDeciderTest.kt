@@ -7,7 +7,7 @@ import org.junit.Test
  * 「滚动收回工具条」的触发判据。
  *
  * 这些断言守的是**用户能直接感觉到的错**：手一抖条就闪、滚回顶部条还是不回来、
- * 收着的时候往上滚却怎么也展不开。动画本身在单测里跑不了（View 全是 Android 桩），
+ * 列表中间一展开就把内容顶走和滑动手势打架。动画本身在单测里跑不了（View 全是 Android 桩），
  * 所以把判断抽成纯函数在这里钉死。
  */
 class ScrollRetractDeciderTest {
@@ -43,7 +43,11 @@ class ScrollRetractDeciderTest {
 
     @Test
     fun 向上滚超过阈值就展开() {
-        assertEquals(ScrollRetractDecider.EXPAND, action(-20, collapsed = true))
+        // 26.10.05 真机反馈后改了口径：列表**中间**向上滚不再展开。
+        // 展开会把条的高度从 0 动画回自然高度，条是列表的兄弟节点，高度一变列表内容就整体位移；
+        // 用户正按着屏幕拖动时手指底下的条目被推走，就是「工具条和滑动手势打架」。
+        // 展开现在只有「回到顶部」这一条路，见下面那组用例。
+        assertEquals(ScrollRetractDecider.NONE, action(-20, collapsed = true))
     }
 
     @Test
@@ -65,6 +69,15 @@ class ScrollRetractDeciderTest {
     }
 
     @Test
+    fun 回顶前一路向上滚都不展开回到顶部才展开() {
+        // 用户 bug 的回归用例：在列表中间往上滑，条要一动不动地收着；
+        // 一路滑到顶（canScrollUp=false）的那一次滚动才允许展开。
+        // 累加值在中间会变得很负，这不影响判断——到顶看的是 canScrollUp，不是累加了多少。
+        assertEquals(ScrollRetractDecider.NONE, action(-500, collapsed = true, canScrollUp = true))
+        assertEquals(ScrollRetractDecider.EXPAND, action(-500, collapsed = true, canScrollUp = false))
+    }
+
+    @Test
     fun 到顶时正在向下滚就不展开() {
         // 刚到顶用户又往下滑，那是在要求继续收起，不要跟他抢
         assertEquals(ScrollRetractDecider.NONE, action(5, collapsed = true, canScrollUp = false))
@@ -73,5 +86,11 @@ class ScrollRetractDeciderTest {
     @Test
     fun 到顶但本来就没收时不动作() {
         assertEquals(ScrollRetractDecider.NONE, action(0, collapsed = false, canScrollUp = false))
+    }
+
+    @Test
+    fun 没收回时向上滚也不动作() {
+        // 没收回就没有「展开」这回事，返回 EXPAND 只会让调用方白白重置累加值
+        assertEquals(ScrollRetractDecider.NONE, action(-100, collapsed = false))
     }
 }

@@ -5,6 +5,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.SimpleItemAnimator
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.listener.OnItemLongClickListener
 import com.RobinNotBad.BiliClient.model.VideoCard
@@ -30,6 +31,27 @@ class VideoCardAdapter(
 
     init {
         setHasStableIds(true)
+    }
+
+    /**
+     * 关掉「同一项内容变化」的动画。
+     *
+     * <h3>为什么必须关</h3>
+     * 多选态的暗/亮是靠 [VideoCardHolder.applySelection] 直接写 `itemView.alpha` 实现的
+     * （选中 1f、未选中 0.45f），而勾选/取消勾选走的是 `notifyItemChanged(position)`。
+     * `RecyclerView` 默认挂 `DefaultItemAnimator`，它处理 `notifyItemChanged` 的方式是
+     * **另建一个 ViewHolder 做交叉淡入**（`canReuseUpdatedViewHolder` 在
+     * `supportsChangeAnimations = true` 时返回 false），并在动画收尾把新布局的 alpha 设成 1。
+     * 于是：勾选（目标本来就是 1f）看不出问题，**取消勾选（目标是 0.45f）会被静默改回 1f**——
+     * 表现出来正是真机上反馈的「取消选择后条目不会再次暗下去」。
+     *
+     * `supportsChangeAnimations = false` 让 `RecyclerView` 复用原 ViewHolder、不做交叉淡入，
+     * `applySelection` 写下的 alpha 才能留到下一帧。只影响「内容变化」这一类动画，
+     * 增删/移动动画不受影响。
+     */
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        super.onAttachedToRecyclerView(recyclerView)
+        (recyclerView.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
     }
 
     fun setOnLongClickListener(listener: OnItemLongClickListener) {

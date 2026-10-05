@@ -31,18 +31,33 @@ object ScrollRetractDecider {
     /**
      * 本次滚动该做什么。
      *
+     * <h3>为什么展开只有「回到顶部」这一条路</h3>
+     * 展开条 = 把条的高度从 0 动画回自然高度。这些条是列表的**兄弟节点**、位于列表上方，
+     * 高度一变，列表可见区域跟着变、**列表内容会整体位移**。如果在列表中间就展开，用户正按着
+     * 屏幕拖动时，手指底下的条目会被凭空推走——表现出来就是「按钮让下面列表位移，和滑动手势
+     * 冲突」。这个问题在真机上被明确报告过（26.10.05 第三批反馈）。
+     * 所以收回可以随时发生（内容朝手指方向让位，方向一致不打架），**展开一律等到
+     * `!canScrollUp`**——列表已经停在顶部、不会再产生位移冲突的时候。
+     *
      * @param accumulated 到目前为止**同向**累计的滚动量，向上滚为负、向下滚为正
      * @param collapsed   工具条当前是否已经收回
      * @param canScrollUp 列表还能不能往上滚；`false` 表示已经停在顶部
      */
     @JvmStatic
     fun action(accumulated: Int, collapsed: Boolean, canScrollUp: Boolean): Int {
-        // 已经在顶部还收着，就必须展开：此时用户往回滚是滚不动的（列表没有更上面的内容），
-        // 列表自身不可能再产生一个负的 dy 把它带回来，只能在这里兜住。
-        // `accumulated <= 0` 是给「刚到顶就立刻往下滚」留的出口——那是在要求继续收回。
-        if (collapsed && !canScrollUp && accumulated <= 0) return EXPAND
+        if (collapsed) {
+            // 已经在顶部还收着，就必须展开：此时用户往回滚是滚不动的（列表没有更上面的内容），
+            // 列表自身不可能再产生一个负的 dy 把它带回来，只能在这里兜住。
+            // `accumulated <= 0` 是给「刚到顶就立刻往下滚」留的出口——那是在要求继续收回。
+            if (!canScrollUp && accumulated <= 0) return EXPAND
+            // 收着的时候继续向下滚仍然返回 COLLAPSE（即使已经收着），唯一作用是让调用方清零累加值。
+            // 若在这里返回 NONE，累加值会一直涨；等用户往上滚时先要抵消掉这些历史正值，
+            // 阈值早就被吃掉了，表现为「条收起来以后怎么滚都不回来」。
+            if (accumulated > THRESHOLD) return COLLAPSE
+            return NONE
+        }
+        // 没收起时只会被要求收回；向上滚不做事（展开只有回到顶部那一条路，见上文）。
         if (accumulated > THRESHOLD) return COLLAPSE
-        if (accumulated < -THRESHOLD) return EXPAND
         return NONE
     }
 }

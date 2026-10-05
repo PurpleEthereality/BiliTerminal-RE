@@ -50,6 +50,20 @@ class VideoCardHolder(@androidx.annotation.NonNull itemView: View) : RecyclerVie
     private var longPressRunnable: Runnable? = null
     private var customClickCallback: (() -> Unit)? = null
 
+    /**
+     * 长按已经处理过这次触摸，抬手时不要再当成点击。
+     *
+     * <h3>为什么需要它</h3>
+     * 下面那个 `setOnTouchListener` 对 `ACTION_DOWN` 返回 `false`——不吞事件，是为了让条目
+     * 自己继续处理滚动/点击。代价是 `View.onTouchEvent` 照样会在 `ACTION_UP` 上补发一次
+     * `performClick()`。于是同一次长按会走两条路：「200ms 后的长按回调」和「抬手时的点击」。
+     *
+     * 在多选态里这两条路都是 `toggleSelected(position)`：长按先把它选上，抬手立刻又取消，
+     * 净效果是**长按选不中任何条目**。不在多选态时则是「长按弹了菜单，抬手又跳进了视频详情页」。
+     * 所以长按回调一旦真的执行，就把这个标记立起来，让紧随其后的那次点击自己吞掉。
+     */
+    private var suppressClickAfterLongPress = false
+
     fun bindClick(videoCard: VideoCard, context: Context, position: Int, longClickListener: View.OnLongClickListener?) {
         this.boundVideoCard = videoCard
         this.boundContext = context
@@ -57,9 +71,15 @@ class VideoCardHolder(@androidx.annotation.NonNull itemView: View) : RecyclerVie
         // 先清除旧的触摸检测
         longPressRunnable?.let { itemView.removeCallbacks(it) }
         customClickCallback = null
+        // 复用同一个 ViewHolder 绑定新条目时，上一次遗留的标记必须清零
+        suppressClickAfterLongPress = false
 
         // 设置点击事件
         itemView.setOnClickListener {
+            if (suppressClickAfterLongPress) {
+                suppressClickAfterLongPress = false
+                return@setOnClickListener
+            }
             if (customClickCallback != null) {
                 customClickCallback!!.invoke()
             } else if (boundVideoCard != null && boundContext != null) {
@@ -100,7 +120,11 @@ class VideoCardHolder(@androidx.annotation.NonNull itemView: View) : RecyclerVie
             itemView.setOnTouchListener { v, event ->
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
-                        longPressRunnable = Runnable { longClickListener.onLongClick(v) }
+                        longPressRunnable = Runnable {
+                            // 标记必须在回调之前立起来：回调本身可能同步弹出菜单/切换选中态
+                            suppressClickAfterLongPress = true
+                            longClickListener.onLongClick(v)
+                        }
                         v.postDelayed(longPressRunnable, 200)
                         false
                     }
@@ -130,14 +154,16 @@ class VideoCardHolder(@androidx.annotation.NonNull itemView: View) : RecyclerVie
      * （见 `docs/architecture-map.md` 第 7 节），为多选再引入一个 id 不值得。
      */
     fun applySelection(selectionMode: Boolean, selected: Boolean) {
+        // 前缀先无条件剥掉：退出多选后标题上的「✓ 」不能留在列表里，
+        // 而一旦留下，下次进入多选时 `startsWith` 只能剥掉一层、越叠越多。
+        if (title.text?.startsWith(PREFIX_SELECTED) == true || title.text?.startsWith(PREFIX_UNSELECTED) == true) {
+            title.text = title.text.subSequence(2, title.text.length)
+        }
         if (!selectionMode) {
             itemView.alpha = 1f
             return
         }
         itemView.alpha = if (selected) 1f else 0.45f
-        if (title.text?.startsWith(PREFIX_SELECTED) == true || title.text?.startsWith(PREFIX_UNSELECTED) == true) {
-            title.text = title.text.subSequence(2, title.text.length)
-        }
         title.text = android.text.TextUtils.concat(if (selected) PREFIX_SELECTED else PREFIX_UNSELECTED, title.text)
     }
 

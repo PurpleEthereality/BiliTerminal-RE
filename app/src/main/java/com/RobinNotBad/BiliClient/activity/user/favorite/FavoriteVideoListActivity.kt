@@ -125,10 +125,18 @@ class FavoriteVideoListActivity : RefreshListActivity() {
         sortPubtime?.setTextColor(if (sortOrder == FavoriteApi.ORDER_PUBTIME) ColorScheme.PRIMARY else unselectedColor)
     }
 
-    /** 多选条只在能写（自己的收藏夹 + 有 media_id）时才出现 */
+    /**
+     * 多选条：只在「能写」且**已经进入多选**时才出现。
+     *
+     * 它不进 [setupAutoHideBars]，可见性完全由多选态决定——这一点很关键：
+     * 自动收回只认「可见且自然高度 > 0」的条，如果这条平时也常亮，滚动时会把它一起收走，
+     * 多选时就点不到「删除」了。
+     *
+     * 入口改为「长按条目 → 菜单里选『多选』」（见 [showManageMenu]）：常亮的一整行
+     * 只为了一个偶尔才用的功能占掉手表上宝贵的竖向空间，不划算。
+     */
     private fun setupManageBar() {
         if (!writable) return
-        findViewById<View>(R.id.manageBar).visibility = View.VISIBLE
         manageToggle = findViewById(R.id.manageToggle)
         manageDelete = findViewById(R.id.manageDelete)
         if (unselectedColor == 0) unselectedColor = manageToggle?.currentTextColor ?: unselectedColor
@@ -166,6 +174,7 @@ class FavoriteVideoListActivity : RefreshListActivity() {
     }
 
     private fun updateManageBar() {
+        findViewById<View>(R.id.manageBar).visibility = if (selectionMode) View.VISIBLE else View.GONE
         manageToggle?.text = if (selectionMode) "退出多选" else "多选"
         manageToggle?.setTextColor(if (selectionMode) ColorScheme.PRIMARY else unselectedColor)
         manageDelete?.text = if (selectedAids.isEmpty()) "删除" else "删除(${selectedAids.size})"
@@ -312,13 +321,17 @@ class FavoriteVideoListActivity : RefreshListActivity() {
         val actions = ArrayList<Pair<String, () -> Unit>>()
         actions.add("复制到…" to { showTargetFolderPicker(card, false) })
         actions.add("移动到…" to { showTargetFolderPicker(card, true) })
+        // 多选的入口。原来靠列表顶上一整行常亮的「多选」按钮，用户反馈那一行平时白占地方，
+        // 所以把入口收进长按菜单、并把那一行改成只在多选态出现（见 setupManageBar）。
+        if (writable) actions.add("多选" to { enterSelectionMode() })
         actions.add("取消收藏" to { confirmRemoveFavorite(card) })
-        // 「取消收藏」是破坏性操作（索引 2），用危险色标出来
+        // 「取消收藏」是破坏性操作，用危险色标出来。
+        // 用 indexOfFirst 而不是写死下标：上面每加一项都要记得改下标，早晚会标错行。
         TerminalDialog.menu(
             context = this,
             title = card.title,
             items = actions.map { it.first },
-            danger = setOf(2)
+            danger = setOf(actions.indexOfFirst { it.first == "取消收藏" })
         ) { which -> actions[which].second() }.show()
     }
 
