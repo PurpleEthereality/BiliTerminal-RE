@@ -63,4 +63,20 @@
     <dimen name="card_round_large">12dp</dimen>
     <dimen name="card_stroke">0dp</dimen>
     <dimen name="round_small">4dp</dimen>
+
+    <!-- =========================================================== -->
+    <!-- 弹窗 token（全部弹窗共用，走 themes.xml 的 alertDialogTheme）   -->
+    <!-- =========================================================== -->
+    <!-- 圆角：**不要**在弹窗样式里写 ?attr/ 间接层，该间接层在真机上解析失败过
+         （见 docs/architecture-map.md §8.7.1）；直接沿用卡片的 card_round。 -->
+    <dimen name="dialog_item_padding_h">15dp</dimen>
+    <dimen name="dialog_item_padding_v">11dp</dimen>
+    <!-- 条目最小高度：手表上的触控下限（Material 建议 48dp，此处取紧凑档） -->
+    <dimen name="dialog_item_min_height">44dp</dimen>
+    <!-- 标题区内边距：上 / 左右 / 下 -->
+    <dimen name="dialog_title_padding_top">13dp</dimen>
+    <dimen name="dialog_title_padding_h">15dp</dimen>
+    <dimen name="dialog_title_padding_bottom">9dp</dimen>
+    <!-- 引导符列宽（终端列表方案的 › / ▸） -->
+    <dimen name="dialog_glyph_width">11dp</dimen>
 </resources>

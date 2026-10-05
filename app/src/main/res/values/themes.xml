@@ -14,6 +14,7 @@
         <item name="colorSecondary">@color/pink_light</item>
         <item name="colorSurface">@color/surface_dark</item>
         <item name="android:colorBackground">@color/background_dark</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.BiliClient.Dialog</item>
         <item name="android:windowIsTranslucent">false</item>
         <item name="android:windowSwipeToDismiss" tools:ignore="NewApi">true</item>
 
@@ -103,6 +104,7 @@
         <item name="colorSecondary">@color/zhihu_light</item>
         <item name="colorSurface">@color/zhihu_surface_dark</item>
         <item name="android:colorBackground">@color/zhihu_background_dark</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.ZhihuBlue.Dialog</item>
         <item name="android:windowIsTranslucent">false</item>
         <item name="android:windowSwipeToDismiss" tools:ignore="NewApi">true</item>
 
@@ -218,6 +220,7 @@
         <item name="colorSecondary">@color/iqiyi_light</item>
         <item name="colorSurface">@color/iqiyi_surface_dark</item>
         <item name="android:colorBackground">@color/iqiyi_background_dark</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.IQIYIGreen.Dialog</item>
         <item name="android:windowIsTranslucent">false</item>
         <item name="android:windowSwipeToDismiss" tools:ignore="NewApi">true</item>
 
@@ -333,6 +336,7 @@
         <item name="colorSecondary">@color/purple_fantasy_light</item>
         <item name="colorSurface">@color/purple_fantasy_surface_dark</item>
         <item name="android:colorBackground">@color/purple_fantasy_background_dark</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.PurpleFantasy.Dialog</item>
         <item name="android:windowIsTranslucent">false</item>
         <item name="android:windowSwipeToDismiss" tools:ignore="NewApi">true</item>
 
@@ -448,6 +452,7 @@
         <item name="colorSecondary">@color/rainbow_light</item>
         <item name="colorSurface">@color/rainbow_surface_dark</item>
         <item name="android:colorBackground">@color/rainbow_background_dark</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.RainbowFantasy.Dialog</item>
         <item name="android:windowIsTranslucent">false</item>
         <item name="android:windowSwipeToDismiss" tools:ignore="NewApi">true</item>
 
@@ -563,6 +568,7 @@
         <item name="colorSecondary">@color/classic_gray_light</item>
         <item name="colorSurface">@color/classic_gray_surface_dark</item>
         <item name="android:colorBackground">@color/classic_gray_background_dark</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.ClassicGray.Dialog</item>
         <item name="android:windowIsTranslucent">false</item>
         <item name="android:windowSwipeToDismiss" tools:ignore="NewApi">true</item>
 
@@ -682,6 +688,7 @@
              Material 控件（卡片、弹窗、选中态）会回退到 MaterialComponents 默认值，与本主题不符 -->
         <item name="colorSurface">@color/terminal_surface</item>
         <item name="android:colorBackground">@color/terminal_bgblack</item>
+        <item name="alertDialogTheme">@style/ThemeOverlay.ClassicTerminal.Dialog</item>
         <item name="colorControlActivated">@color/terminal_pink</item>
         <item name="colorControlNormal">@color/terminal_color_ripple</item>
         <item name="colorControlHighlight">@color/terminal_color_ripple</item>
@@ -764,6 +771,77 @@
 
     <style name="ListStyleTerminal">
         <item name="android:descendantFocusability">afterDescendants</item>
+    </style>
+
+    <!-- =========================================================== -->
+    <!-- 弹窗主题 overlay（7 族各一份）                                 -->
+    <!--                                                             -->
+    <!-- 为什么需要：这 7 族主题此前都**没有** alertDialogTheme，于是    -->
+    <!-- AlertDialog 走 Theme.MaterialComponents 自带的 alert overlay， -->
+    <!-- 而不是本主题的颜色 overlay。具体后果：                         -->
+    <!--   · 正文/标题色取自 colorOnSurface —— 全工程 0 处声明，回退到   -->
+    <!--     Material 默认近白。这就是用户看到的「白字」。              -->
+    <!--     （注意：主题里的 android:colorForeground 救不了它，        -->
+    <!--      Material 正文不读 colorForeground。）                    -->
+    <!--   · 破坏性按钮色取自 colorError —— 同样 0 处声明。            -->
+    <!--   · 按钮文字色取自 colorAccent —— 这是唯一跟随主题的一项，     -->
+    <!--     而它恰好是 #FF6699 荧光粉，于是「按钮是粉的」。            -->
+    <!-- 三者叠加就是用户报的「灰底白字 + 粉按钮 + 无圆角」：           -->
+    <!-- 底色那一半此前已被 colorSurface 修过，文字/按钮/圆角这三半没有。 -->
+    <!--                                                             -->
+    <!-- 关键：这 7 份 overlay 让 17 个弹窗调用点**一行都不用改**，      -->
+    <!-- 且 android.app.AlertDialog 与 androidx.appcompat.app.AlertDialog -->
+    <!-- 两种 import 同时生效。新增主题时别忘了也补一份 overlay，       -->
+    <!-- 否则该主题下弹窗会退回 Material 默认外观。                    -->
+    <!-- =========================================================== -->
+
+    <style name="ThemeOverlay.BiliClient.Dialog" parent="ThemeOverlay.MaterialComponents.Dialog.Alert">
+        <item name="colorSurface">@color/surface_dark</item>
+        <item name="colorOnSurface">@color/on_surface_bili</item>
+        <item name="colorError">@color/error_bili</item>
+        <item name="android:background">@drawable/dialog_background</item>
+    </style>
+
+    <style name="ThemeOverlay.ZhihuBlue.Dialog" parent="ThemeOverlay.MaterialComponents.Dialog.Alert">
+        <item name="colorSurface">@color/zhihu_surface_dark</item>
+        <item name="colorOnSurface">@color/on_surface_zhihu</item>
+        <item name="colorError">@color/error_zhihu</item>
+        <item name="android:background">@drawable/dialog_background</item>
+    </style>
+
+    <style name="ThemeOverlay.IQIYIGreen.Dialog" parent="ThemeOverlay.MaterialComponents.Dialog.Alert">
+        <item name="colorSurface">@color/iqiyi_surface_dark</item>
+        <item name="colorOnSurface">@color/on_surface_iqiyi</item>
+        <item name="colorError">@color/error_iqiyi</item>
+        <item name="android:background">@drawable/dialog_background</item>
+    </style>
+
+    <style name="ThemeOverlay.PurpleFantasy.Dialog" parent="ThemeOverlay.MaterialComponents.Dialog.Alert">
+        <item name="colorSurface">@color/purple_fantasy_surface_dark</item>
+        <item name="colorOnSurface">@color/on_surface_purple</item>
+        <item name="colorError">@color/error_purple</item>
+        <item name="android:background">@drawable/dialog_background</item>
+    </style>
+
+    <style name="ThemeOverlay.RainbowFantasy.Dialog" parent="ThemeOverlay.MaterialComponents.Dialog.Alert">
+        <item name="colorSurface">@color/rainbow_surface_dark</item>
+        <item name="colorOnSurface">@color/on_surface_rainbow</item>
+        <item name="colorError">@color/error_rainbow</item>
+        <item name="android:background">@drawable/dialog_background</item>
+    </style>
+
+    <style name="ThemeOverlay.ClassicGray.Dialog" parent="ThemeOverlay.MaterialComponents.Dialog.Alert">
+        <item name="colorSurface">@color/classic_gray_surface_dark</item>
+        <item name="colorOnSurface">@color/on_surface_classic_gray</item>
+        <item name="colorError">@color/error_classic_gray</item>
+        <item name="android:background">@drawable/dialog_background</item>
+    </style>
+
+    <style name="ThemeOverlay.ClassicTerminal.Dialog" parent="ThemeOverlay.MaterialComponents.Dialog.Alert">
+        <item name="colorSurface">@color/terminal_surface</item>
+        <item name="colorOnSurface">@color/on_surface_terminal</item>
+        <item name="colorError">@color/error_terminal</item>
+        <item name="android:background">@drawable/dialog_background</item>
     </style>
 
 </resources>

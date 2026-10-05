@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  终端列表型弹窗的整体布局（方案 B）。
+
+  结构（自上而下）：
+    terminal_dialog_title   —— 可选标题，带 › 前缀，主色
+    terminal_dialog_list    —— 条目容器（ScrollView 包 LinearLayout）
+    terminal_dialog_hint    —— 底部提示行（如「› 点空白处取消」）
+
+  ScrollView 存在的理由：300×300 表盘上条目多了会撑破表盘，
+  滚动把可见高度钉在上限内。注意 android:layout_height 写 wrap_content 只是占位，
+  实际高度由 util/TerminalDialog.kt 的 Sheet.capScrollHeight() 改成屏幕高度的 45%
+  —— ScrollView 没有 android:maxHeight 属性，光靠 XML 封不了顶。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <TextView
+        android:id="@+id/terminal_dialog_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="@dimen/dialog_title_padding_h"
+        android:paddingTop="@dimen/dialog_title_padding_top"
+        android:paddingEnd="@dimen/dialog_title_padding_h"
+        android:paddingBottom="@dimen/dialog_title_padding_bottom"
+        android:textColor="?attr/colorPrimary"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+    <ScrollView
+        android:id="@+id/terminal_dialog_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/terminal_dialog_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+    </ScrollView>
+
+    <TextView
+        android:id="@+id/terminal_dialog_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="@dimen/dialog_title_padding_h"
+        android:paddingTop="8dp"
+        android:paddingEnd="@dimen/dialog_title_padding_h"
+        android:paddingBottom="11dp"
+        android:textColor="?attr/colorOnSurface"
+        android:textSize="11sp"
+        android:alpha="0.6"
+        android:visibility="gone" />
+
+</LinearLayout>

@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>弹窗重设计 v2 · RE:哔哩终端</title>
+<style>
+  :root{
+    /* ===== 主题真值：取自 ColorScheme.kt:330-370（经典终端主题，默认主题） ===== */
+    --term-primary:#FF6699;      --term-primary-dark:#E84B85;  --term-primary-light:#FF8CB0;
+    --term-surface:#262626;      --term-card:#CC262626;        --term-bg:#000000;
+    --term-text:#EBE0E2;         --term-text-2:#B8AEB2;        --term-text-3:#8C868A;
+    --term-border:#50FEFEFE;     --term-divider:#50FEFEFE;     --term-ripple:#78FEFEFE;
+    --term-error:#FF6699;        --term-like:#FF6A6A;          --term-success:#BBFFBB;
+    --term-info:#66CCFF;         --term-gold:#FFB800;          --term-corner:6px;
+
+    /* ===== 现状真值：其余 6 套主题的 surface/card（colors.xml:34-36 等）===== */
+    --legacy-surface:#24242E;    /* surface_dark */
+    --legacy-card:#2A2A35;       /* card_dark ← 用户看到的「灰蓝」 */
+    --legacy-card2:#30303D;      /* card_dark_secondary */
+    --legacy-divider:#3A3640;    /* divider_dark */
+
+    --font: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    --mono: "Cascadia Mono", "Consolas", "Courier New", monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#101014;color:#D8D2D4;font-family:var(--font);font-size:14px;line-height:1.7}
+  .wrap{max-width:1180px;margin:0 auto;padding:32px 24px 80px}
+  h1{font-size:26px;margin:0 0 6px;color:#fff;font-weight:600}
+  h2{font-size:19px;margin:44px 0 14px;color:#fff;font-weight:600;
+     border-left:4px solid var(--term-primary);padding-left:11px}
+  h3{font-size:15px;margin:26px 0 10px;color:#F0E8EC;font-weight:600}
+  .sub{color:#8C868A;font-size:13px;margin:0 0 26px}
+  p{margin:10px 0}
+  code{font-family:var(--mono);font-size:12.5px;background:#22222A;padding:1.5px 5px;border-radius:3px;color:#FFB3CA}
+  .path{font-family:var(--mono);font-size:12.5px;color:#66CCFF}
+
+  /* 通用盒子 */
+  .card{background:#1A1A20;border:1px solid #2E2E38;border-radius:8px;padding:18px 20px;margin:14px 0}
+  .verdict{background:#1D1A14;border:1px solid #4A3A20;border-left:4px solid var(--term-gold);border-radius:6px;padding:14px 18px;margin:16px 0}
+  .verdict b{color:var(--term-gold)}
+  .bad{background:#241618;border:1px solid #4A2830;border-left:4px solid #FF6A6A;border-radius:6px;padding:14px 18px;margin:16px 0}
+  .bad b{color:#FF8C8C}
+  .good{background:#15201A;border:1px solid #2A4033;border-left:4px solid var(--term-success);border-radius:6px;padding:14px 18px;margin:16px 0}
+  .good b{color:var(--term-success)}
+
+  /* 表格 */
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:12.5px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #2A2A34;vertical-align:top}
+  th{color:#FFB3CA;font-weight:600;background:#1C1C23;font-size:12px}
+  td code{font-size:11.5px}
+  .swatch{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:-1px;margin-right:5px;border:1px solid #444}
+
+  /* ===== 表盘模拟 ===== */
+  .stage{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start;margin:18px 0}
+  .device{width:300px;height:300px;border-radius:50%;padding:13px;
+          background:linear-gradient(150deg,#4A4A50,#232328 55%,#3A3A40);
+          box-shadow:0 16px 40px rgba(0,0,0,.6), inset 0 0 0 2px #55555C;flex:0 0 auto}
+  .screen{width:100%;height:100%;border-radius:50%;overflow:hidden;position:relative;
+          display:flex;align-items:center;justify-content:center;background:var(--term-bg)}
+  .cap{text-align:center;font-size:11.5px;color:#8C868A;margin-top:9px;letter-spacing:.3px}
+  .col{display:flex;flex-direction:column;flex:0 0 auto}
+  .tag{display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:10px;margin-bottom:6px;letter-spacing:.4px}
+  .tag-bad{background:#3A1A22;color:#FF8C8C;border:1px solid #5A2028}
+  .tag-good{background:#16301F;color:#BBFFBB;border:1px solid #23512F}
+
+  /* ===== 现 状：真实复刻当前 AlertDialog 渲染 ===== */
+  .dlg-legacy{width:250px;border-radius:4px;background:var(--legacy-card);
+              box-shadow:0 10px 30px rgba(0,0,0,.7);overflow:hidden;
+              font-family:var(--font);padding-top:14px}
+  .dlg-legacy .t{font-size:13.5px;font-weight:600;color:#F0E8EC;padding:0 16px 8px;text-align:left}
+  .dlg-legacy .li{font-size:13px;color:#F0E8EC;padding:9px 16px;text-align:left;line-height:1.4}
+  .dlg-legacy .li+.li{border-top:1px solid var(--legacy-divider)}
+  .dlg-legacy .li.danger{color:#F0E8EC}
+  .dlg-legacy .btns{display:flex;justify-content:flex-end;gap:22px;padding:11px 16px 13px;margin-top:4px}
+  .dlg-legacy .btn{font-size:12.5px;font-weight:500;color:var(--term-primary)}   /* colorAccent = #FF6699 */
+  .dlg-legacy .sel{display:flex;align-items:center;padding:9px 16px;font-size:13px;color:#F0E8EC}
+  .dlg-legacy .sel.on{color:#F0E8EC}
+
+  /* ===== 方案一：描边卡片（沿用 AlertDialog 结构，改配色 + 描边）===== */
+  .d1{width:250px;background:#0A0A0A;border:1px solid var(--term-primary);border-radius:12px;
+      overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.75)}
+  .d1 .hd{padding:13px 15px 9px}
+  .d1 .hd .t{font-size:13.5px;font-weight:600;color:var(--term-text)}
+  .d1 .hd .s{font-size:11px;color:var(--term-text-3);margin-top:2px}
+  .d1 .li{display:flex;align-items:center;gap:9px;padding:12px 15px;font-size:13px;color:var(--term-text)}
+  .d1 .li+.li{border-top:1px solid rgba(254,254,254,.14)}
+  .d1 .li.danger{color:var(--term-like)}
+  .d1 .ico{width:16px;text-align:center;font-size:13px;opacity:.9}
+  .d1 .ft{display:flex;justify-content:flex-end;gap:8px;padding:11px 15px;border-top:1px solid rgba(254,254,254,.14)}
+  .d1 .b{font-size:12.5px;padding:8px 15px;border-radius:8px;min-height:36px;display:flex;align-items:center}
+  .d1 .b.ghost{color:var(--term-text-2);border:1px solid rgba(254,254,254,.2)}
+  .d1 .b.danger{color:var(--term-like);border:1px solid rgba(255,106,106,.45)}
+
+  /* ===== 方案二：终端列表（等宽 + 引导符，无按钮行）===== */
+  .d2{width:250px;background:#000;border:1px solid rgba(254,254,254,.32);border-radius:6px;
+      overflow:hidden;font-family:var(--mono)}
+  .d2 .hd{padding:12px 14px 9px;border-bottom:1px solid rgba(254,254,254,.18)}
+  .d2 .hd .t{font-size:12.5px;color:var(--term-primary);letter-spacing:.5px}
+  .d2 .hd .t::before{content:"› ";color:var(--term-text-3)}
+  .d2 .li{display:flex;align-items:center;gap:8px;padding:12px 14px;font-size:13px;color:var(--term-text)}
+  .d2 .li .g{color:var(--term-primary);width:11px}
+  .d2 .li.danger{color:var(--term-like)}
+  .d2 .li.on{background:rgba(255,102,153,.12)}
+  .d2 .li.on .g{color:var(--term-primary)}
+  .d2 .ck{margin-left:auto;color:var(--term-primary);font-size:12px}
+  .d2 .ft{padding:9px 14px;border-top:1px solid rgba(254,254,254,.18);font-size:11px;color:var(--term-text-3)}
+
+  /* ===== 方案三：底部上滑 Bottom Sheet ===== */
+  .d3wrap{width:250px;height:250px;background:#0B0B0B;border-radius:50%;position:relative;overflow:hidden}
+  .d3{position:absolute;left:0;right:0;bottom:0;background:#17171B;border-radius:12px 12px 0 0;
+      box-shadow:0 -8px 26px rgba(0,0,0,.8);border-top:1px solid var(--legacy-divider);padding-bottom:6px}
+  .d3 .grip{width:30px;height:3px;background:#4A4A54;border-radius:2px;margin:8px auto 6px}
+  .d3 .t{font-size:12.5px;font-weight:600;color:var(--term-text);padding:0 15px 8px}
+  .d3 .li{display:flex;align-items:center;gap:9px;padding:11px 15px;font-size:12.5px;color:var(--term-text)}
+  .d3 .li.danger{color:var(--term-like)}
+  .d3 .li span.i{width:15px;text-align:center;font-size:12px;opacity:.85}
+
+  /* 规格小样 */
+  .spec{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:14px 0}
+  .kb{width:250px;border:1px solid rgba(254,254,254,.2);border-radius:8px;background:#0A0A0A;padding:12px 14px;
+      font-family:var(--mono);font-size:12px;color:var(--term-text)}
+  .kb .row{display:flex;justify-content:space-between;padding:3px 0}
+  .kb .k{color:var(--term-text-3)}
+  .kb .v{color:var(--term-primary)}
+  .note{font-size:12px;color:#8C868A;margin:8px 0}
+  ul{margin:10px 0;padding-left:20px}
+  li{margin:5px 0}
+  .mono-list{font-family:var(--mono);font-size:12px;line-height:1.9;color:#B8AEB2}
+  .arrow{color:#5A5A64;margin:0 6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>弹窗重设计 · v2</h1>
+  <p class="sub">RE:哔哩终端 · 针对「灰色白字 + 粉色按钮」的弹出选择框 · 设计稿（未写任何代码）</p>
+
+  <div class="bad">
+    <b>v1 稿的根因诊断是错的，本稿已推翻重写。</b><br>
+    v1 声称「7 套主题都没有任何弹窗相关声明，弹窗层从未接入主题系统」。这句话不成立 ——
+    <code>themes.xml</code> 里 7 套主题<b>都</b>明明白白写了 <code>colorSurface</code>（:15,55,104,219,334,449,564,683），
+    XML 侧也有 <b>71 处</b> <code>?attr/colorSurface</code>、<code>?attr/colorPrimary</code> 在用。
+    主题系统是真实、完备、正在工作的。v1 把「半接入」误判成了「未接入」，方向也就跟着偏了。
+  </div>
+
+  <h2>0 · 精确根因：不是「没接入」，是差三个属性</h2>
+
+  <p>重新逐项核对后，缺口非常具体 —— 全仓 grep，下面三个属性在 <span class="path">app/src/main/res</span> 全域 <b>0 命中</b>：</p>
+
+  <div class="card">
+    <div class="mono-list">
+      <span class="arrow">✗</span><code>alertDialogTheme</code>　<span style="color:#8C868A">/</span> <code>android:alertDialogTheme</code>　<span style="color:#8C868A">/</span> <code>dialogTheme</code>　→ 全仓 0 命中<br>
+      <span class="arrow">✗</span><code>colorOnSurface</code>　→ 全仓 0 命中<br>
+      <span class="arrow">✗</span><code>colorError</code>　→ 全仓 0 命中
+    </div>
+    <p class="note" style="margin-bottom:0">
+      对照组：<code>colorOnPrimary</code> 有 <b>15 处</b>（每套主题 1 处，外加 Light 变体），
+      且<b>全部指向同一个</b> <code>@color/text_on_primary</code> —— 说明这套主题是「按 Material 属性逐个补齐」的风格，
+      只是弹窗专属的那三个从没被补上。
+    </p>
+  </div>
+
+  <table>
+    <tr><th style="width:132px">缺的属性</th><th style="width:150px">Material 回退到什么</th><th>用户看到的现象</th></tr>
+    <tr>
+      <td><code>alertDialogTheme</code></td>
+      <td>回退到 <code>Theme.MaterialComponents.NoActionBar</code> 自带的默认 alert overlay，而不是本主题的颜色 overlay</td>
+      <td>弹窗整体走 Material 默认配色，<b>只有 <code>colorAccent</code> 是唯一跟着本主题走的</b></td>
+    </tr>
+    <tr>
+      <td><code>colorOnSurface</code></td>
+      <td>Material 默认近白色</td>
+      <td><b>「白字」</b>。注意：本主题其实设了 <code>android:colorForeground=@color/terminal_textwhite(#EBE0E2)</code>，
+          但 Material 的正文文字<b>不读 <code>colorForeground</code></b>，读 <code>colorOnSurface</code> —— 所以设了也没用</td>
+    </tr>
+    <tr>
+      <td><code>colorError</code></td>
+      <td>Material 默认红</td>
+      <td>「删除评论 / 删除账号」这类破坏性按钮<b>没有危险语义</b>，与「取消」同色</td>
+    </tr>
+  </table>
+
+  <div class="verdict">
+    <b>「粉色按钮」的确切来源</b>：AppCompat 的 <code>AlertDialog</code> 里，<code>setPositiveButton</code> /
+    <code>setNegativeButton</code> 的文字色由 <code>colorAccent</code> 决定。
+    7 套主题<b>全都设了</b> <code>colorAccent</code>（<code>Theme.BiliClient</code> 与
+    <code>Theme.ClassicTerminal</code> 都是 <code>#FF6699</code>），所以按钮色<b>确实跟随了主题</b> ——
+    只是恰好跟到了一个刺眼的荧光粉。这恰好印证了 v1 的反面：<b>不是没接入，是接入了、但只接入了最不该接入的那一项</b>。
+  </div>
+
+  <div class="good">
+    <b>前序修复其实已经摸到了这个方向。</b>
+    <span class="path">themes.xml:681-682</span> 留着一条注释：
+    <div class="mono-list" style="margin-top:7px;color:#9FB8A6">
+      &lt;!-- 其余 6 套主题都有 colorSurface / android:colorBackground，默认主题此前缺这 4 项，<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Material 控件（卡片、弹窗、选中态）会回退到 MaterialComponents 默认值，与本主题不符 --&gt;
+    </div>
+    这条注释明确点了「<b>卡片、弹窗、选中态</b>」，并已给 <code>Theme.ClassicTerminal</code> 补上了
+    <code>colorSurface=@color/terminal_surface</code>、<code>android:colorBackground</code>、
+    <code>colorControlActivated/Normal/Highlight</code>。
+    <b>本次要做的就是把这条修复推完</b>：底色那一半已经补上（所以底色偏黑是对的），
+    文字与按钮那两半还没补。这属于<b>前序未覆盖的剩余环节，不是回归，也不是「没有主题系统」</b>。
+  </div>
+
+  <h2>1 · 现状还原（真实色值复刻）</h2>
+  <p>下面两个表盘按当前代码的真实渲染值复刻：底色 <code>#2A2A35</code>（非终端主题的 <code>card_dark</code>，就是那个「灰蓝」）、
+     文字近白、按钮 <code>#FF6699</code>。</p>
+
+  <div class="stage">
+    <div class="col">
+      <span class="tag tag-bad">现状 · 菜单型</span>
+      <div class="device"><div class="screen">
+        <div class="dlg-legacy">
+          <div class="t">会话操作</div>
+          <div class="li">置顶会话</div>
+          <div class="li">删除会话</div>
+          <div class="li">查看用户主页</div>
+          <div class="btns"><div class="btn">取消</div></div>
+        </div>
+      </div></div>
+      <div class="cap">setItems + setNegativeButton</div>
+    </div>
+
+    <div class="col">
+      <span class="tag tag-bad">现状 · 单选型</span>
+      <div class="device"><div class="screen">
+        <div class="dlg-legacy">
+          <div class="t">选择剧集</div>
+          <div class="sel on">1. 第一话</div>
+          <div class="sel">2. 第二话</div>
+          <div class="sel">3. 第三话</div>
+          <div class="btns"><div class="btn">取消</div></div>
+        </div>
+      </div></div>
+      <div class="cap">setSingleChoiceItems · 无对勾、选中态几乎不可见</div>
+    </div>
+
+    <div class="col">
+      <span class="tag tag-bad">现状 · 确认型</span>
+      <div class="device"><div class="screen">
+        <div class="dlg-legacy">
+          <div class="t">删除账号</div>
+          <div class="li" style="font-size:12.5px;color:#D8D2D4;line-height:1.55">
+            确定要删除账号 罗宾 吗？<br>删除后需重新登录才能恢复。
+          </div>
+          <div class="btns">
+            <div class="btn" style="color:#FF6699">取消</div>
+            <div class="btn" style="color:#FF6699">删除</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="cap">取消与删除同为粉色 · 无危险语义</div>
+    </div>
+  </div>
+
+  <div class="bad" style="margin-top:4px">
+    <b>三个问题都指向同一个点：</b>底色、文字、按钮这三个通道里，只有按钮色接到了主题，
+    而它接到的 <code>colorAccent</code> 恰好是荧光粉。所以用户一眼看到的「难看」其实是
+    「<b>一个跟对了主题的粉色，配上一套没跟主题的灰底白字</b>」—— 三者互相不搭。
+  </div>
+
+  <h2>2 · 修复思路：补属性，不改调用点</h2>
+
+  <div class="good">
+    <b>核心结论：17 个弹窗调用点一行代码都不用改。</b><br>
+    只要在 <code>themes.xml</code> 的 7 套主题里把 <code>alertDialogTheme</code> 指到各自的 overlay，
+    并在 overlay 里定义 <code>colorSurface</code> / <code>colorOnSurface</code> / <code>colorError</code>，
+    <code>AlertDialog.Builder</code> 的所有实例（<code>android.app</code> 与 <code>androidx.appcompat.app</code> 两种 import）<b>全部同时生效</b>。
+    这是「在主题层一次性收敛」，而不是「改 17 处」。
+  </div>
+
+  <h3>落地形态（每套主题一份 overlay，共 7 份 + Light）</h3>
+  <div class="kb">
+    <div class="row"><span class="k">7 套主题各自</span><span class="v">themes.xml 加 1 行引用</span></div>
+    <div class="row"><span class="k">新增</span><span class="v">ThemeOverlay.&lt;X&gt;.Dialog</span></div>
+    <div class="row"><span class="k">overlay 内定义</span><span class="v">3 个属性</span></div>
+    <div class="row"><span class="k">调用点改动</span><span class="v">0 行</span></div>
+  </div>
+  <p class="note">Kotlin 侧 <code>ColorScheme.kt</code> <b>不需要动</b>：它的 36 个字段里本就没有「弹窗专属色」的概念，
+     弹窗色应当由 XML 主题属性表达，这才符合本仓既有的「配色走主题属性」惯例。</p>
+
+  <h2>3 · 三个候选方案（视觉语言选择）</h2>
+  <p>补属性解决的是「颜色不对」。下面要你拍板的是「<b>长什么样</b>」—— 同一份「会话操作」菜单的三种视觉语言。</p>
+
+  <div class="stage">
+    <div class="col">
+      <span class="tag tag-good">方案 A · 描边卡片</span>
+      <div class="device"><div class="screen">
+        <div class="d1">
+          <div class="hd">
+            <div class="t">会话操作</div>
+            <div class="s">选择要执行的操作</div>
+          </div>
+          <div class="li"><span class="ico">📌</span>置顶会话</div>
+          <div class="li danger"><span class="ico">🗑</span>删除会话</div>
+          <div class="li"><span class="ico">👤</span>查看用户主页</div>
+          <div class="ft">
+            <div class="b ghost">取消</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="cap">沿用现有 AlertDialog 结构<br>仅换配色 + 描边 + 图标</div>
+    </div>
+
+    <div class="col">
+      <span class="tag tag-good">方案 B · 终端列表 ★推荐</span>
+      <div class="device"><div class="screen">
+        <div class="d2">
+          <div class="hd"><div class="t">会话操作</div></div>
+          <div class="li"><span class="g">›</span>置顶会话</div>
+          <div class="li danger"><span class="g">›</span>删除会话</div>
+          <div class="li"><span class="g">›</span>查看用户主页</div>
+          <div class="ft">› 点空白处取消</div>
+        </div>
+      </div></div>
+      <div class="cap">等宽字体 + 引导符<br>去掉按钮行 · 最贴合经典终端主题</div>
+    </div>
+
+    <div class="col">
+      <span class="tag tag-good">方案 C · 底部上滑</span>
+      <div class="col" style="flex:0 0 auto">
+        <div class="d3wrap">
+          <div class="d3">
+            <div class="grip"></div>
+            <div class="t">会话操作</div>
+            <div class="li"><span class="i">📌</span>置顶会话</div>
+            <div class="li danger"><span class="i">🗑</span>删除会话</div>
+            <div class="li"><span class="i">👤</span>查看用户主页</div>
+          </div>
+        </div>
+      </div>
+      <div class="cap" style="width:250px">Bottom Sheet 从底部上滑<br>最现代，但改动最大</div>
+    </div>
+  </div>
+
+  <table>
+    <tr><th style="width:96px">方案</th><th style="width:120px">改动量</th><th style="width:130px">手表适配</th><th>说明</th></tr>
+    <tr><td><b>A 描边卡片</b></td><td>小</td><td>好</td>
+        <td>结构不动，只把「Material 默认 overlay」换成「本主题 overlay」。风险最低，仍保留按钮行。</td></tr>
+    <tr><td><b>B 终端列表 ★</b></td><td>小～中</td><td>最好</td>
+        <td>等宽字体 + <code>›</code>。去按钮行节省纵向空间，对 300×300 表盘最友好；
+            且默认主题本就是「经典终端」，调性一致。</td></tr>
+    <tr><td><b>C 底部上滑</b></td><td>大</td><td>一般</td>
+        <td>需引 BottomSheetBehavior，300px 表盘上能见条目更少；且本仓无此类先例。</td></tr>
+  </table>
+
+  <h2>4 · 单选型（选季 / 选集）改法</h2>
+  <div class="stage">
+    <div class="col">
+      <span class="tag tag-bad">现状</span>
+      <div class="device"><div class="screen">
+        <div class="dlg-legacy">
+          <div class="t">选择剧集</div>
+          <div class="sel on">1. 第一话</div>
+          <div class="sel">2. 第二话</div>
+          <div class="sel">3. 第三话</div>
+          <div class="btns"><div class="btn">取消</div></div>
+        </div>
+      </div></div>
+      <div class="cap">选中项与未选中项<br>视觉上几乎没差别</div>
+    </div>
+
+    <div class="col">
+      <span class="tag tag-good">改法 A · 三重指示</span>
+      <div class="device"><div class="screen">
+        <div class="d1">
+          <div class="hd"><div class="t">选择剧集</div></div>
+          <div class="li" style="background:rgba(255,102,153,.10);box-shadow:inset 3px 0 0 var(--term-primary)">
+            <span class="ico" style="color:var(--term-primary)">✓</span>
+            <span style="color:var(--term-primary)">1. 第一话</span>
+          </div>
+          <div class="li"><span class="ico" style="opacity:.25">✓</span>2. 第二话</div>
+          <div class="li"><span class="ico" style="opacity:.25">✓</span>3. 第三话</div>
+          <div class="ft"><div class="b ghost">取消</div></div>
+        </div>
+      </div></div>
+      <div class="cap">左侧 3dp 主色条 + ✓ + 主色文字<br>三重指示，扫一眼就知道选了哪个</div>
+    </div>
+
+    <div class="col">
+      <span class="tag tag-good">改法 B · 终端引导符</span>
+      <div class="device"><div class="screen">
+        <div class="d2">
+          <div class="hd"><div class="t">选择剧集</div></div>
+          <div class="li on"><span class="g">▸</span>1. 第一话<span class="ck">✓</span></div>
+          <div class="li"><span class="g" style="color:#5A5A64">›</span>2. 第二话</div>
+          <div class="li"><span class="g" style="color:#5A5A64">›</span>3. 第三话</div>
+          <div class="ft">› 点空白处取消</div>
+        </div>
+      </div></div>
+      <div class="cap">选中 <code>▸</code> / 未选 <code>›</code><br>与方案 B 同一套语言</div>
+    </div>
+  </div>
+  <p class="note">两个真实约束不变：空季时 <code>BangumiInfoFragment.kt:366</code> 仍要 <code>MsgUtil.showMsg("该季暂无剧集")</code> 提前返回防越界；
+     选中下标仍用 <code>coerceIn(0, size-1)</code> 防数据刷新后越界。</p>
+
+  <h2>5 · 确认型：取消 vs 危险操作</h2>
+  <div class="stage">
+    <div class="col">
+      <span class="tag tag-bad">现状 · 两键同色</span>
+      <div class="device"><div class="screen">
+        <div class="dlg-legacy">
+          <div class="t">删除账号</div>
+          <div class="li" style="font-size:12.5px;color:#D8D2D4;line-height:1.55">确定要删除账号 罗宾 吗？</div>
+          <div class="btns">
+            <div class="btn" style="color:#FF6699">取消</div>
+            <div class="btn" style="color:#FF6699">删除</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="cap">都是 #FF6699<br>误触代价一样</div>
+    </div>
+
+    <div class="col">
+      <span class="tag tag-good">改法 · 语义分离</span>
+      <div class="device"><div class="screen">
+        <div class="d1">
+          <div class="hd"><div class="t">删除账号</div></div>
+          <div class="li" style="font-size:12.5px;line-height:1.55;display:block;color:var(--term-text-2)">
+            确定要删除账号 罗宾 吗？<br>删除后需重新登录才能恢复。
+          </div>
+          <div class="ft">
+            <div class="b ghost">取消</div>
+            <div class="b danger">删除</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="cap">取消=次要灰 · 删除=危险红 #FF6A6A<br>长文案自动换行、不撑破</div>
+    </div>
+  </div>
+  <p class="note">危险色取 <code>ColorScheme.LIKE_COLOR = #FF6A6A</code>（经典终端主题里已有的红），
+     不新造色值：这样 7 套主题各取各自表里的红即可，与「补属性」思路一致。</p>
+
+  <h2>6 · 设计规格</h2>
+
+  <h3>6.1 颜色 token 映射</h3>
+  <table>
+    <tr><th style="width:150px">用途</th><th style="width:170px">当前</th><th style="width:190px">改为</th><th>理由</th></tr>
+    <tr><td>弹窗底色</td><td><span class="swatch" style="background:#2A2A35"></span><code>#2A2A35</code> / <code>#262626</code></td>
+        <td><span class="swatch" style="background:#0A0A0A"></span><code>colorSurface</code> 或 backdrop <code>#0A0A0A</code></td>
+        <td>底色其实已对（前序补了 <code>colorSurface</code>）；终端主题下再压暗一档更贴近「终端」</td></tr>
+    <tr><td>标题文字</td><td><span class="swatch" style="background:#F0E8EC"></span>Material 默认近白</td>
+        <td><span class="swatch" style="background:#EBE0E2"></span><code>colorOnSurface</code></td>
+        <td><b>本次要补的核心属性</b>，让文字终于读主题值</td></tr>
+    <tr><td>正文 / 次级</td><td>近白</td><td><span class="swatch" style="background:#B8AEB2"></span><code>#B8AEB2</code>（TEXT_SECONDARY）</td>
+        <td>对纯黑约 9:1，长文案可读</td></tr>
+    <tr><td>提示 / 禁用</td><td>—</td><td><span class="swatch" style="background:#8C868A"></span><code>#8C868A</code>（TEXT_TERTIARY）</td>
+        <td>对纯黑约 6:1，仍达 AA</td></tr>
+    <tr><td>菜单条目</td><td>近白</td><td><span class="swatch" style="background:#EBE0E2"></span><code>colorOnSurface</code></td>
+        <td>与标题同源</td></tr>
+    <tr><td>选中 / 强调</td><td>无</td><td><span class="swatch" style="background:#FF6699"></span><code>colorPrimary</code></td>
+        <td>主色只用于「指示选中」，不再滥用在普通按钮</td></tr>
+    <tr><td>普通按钮</td><td><span class="swatch" style="background:#FF6699"></span>粉</td><td><code>colorOnSurface</code> / 描边</td>
+        <td><b>不再用 <code>colorAccent</code></b>，这是「粉色按钮」的根</td></tr>
+    <tr><td>危险操作</td><td><span class="swatch" style="background:#FF6699"></span>粉</td><td><span class="swatch" style="background:#FF6A6A"></span><code>colorError</code>（LIKE_COLOR）</td>
+        <td>补 <code>colorError</code>，破坏性操作有语义</td></tr>
+    <tr><td>描边</td><td>无</td><td><span class="swatch" style="background:#FEFEFE"></span><code>colorPrimary</code> @ 1dp</td>
+        <td>与 <code>background_card.xml</code> 既有做法一致</td></tr>
+    <tr><td>分割线</td><td><span class="swatch" style="background:#3A3640"></span><code>#3A3640</code></td>
+        <td><span class="swatch" style="background:#503F3F42"></span><code>#50FEFEFE</code> @ 14%</td>
+        <td>终端主题的 DIVIDER 真值，比蓝灰和谐</td></tr>
+  </table>
+
+  <h3>6.2 尺寸与触控</h3>
+  <table>
+    <tr><th style="width:150px">项</th><th style="width:110px">值</th><th>说明</th></tr>
+    <tr><td>弹窗圆角</td><td><code>12dp</code></td><td>方案 A/B 用；沿用 <code>@dimen/card_round</code> 体系</td></tr>
+    <tr><td>左右留白</td><td><code>10dp</code></td><td>300×300 表盘上给弹窗留边</td></tr>
+    <tr><td><b>条目高度</b></td><td><code>≥44dp</code></td><td>手表触控下限</td></tr>
+    <tr><td>条目标题内边距</td><td><code>12dp / 15dp</code></td><td>上下 / 左右</td></tr>
+    <tr><td>标题区</td><td><code>13dp / 15dp / 9dp</code></td><td>上 / 左右 / 下</td></tr>
+    <tr><td><b>按钮区高</b></td><td><code>≥46dp</code></td><td>延续既有「弹窗按钮 36dp→补高」的约定，此处取更保守的 46dp</td></tr>
+    <tr><td>超长列表</td><td>6 条后滚动</td><td>避免撑满表盘</td></tr>
+    <tr><td>进入动效</td><td><code>120ms</code>、0.94→1.0</td><td>轻微缩放，不喧宾夺主</td></tr>
+  </table>
+
+  <h2>7 · 完整调用点清单（17 处，全部 <span style="color:#BBFFBB">零改动</span>）</h2>
+  <p>补属性后这些全部自动生效。列在这里是为了确认覆盖面无遗漏。</p>
+
+  <h3>菜单型 <code>setItems</code> · 7 处</h3>
+  <table>
+    <tr><th style="width:330px">文件</th><th style="width:60px">行</th><th>内容</th></tr>
+    <tr><td class="path">adapter/ReplyAdapter.kt</td><td>515-519</td><td>置顶评论 / 删除评论</td></tr>
+    <tr><td class="path">adapter/dynamic/DynamicHolder.kt</td><td>177-179</td><td>动态操作</td></tr>
+    <tr><td class="path">adapter/message/PrivateMsgSessionsAdapter.kt</td><td>135-145</td><td>「会话操作」置顶/删除/看主页 + 取消</td></tr>
+    <tr><td class="path">activity/dynamic/send/SendDynamicActivity.kt</td><td>293-306</td><td>「定时发布」6 个时间选项</td></tr>
+    <tr><td class="path">activity/user/FollowUsersActivity.kt</td><td>139-148</td><td>「重命名分组 / 删除分组」</td></tr>
+    <tr><td class="path">activity/user/favorite/FavoriteVideoListActivity.kt</td><td>304-307</td><td>复制到… / 移动到… / 取消收藏</td></tr>
+    <tr><td class="path">activity/user/favorite/FavoriteVideoListActivity.kt</td><td>320-325</td><td>选目标收藏夹</td></tr>
+  </table>
+
+  <h3>单选型 <code>setSingleChoiceItems</code> · 2 处</h3>
+  <table>
+    <tr><th style="width:330px">文件</th><th style="width:60px">行</th><th>内容</th></tr>
+    <tr><td class="path">activity/video/info/BangumiInfoFragment.kt</td><td>366-388</td><td>选季（空季 <code>MsgUtil.showMsg</code> 提前返回防越界）</td></tr>
+    <tr><td class="path">activity/video/info/BangumiInfoFragment.kt</td><td>406-417</td><td>选集（<code>coerceIn(0, size-1)</code> 防越界）</td></tr>
+  </table>
+
+  <h3>确认型 <code>setMessage</code> · 8 处</h3>
+  <table>
+    <tr><th style="width:330px">文件</th><th style="width:60px">行</th><th>内容</th></tr>
+    <tr><td class="path">adapter/ReplyAdapter.kt</td><td>552</td><td>删除评论</td></tr>
+    <tr><td class="path">adapter/dynamic/DynamicHolder.kt</td><td>227</td><td>删除动态</td></tr>
+    <tr><td class="path">adapter/message/PrivateMsgSessionsAdapter.kt</td><td>149-154</td><td>删除会话</td></tr>
+    <tr><td class="path">activity/user/FollowUsersActivity.kt</td><td>214-216</td><td>删除分组</td></tr>
+    <tr><td class="path">activity/user/favorite/FavoriteVideoListActivity.kt</td><td>175-177</td><td>批量移除</td></tr>
+    <tr><td class="path">activity/user/favorite/FavoriteVideoListActivity.kt</td><td>352-355</td><td>取消收藏</td></tr>
+    <tr><td class="path">activity/vote/VoteInfoActivity.kt</td><td>332-335</td><td>删除投票</td></tr>
+    <tr><td class="path">activity/settings/login/AccountSwitchActivity.kt</td><td>158-167</td><td>删除账号（唯一用 <code>androidx.appcompat.app.AlertDialog</code> 全限定名）</td></tr>
+  </table>
+
+  <p class="note">调用点的 import 有两种：<code>android.app.AlertDialog</code>（<span class="path">activity/vote/VoteInfoActivity.kt:3</span>）与
+     <code>androidx.appcompat.app.AlertDialog</code>（其余）。两者都读 <code>?attr/alertDialogTheme</code>，
+     所以主题层一处声明即可覆盖全部 —— 但仍建议落地时统一 import，避免后续再踩。</p>
+
+  <h2>8 · 待你拍板</h2>
+  <table>
+    <tr><th style="width:34px">#</th><th style="width:250px">问题</th><th style="width:170px">我的倾向</th><th>影响</th></tr>
+    <tr><td>1</td><td><b>整体视觉语言选哪个？</b>（A 描边卡片 / B 终端列表 / C 底部上滑）</td>
+        <td><b>B 终端列表</b></td><td>决定所有 17 处的观感方向，最大分歧点</td></tr>
+    <tr><td>2</td><td>是否保留底部按钮行？（B 方案靠「点空白处」关闭）</td>
+        <td>去掉，省纵向空间</td><td>手表上多显示 1～2 条</td></tr>
+    <tr><td>3</td><td>菜单条目是否带图标？</td><td>方案 B 不带，方案 A 带</td><td>图标在 300px 表盘上偏挤</td></tr>
+    <tr><td>4</td><td>危险操作是否改红？（<code>colorError</code> = <code>#FF6A6A</code>）</td>
+        <td><b>改</b></td><td>删除类操作终于有危险语义</td></tr>
+    <tr><td>5</td><td>范围是否含 8 个确认框？</td><td><b>含</b></td><td>只改选择框会留下不一致</td></tr>
+    <tr><td>6</td><td>补 <code>alertDialogTheme</code> 后，是否顺手统一两种 <code>AlertDialog</code> import？</td>
+        <td>统一为 <code>androidx.appcompat.app</code></td><td>纯清理，不影响外观</td></tr>
+  </table>
+
+  <div class="verdict" style="margin-top:22px">
+    <b>确认方案后我会做的事</b>（现在一行未动）：
+    <ul style="margin-bottom:0">
+      <li>在 <code>themes.xml</code> 给 7 套主题各加 <code>alertDialogTheme</code> + 一份 overlay，补 <code>colorSurface</code>/<code>colorOnSurface</code>/<code>colorError</code></li>
+      <li>按选定方案调整弹窗视觉（若选 B，则新增一个共用的 dialog 布局与收敛点）</li>
+      <li>同步 <code>docs/architecture-map.md</code>；修正 <code>styles.xml</code> 里指向 <code>CornerRadius.kt</code> 的失效注释（实际是 <code>CornerStyle.kt</code>）</li>
+      <li><b>在 <code>AGENTS.md</code> 写入禁令</b>：禁止再新增此类未接主题的弹窗选择列表，必须走统一入口</li>
+    </ul>
+  </div>
+
+</div>
+</body>
+</html>

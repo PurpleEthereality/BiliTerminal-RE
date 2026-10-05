@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RE:哔哩终端 — 弹出选择框重设计稿 v1</title>
+<style>
+  :root{
+    /* 经典终端（默认主题）真值，取自 ColorScheme.kt:330-370 */
+    --term-primary:#FF6699;
+    --term-primary-dark:#E84B85;
+    --term-primary-light:#FF8CB0;
+    --term-card:#CC262626;
+    --term-card-solid:#262626;
+    --term-bg:#000000;
+    --term-text:#EBE0E2;
+    --term-text-2:#B8AEB2;
+    --term-text-3:#8C868A;
+    --term-border:#50FEFEFE;
+    --term-divider:#50FEFEFE;
+    --term-ripple:#78FEFEFE;
+
+    /* 当前 AlertDialog 的实际渲染值（= 问题所在） */
+    --bad-surface:#2A2A35;      /* card_dark，偏蓝灰 */
+    --bad-bg:#1B1B24;
+    --bad-divider:#3A3640;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;padding:0 0 60px;
+    background:#101014;
+    color:#E8E8EC;
+    font-family:"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    font-size:14px;line-height:1.6;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px;}
+  header{
+    padding:36px 0 24px;border-bottom:1px solid #2A2A32;margin-bottom:32px;
+  }
+  h1{font-size:24px;margin:0 0 8px;font-weight:650;letter-spacing:.3px;}
+  h1 .sub{color:#FF6699;}
+  .lede{color:#9A9AA8;font-size:13.5px;margin:0;max-width:820px;}
+  h2{
+    font-size:17px;margin:44px 0 6px;font-weight:640;
+    padding-left:11px;border-left:3px solid #FF6699;
+  }
+  h2 .tag{
+    font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;
+    background:#2A2A35;color:#B8AEB2;margin-left:10px;vertical-align:2px;
+    border:1px solid #3A3640;
+  }
+  h3{font-size:14.5px;margin:26px 0 10px;color:#D8D8E0;font-weight:620;}
+  p.note{color:#8E8E9C;font-size:12.5px;margin:6px 0 14px;}
+  code{
+    background:#1E1E26;padding:1.5px 5px;border-radius:4px;
+    font-family:"Cascadia Code",Consolas,monospace;font-size:12px;color:#FFB3CA;
+  }
+  .row{display:flex;gap:26px;flex-wrap:wrap;align-items:flex-start;}
+  .col{flex:1 1 300px;min-width:290px;}
+
+  /* ============ 表盘模拟 ============ */
+  .watch{
+    width:300px;height:300px;border-radius:50%;
+    background:#000;position:relative;overflow:hidden;
+    border:9px solid #2A2A32;flex:0 0 auto;
+    box-shadow:0 10px 34px rgba(0,0,0,.6);
+  }
+  .watch.rect{border-radius:22px;width:300px;height:300px;}
+  .screen{
+    position:absolute;inset:0;background:var(--term-bg);
+    display:flex;flex-direction:column;overflow:hidden;
+    font-size:11px;
+  }
+  .scr-bg{position:absolute;inset:0;padding:14px 12px;color:#6E6E7A;font-size:9.5px;line-height:1.75;}
+  .scr-bg div{opacity:.5;}
+  .scrim{position:absolute;inset:0;background:rgba(0,0,0,.55);}
+  .scrim.light{background:rgba(0,0,0,.38);}
+
+  .dlg{
+    position:absolute;left:11px;right:11px;top:50%;transform:translateY(-50%);
+    border-radius:12px;overflow:hidden;z-index:5;
+    box-shadow:0 12px 34px rgba(0,0,0,.72);
+  }
+  .dlg-title{
+    padding:13px 15px 9px;font-size:13px;font-weight:650;letter-spacing:.2px;
+  }
+  .dlg-item{
+    padding:11px 15px;font-size:12.5px;display:flex;align-items:center;
+    gap:9px;border-top:1px solid transparent;
+  }
+  .dlg-item .ico{width:15px;text-align:center;font-size:12.5px;flex:0 0 15px;opacity:.9;}
+  .dlg-item .lbl{flex:1;}
+  .dlg-item .chev{color:#6E6E7A;font-size:12px;}
+  .dlg-actions{display:flex;border-top:1px solid transparent;}
+  .dlg-btn{
+    flex:1;text-align:center;padding:12px 6px;font-size:12.5px;font-weight:600;
+  }
+  .dlg-btn + .dlg-btn{border-left:1px solid transparent;}
+
+  /* ---- A. 现状（问题） ---- */
+  .d-current{background:var(--bad-surface);border:1px solid #38384A;}
+  .d-current .dlg-title{color:#F0E8EC;}
+  .d-current .dlg-item{color:#F0E8EC;border-top-color:#3A3640;}
+  .d-current .dlg-item.sel{background:rgba(255,102,153,.16);}
+  .d-current .dlg-actions{border-top-color:#3A3640;}
+  .d-current .dlg-btn{color:#FF6699;}
+  .d-current .dlg-btn.neg{color:#FF6699;}
+
+  /* ---- B. 方案一：深色卡片 + 描边 ---- */
+  .d-b1{background:#1A1A1A;border:1px solid rgba(255,102,153,.55);}
+  .d-b1 .dlg-title{color:#EBE0E2;border-bottom:1px solid rgba(254,254,254,.10);}
+  .d-b1 .dlg-item{color:#EBE0E2;}
+  .d-b1 .dlg-item.sel{background:rgba(255,102,153,.20);box-shadow:inset 3px 0 0 #FF6699;}
+  .d-b1 .dlg-item.sel .lbl{color:#FF8CB0;font-weight:620;}
+  .d-b1 .dlg-item + .dlg-item{border-top:1px solid rgba(254,254,254,.07);}
+  .d-b1 .dlg-actions{border-top:1px solid rgba(254,254,254,.10);}
+  .d-b1 .dlg-btn{color:#B8AEB2;}
+  .d-b1 .dlg-btn.pos{color:#FF6699;}
+  .d-b1 .dlg-btn + .dlg-btn{border-left-color:rgba(254,254,254,.10);}
+
+  /* ---- C. 方案二：终端风格列表（无按钮，整行可选） ---- */
+  .d-b2{background:#0A0A0A;border:1px solid rgba(254,254,254,.18);border-radius:10px;}
+  .d-b2 .dlg-head{
+    padding:9px 14px;font-size:10px;letter-spacing:1.4px;text-transform:uppercase;
+    color:#8C868A;border-bottom:1px solid rgba(254,254,254,.10);
+  }
+  .d-b2 .dlg-item{padding:12px 14px;color:#EBE0E2;font-family:"Cascadia Code",Consolas,monospace;font-size:12px;}
+  .d-b2 .dlg-item .bullet{color:#FF6699;font-weight:700;}
+  .d-b2 .dlg-item.sel{background:rgba(255,102,153,.14);}
+  .d-b2 .dlg-item.sel .lbl{color:#FF8CB0;}
+  .d-b2 .dlg-item:active{background:rgba(255,255,255,.07);}
+  .d-b2 .dlg-cancel{
+    padding:10px 14px;text-align:center;font-size:11.5px;color:#8C868A;
+    border-top:1px solid rgba(254,254,254,.10);
+  }
+
+  /* ---- D. 方案三：Bottom Sheet 上滑 ---- */
+  .d-b3{
+    left:0;right:0;top:auto;bottom:0;transform:none;
+    border-radius:16px 16px 0 0;background:#141414;
+    border-top:1px solid rgba(255,102,153,.4);
+  }
+  .d-b3 .grab{width:34px;height:3.5px;border-radius:2px;background:#4A4A54;margin:8px auto 2px;}
+  .d-b3 .dlg-title{color:#EBE0E2;padding:8px 15px 10px;font-size:12.5px;}
+  .d-b3 .dlg-item{color:#EBE0E2;padding:12px 15px;}
+  .d-b3 .dlg-item + .dlg-item{border-top:1px solid rgba(254,254,254,.06);}
+  .d-b3 .dlg-item.sel{color:#FF8CB0;font-weight:620;}
+  .d-b3 .dlg-item.sel .chev{color:#FF6699;}
+
+  /* ---- 确认框 ---- */
+  .d-confirm{background:#1A1A1A;border:1px solid rgba(254,254,254,.14);}
+  .d-confirm .dlg-title{color:#EBE0E2;}
+  .d-confirm .dlg-body{padding:0 15px 14px;font-size:12px;color:#B8AEB2;line-height:1.55;}
+  .d-confirm .dlg-actions{border-top:1px solid rgba(254,254,254,.10);}
+  .d-confirm .dlg-btn{color:#B8AEB2;}
+  .d-confirm .dlg-btn.danger{color:#FF6A6A;}
+
+  /* ============ 规格表 ============ */
+  table{width:100%;border-collapse:collapse;margin:14px 0 6px;font-size:12.5px;}
+  th,td{padding:8px 11px;text-align:left;border-bottom:1px solid #26262E;vertical-align:top;}
+  th{background:#1A1A22;color:#B8B8C4;font-weight:620;font-size:11.5px;letter-spacing:.3px;}
+  td code{font-size:11.5px;}
+  tr:hover td{background:#16161C;}
+  .swatch{
+    display:inline-block;width:13px;height:13px;border-radius:3px;
+    vertical-align:-2px;margin-right:6px;border:1px solid rgba(255,255,255,.18);
+  }
+  .pill{
+    display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:9px;
+    background:#2A2A35;color:#B8AEB2;border:1px solid #3A3640;
+  }
+  .pill.ok{background:rgba(82,196,26,.16);color:#8BD46A;border-color:rgba(82,196,26,.35);}
+  .pill.no{background:rgba(232,75,133,.16);color:#FF8CB0;border-color:rgba(232,75,133,.35);}
+  .verdict{
+    background:#16161C;border:1px solid #2A2A32;border-left:3px solid #FF6699;
+    border-radius:8px;padding:13px 16px;margin:14px 0;font-size:12.5px;
+  }
+  .verdict b{color:#FF8CB0;}
+  ul.clean{margin:8px 0;padding-left:20px;}
+  ul.clean li{margin:5px 0;color:#B8B8C4;font-size:12.5px;}
+  .legend{display:flex;gap:20px;flex-wrap:wrap;margin:10px 0 4px;font-size:11.5px;color:#8E8E9C;}
+  .cap{font-size:11.5px;color:#7A7A88;margin-top:9px;text-align:center;}
+  .cap b{color:#B8AEB2;}
+  .win{width:300px;flex:0 0 auto;}
+  .opt-label{
+    display:inline-block;font-size:11px;font-weight:700;letter-spacing:.6px;
+    padding:3px 9px;border-radius:5px;margin-bottom:10px;
+  }
+  .lbl-a{background:rgba(232,75,133,.18);color:#FF8CB0;border:1px solid rgba(232,75,133,.4);}
+  .lbl-b{background:rgba(82,196,26,.16);color:#8BD46A;border:1px solid rgba(82,196,26,.4);}
+  .lbl-c{background:rgba(24,144,255,.16);color:#6BB6FF;border:1px solid rgba(24,144,255,.4);}
+  .lbl-d{background:rgba(250,173,20,.16);color:#FFCE6B;border:1px solid rgba(250,173,20,.4);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>弹出选择框重设计 — <span class="sub">设计稿 v1</span></h1>
+  <p class="lede">
+    针对「灰色白字选择框 + 粉色按钮」的专项重设计。左侧为<b>现状真机等效渲染</b>（配色取自
+    <code>colors.xml</code> / <code>ColorScheme.kt</code> 实际值），右侧为候选方案。
+    所有方案均要求：跟随当前主题、暗底不刺眼、手表小屏可点、主次操作可区分。
+  </p>
+</header>
+
+<!-- ============================================================= -->
+<h2>0. 现状还原与根因<span class="tag">为什么要改</span></h2>
+
+<p class="note">
+  现状渲染值来源：<code>AlertDialog</code> 走 <code>Theme.MaterialComponents.NoActionBar</code>，
+  而 7 套主题里<b>没有任何一套声明 <code>alertDialogTheme</code></b>（全仓 grep 0 命中），
+  于是弹窗回退到 Material 默认 surface。下面这块「灰蓝底 + 近白字 + 粉按钮」就是用户看到的实际观感。
+</p>
+
+<div class="row">
+  <div class="win">
+    <span class="opt-label lbl-a">现状 · 菜单型</span>
+    <div class="watch rect">
+      <div class="screen">
+        <div class="scr-bg">
+          <div>动态列表 · 滚动内容</div>
+          <div>卡片一 · 标题标题标题标题</div>
+          <div>卡片二 · 标题标题标题标题</div>
+          <div>卡片三 · 标题标题标题标题</div>
+          <div>卡片四 · 标题标题标题标题</div>
+        </div>
+        <div class="scrim"></div>
+        <div class="dlg d-current">
+          <div class="dlg-title">会话操作</div>
+          <div class="dlg-item">置顶会话</div>
+          <div class="dlg-item">删除会话</div>
+          <div class="dlg-item">查看用户主页</div>
+          <div class="dlg-actions">
+            <div class="dlg-btn neg">取消</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cap"><b>问题：</b>底色 <code>#2A2A35</code> 偏蓝灰，与纯黑主题脱节</div>
+  </div>
+
+  <div class="win">
+    <span class="opt-label lbl-a">现状 · 单选型</span>
+    <div class="watch rect">
+      <div class="screen">
+        <div class="scr-bg">
+          <div>番剧详情</div>
+          <div>选集区 · 第 1 话</div>
+          <div>评论区 · 12 条</div>
+        </div>
+        <div class="scrim"></div>
+        <div class="dlg d-current">
+          <div class="dlg-title">选择剧集</div>
+          <div class="dlg-item sel">第 1 话 · 序章</div>
+          <div class="dlg-item">第 2 话 · 启程</div>
+          <div class="dlg-item">第 3 话 · 迷雾</div>
+          <div class="dlg-item">第 4 话 · 抉择</div>
+          <div class="dlg-actions">
+            <div class="dlg-btn neg">取消</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cap"><b>问题：</b>无选中指示器，只靠一层极淡的粉底</div>
+  </div>
+</div>
+
+<h3>根因链条（已逐条核实）</h3>
+<table>
+  <tr><th style="width:34%">环节</th><th>事实</th><th style="width:16%">状态</th></tr>
+  <tr>
+    <td>弹窗主题未声明</td>
+    <td>7 套主题 + <code>Theme.BiliClient</code> 全部无 <code>alertDialogTheme</code>／<code>android:alertDialogTheme</code></td>
+    <td><span class="pill no">缺</span></td>
+  </tr>
+  <tr>
+    <td>回退目标</td>
+    <td>父主题 <code>Theme.MaterialComponents.NoActionBar</code> → 弹窗 surface 走 Material 默认值</td>
+    <td><span class="pill no">不受控</span></td>
+  </tr>
+  <tr>
+    <td>按钮色</td>
+    <td>取自 <code>colorAccent</code>，7 套各自设了，所以按钮粉是「唯一跟随主题的部分」</td>
+    <td><span class="pill">部分生效</span></td>
+  </tr>
+  <tr>
+    <td>底色/文字</td>
+    <td>未绑定主题 token，与 <code>BACKGROUND</code>/<code>CARD</code>/<code>TEXT_PRIMARY</code> 均不一致</td>
+    <td><span class="pill no">脱节</span></td>
+  </tr>
+  <tr>
+    <td>深色主题下的分割线</td>
+    <td><code>divider_dark=#3A3640</code>（偏蓝）vs 终端主题 <code>DIVIDER=#50FEFEFE</code>（暖白）→ 两套并存</td>
+    <td><span class="pill no">不一致</span></td>
+  </tr>
+  <tr>
+    <td>调用点数量</td>
+    <td>菜单型 <code>setItems</code> <b>7 处</b>、单选型 <code>setSingleChoiceItems</code> <b>2 处</b>、确认型 <code>setMessage</code> <b>8 处</b>，合计 <b>17 处</b></td>
+    <td><span class="pill">待统一</span></td>
+  </tr>
+</table>
+
+<div class="verdict">
+  <b>关键结论：</b>这不是「某个框画丑了」，而是<b>弹窗层从未接入主题系统</b>。
+  只要在主题里声明一次 <code>alertDialogTheme</code> 并为 7 套主题各定义一份弹窗样式，
+  上面 17 个调用点<b>一行代码都不用改</b>就会一起变好——这是改动量最小、收益最彻底的做法。
+</div>
+
+<!-- ============================================================= -->
+<h2>1. 候选方案对比<span class="tag">请选一个</span></h2>
+
+<p class="note">
+  同一份「置顶会话 / 删除会话 / 查看用户主页」菜单，三种视觉语言的并排对照。全部基于经典终端（默认主题）配色。
+</p>
+
+<div class="row">
+
+  <!-- 方案一 -->
+  <div class="win">
+    <span class="opt-label lbl-b">方案一 · 描边卡片</span>
+    <div class="watch rect">
+      <div class="screen">
+        <div class="scr-bg">
+          <div>私信会话列表</div>
+          <div>会话一 · 你好呀</div>
+          <div>会话二 · 收到了</div>
+          <div>会话三 · 明天见</div>
+        </div>
+        <div class="scrim"></div>
+        <div class="dlg d-b1">
+          <div class="dlg-title">会话操作</div>
+          <div class="dlg-item"><span class="ico">📌</span><span class="lbl">置顶会话</span></div>
+          <div class="dlg-item"><span class="ico">🗑️</span><span class="lbl">删除会话</span></div>
+          <div class="dlg-item"><span class="ico">👤</span><span class="lbl">查看用户主页</span></div>
+          <div class="dlg-actions">
+            <div class="dlg-btn">取消</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cap">
+      沿用现有 <code>AlertDialog</code> 结构，仅换配色 + 描边 + 图标<br>
+      <b>最稳、改动最小</b>
+    </div>
+  </div>
+
+  <!-- 方案二 -->
+  <div class="win">
+    <span class="opt-label lbl-c">方案二 · 终端列表</span>
+    <div class="watch rect">
+      <div class="screen">
+        <div class="scr-bg">
+          <div>私信会话列表</div>
+          <div>会话一 · 你好呀</div>
+          <div>会话二 · 收到了</div>
+          <div>会话三 · 明天见</div>
+        </div>
+        <div class="scrim"></div>
+        <div class="dlg d-b2">
+          <div class="dlg-head">会话操作</div>
+          <div class="dlg-item"><span class="bullet">›</span> <span class="lbl">置顶会话</span></div>
+          <div class="dlg-item"><span class="bullet">›</span> <span class="lbl">删除会话</span></div>
+          <div class="dlg-item"><span class="bullet">›</span> <span class="lbl">查看用户主页</span></div>
+          <div class="dlg-cancel">轻触空白处取消</div>
+        </div>
+      </div>
+    </div>
+    <div class="cap">
+      等宽字体 + <code>›</code> 引导符，去掉按钮行<br>
+      <b>最贴合「经典终端」主题调性</b>
+    </div>
+  </div>
+
+  <!-- 方案三 -->
+  <div class="win">
+    <span class="opt-label lbl-d">方案三 · 底部上滑</span>
+    <div class="watch rect">
+      <div class="screen">
+        <div class="scr-bg">
+          <div>私信会话列表</div>
+          <div>会话一 · 你好呀</div>
+          <div>会话二 · 收到了</div>
+          <div>会话三 · 明天见</div>
+          <div>会话四 · 在吗</div>
+        </div>
+        <div class="scrim light"></div>
+        <div class="dlg d-b3">
+          <div class="grab"></div>
+          <div class="dlg-title">会话操作</div>
+          <div class="dlg-item"><span class="ico">📌</span><span class="lbl">置顶会话</span><span class="chev">›</span></div>
+          <div class="dlg-item"><span class="ico">🗑️</span><span class="lbl">删除会话</span><span class="chev">›</span></div>
+          <div class="dlg-item"><span class="ico">👤</span><span class="lbl">查看用户主页</span><span class="chev">›</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="cap">
+      从底部升起，更符合手表单手操作<br>
+      <b>观感最现代，但改动最大</b>
+    </div>
+  </div>
+
+</div>
+
+<!-- ============================================================= -->
+<h2>2. 单选型（选集 / 选季）<span class="tag">当前最丑的一类</span></h2>
+
+<p class="note">
+  现有 <code>setSingleChoiceItems</code> 的选中态只是一层极淡的底，且<b>没有对勾</b>，
+  用户无法一眼确认「当前选的是哪个」。下面给出加选中指示器的改法。
+</p>
+
+<div class="row">
+  <div class="win">
+    <span class="opt-label lbl-a">现状</span>
+    <div class="watch rect">
+      <div class="screen">
+        <div class="scr-bg"><div>番剧详情</div><div>选集区</div></div>
+        <div class="scrim"></div>
+        <div class="dlg d-current">
+          <div class="dlg-title">选择剧集</div>
+          <div class="dlg-item sel">第 1 话 · 序章</div>
+          <div class="dlg-item">第 2 话 · 启程</div>
+          <div class="dlg-item">第 3 话 · 迷雾</div>
+          <div class="dlg-actions"><div class="dlg-btn neg">取消</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="cap">选中态几乎不可见</div>
+  </div>
+
+  <div class="win">
+    <span class="opt-label lbl-b">方案一 · 加对勾</span>
+    <div class="watch rect">
+      <div class="screen">
+        <div class="scr-bg"><div>番剧详情</div><div>选集区</div></div>
+        <div class="scrim"></div>
+        <div class="dlg d-b1">
+          <div class="dlg-title">选择剧集</div>
+          <div class="dlg-item sel"><span class="ico">✓</span><span class="lbl">第 1 话 · 序章</span></div>
+          <div class="dlg-item"><span class="ico"></span><span class="lbl">第 2 话 · 启程</span></div>
+          <div class="dlg-item"><span class="ico"></span><span class="lbl">第 3 话 · 迷雾</span></div>
+          <div class="dlg-actions"><div class="dlg-btn">取消</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="cap">左侧 3dp 主色条 + <code>✓</code> + 主色文字，三重指示</div>
+  </div>
+
+  <div class="win">
+    <span class="opt-label lbl-c">方案二 · 终端列表</span>
+    <div class="watch rect">
+      <div class="screen">
+        <div class="scr-bg"><div>番剧详情</div><div>选集区</div></div>
+        <div class="scrim"></div>
+        <div class="dlg d-b2">
+          <div class="dlg-head">选择剧集</div>
+          <div class="dlg-item sel"><span class="bullet">▸</span> <span class="lbl">第 1 话 · 序章</span></div>
+          <div class="dlg-item"><span class="bullet" style="opacity:.28">›</span> <span class="lbl">第 2 话 · 启程</span></div>
+          <div class="dlg-item"><span class="bullet" style="opacity:.28">›</span> <span class="lbl">第 3 话 · 迷雾</span></div>
+          <div class="dlg-cancel">轻触空白处取消</div>
+        </div>
+      </div>
+    </div>
+    <div class="cap"><code>▸</code>/<code>›</code> 双态引导符区分选中</div>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>3. 确认型（删除二次确认）<span class="tag">危险操作</span></h2>
+
+<p class="note">
+  8 处 <code>setMessage</code> 确认框。删除类操作应<b>用红色区分</b>，避免与普通确定键混同——
+  现在删除和确认都是同一个粉色，用户容易误触。
+</p>
+
+<div class="row">
+  <div class="win">
+    <span class="opt-label lbl-a">现状</span>
+    <div class="watch rect">
+      <div class="screen">
+        <div class="scr-bg"><div>评论列表</div></div>
+        <div class="scrim"></div>
+        <div class="dlg d-current">
+          <div class="dlg-title">删除评论</div>
+          <div class="dlg-body" style="padding:0 15px 14px;font-size:11.5px;color:#B0A0AA;">
+            删除后无法恢复，确定删除这条评论吗？
+          </div>
+          <div class="dlg-actions">
+            <div class="dlg-btn neg">取消</div>
+            <div class="dlg-btn neg">删除</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cap">「取消」与「删除」同为粉色，无危险语义</div>
+  </div>
+
+  <div class="win">
+    <span class="opt-label lbl-b">建议改法</span>
+    <div class="watch rect">
+      <div class="screen">
+        <div class="scr-bg"><div>评论列表</div></div>
+        <div class="scrim"></div>
+        <div class="dlg d-confirm">
+          <div class="dlg-title">删除评论</div>
+          <div class="dlg-body">删除后无法恢复，确定删除这条评论吗？</div>
+          <div class="dlg-actions">
+            <div class="dlg-btn">取消</div>
+            <div class="dlg-btn danger">删除</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cap">取消=次要灰，删除=<code>#FF6A6A</code> 危险红</div>
+  </div>
+
+  <div class="win">
+    <span class="opt-label lbl-b">同样适用于</span>
+    <div class="watch rect">
+      <div class="screen">
+        <div class="scr-bg"><div>关注分组</div></div>
+        <div class="scrim"></div>
+        <div class="dlg d-confirm">
+          <div class="dlg-title">删除分组</div>
+          <div class="dlg-body">确定删除「游戏」吗？分组里的关注不会取关，只是回到默认分组。</div>
+          <div class="dlg-actions">
+            <div class="dlg-btn">取消</div>
+            <div class="dlg-btn danger">删除</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cap">长文案自动换行，按钮行不被挤压</div>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>4. 设计规格<span class="tag">落地参数</span></h2>
+
+<h3>4.1 颜色 token（以经典终端为例，其余 6 套同构映射）</h3>
+<table>
+  <tr>
+    <th style="width:26%">用途</th><th style="width:22%">取值</th>
+    <th style="width:26%">对应主题 token</th><th>说明</th>
+  </tr>
+  <tr>
+    <td>弹窗容器底色</td>
+    <td><span class="swatch" style="background:#1A1A1A"></span><code>#F21A1A1A</code></td>
+    <td><code>CARD</code> 提亮一档</td>
+    <td>不用 <code>#2A2A35</code> 蓝灰；比卡片略深以拉开层次</td>
+  </tr>
+  <tr>
+    <td>容器描边</td>
+    <td><span class="swatch" style="background:#FF6699"></span><code>#8CFF6699</code></td>
+    <td><code>PRIMARY</code> @ 55%</td>
+    <td>1dp；让弹窗「浮」起来，替代 Material 阴影</td>
+  </tr>
+  <tr>
+    <td>标题文字</td>
+    <td><span class="swatch" style="background:#EBE0E2"></span><code>#EBE0E2</code></td>
+    <td><code>TEXT_PRIMARY</code></td>
+    <td>13sp / 650 字重</td>
+  </tr>
+  <tr>
+    <td>条目文字</td>
+    <td><span class="swatch" style="background:#EBE0E2"></span><code>#EBE0E2</code></td>
+    <td><code>TEXT_PRIMARY</code></td>
+    <td>12.5sp / 常规</td>
+  </tr>
+  <tr>
+    <td>次要文字 / 取消</td>
+    <td><span class="swatch" style="background:#B8AEB2"></span><code>#B8AEB2</code></td>
+    <td><code>TEXT_SECONDARY</code></td>
+    <td>对比纯黑约 9:1，达标 AA</td>
+  </tr>
+  <tr>
+    <td>选中态底</td>
+    <td><span class="swatch" style="background:rgba(255,102,153,.2)"></span><code>#33FF6699</code></td>
+    <td><code>PRIMARY</code> @ 20%</td>
+    <td>比现状的 16% 略强，提高可辨识度</td>
+  </tr>
+  <tr>
+    <td>选中态左侧条</td>
+    <td><span class="swatch" style="background:#FF6699"></span><code>#FF6699</code></td>
+    <td><code>PRIMARY</code></td>
+    <td>3dp 内嵌，替代缺失的单选圆点</td>
+  </tr>
+  <tr>
+    <td>危险操作</td>
+    <td><span class="swatch" style="background:#FF6A6A"></span><code>#FF6A6A</code></td>
+    <td><code>LIKE_COLOR</code> / <code>ERROR</code></td>
+    <td>仅删除类使用</td>
+  </tr>
+  <tr>
+    <td>行分隔线</td>
+    <td><span class="swatch" style="background:#1AFEFEFE"></span><code>#1AFEFEFE</code></td>
+    <td><code>DIVIDER</code> @ 10%</td>
+    <td>比现状 <code>#3A3640</code> 更轻，不抢视觉</td>
+  </tr>
+  <tr>
+    <td>遮罩</td>
+    <td><span class="swatch" style="background:#8C000000"></span><code>#8C000000</code></td>
+    <td>固定黑 @ 55%</td>
+    <td>比 Material 默认更深，突出弹窗本体</td>
+  </tr>
+</table>
+
+<h3>4.2 尺寸与触控（手表端优先）</h3>
+<table>
+  <tr><th style="width:30%">项</th><th style="width:22%">取值</th><th>理由</th></tr>
+  <tr><td>容器圆角</td><td><code>12dp</code></td><td>与 <code>DEFAULT_RADIUS</code> 一致，跟随「卡片圆角」外观设置</td></tr>
+  <tr><td>容器左右留白</td><td><code>10dp</code></td><td>300px 表盘上弹窗宽约 280px，接近满宽但不顶边</td></tr>
+  <tr><td>条目高度</td><td><code>≥44dp</code></td><td>手表 48dp 会显笨重，44dp 是手感与密度的平衡点</td></tr>
+  <tr><td>条目内边距</td><td><code>12dp 15dp</code></td><td>纵向 12 / 横向 15</td></tr>
+  <tr><td>标题区内边距</td><td><code>13dp 15dp 9dp</code></td><td>下方留 9dp 与首条分隔</td></tr>
+  <tr><td>按钮区高度</td><td><code>≥46dp</code></td><td>底行是高频操作，给足热区</td></tr>
+  <tr><td>最大条目数</td><td><code>6</code> 条后滚动</td><td>超出则容器内部滚动，不撑破表盘</td></tr>
+  <tr><td>进入动效</td><td><code>120ms</code> 缩放 0.94→1.0 + 淡入</td><td>手表性能有限，不做复杂过渡</td></tr>
+</table>
+
+<h3>4.3 需要改造的 17 个调用点</h3>
+<table>
+  <tr><th style="width:30%">文件</th><th style="width:14%">行号</th><th style="width:14%">类型</th><th>内容</th></tr>
+  <tr><td><code>adapter/ReplyAdapter.kt</code></td><td>:515</td><td><span class="pill">菜单</span></td><td>置顶评论 / 删除评论</td></tr>
+  <tr><td><code>adapter/ReplyAdapter.kt</code></td><td>:552</td><td><span class="pill">确认</span></td><td>删除评论二次确认</td></tr>
+  <tr><td><code>adapter/dynamic/DynamicHolder.kt</code></td><td>:177</td><td><span class="pill">菜单</span></td><td>动态操作（分享/编辑/删除/置顶）</td></tr>
+  <tr><td><code>adapter/dynamic/DynamicHolder.kt</code></td><td>:225</td><td><span class="pill">确认</span></td><td>删除动态二次确认</td></tr>
+  <tr><td><code>adapter/message/PrivateMsgSessionsAdapter.kt</code></td><td>:135</td><td><span class="pill">菜单</span></td><td>置顶/删除会话/看主页</td></tr>
+  <tr><td><code>adapter/message/PrivateMsgSessionsAdapter.kt</code></td><td>:149</td><td><span class="pill">确认</span></td><td>删除会话二次确认</td></tr>
+  <tr><td><code>activity/dynamic/send/SendDynamicActivity.kt</code></td><td>:293</td><td><span class="pill">菜单</span></td><td>定时发布时间档位</td></tr>
+  <tr><td><code>activity/user/FollowUsersActivity.kt</code></td><td>:139</td><td><span class="pill">菜单</span></td><td>重命名/删除分组</td></tr>
+  <tr><td><code>activity/user/FollowUsersActivity.kt</code></td><td>:214</td><td><span class="pill">确认</span></td><td>删除分组二次确认</td></tr>
+  <tr><td><code>activity/user/favorite/FavoriteVideoListActivity.kt</code></td><td>:304</td><td><span class="pill">菜单</span></td><td>复制到/移动到/取消收藏</td></tr>
+  <tr><td><code>activity/user/favorite/FavoriteVideoListActivity.kt</code></td><td>:320</td><td><span class="pill">菜单</span></td><td>选择目标收藏夹</td></tr>
+  <tr><td><code>activity/user/favorite/FavoriteVideoListActivity.kt</code></td><td>:175</td><td><span class="pill">确认</span></td><td>批量移除二次确认</td></tr>
+  <tr><td><code>activity/user/favorite/FavoriteVideoListActivity.kt</code></td><td>:353</td><td><span class="pill">确认</span></td><td>取消收藏二次确认</td></tr>
+  <tr><td><code>activity/video/info/BangumiInfoFragment.kt</code></td><td>:366</td><td><span class="pill">单选</span></td><td>选季</td></tr>
+  <tr><td><code>activity/video/info/BangumiInfoFragment.kt</code></td><td>:406</td><td><span class="pill">单选</span></td><td>选集</td></tr>
+  <tr><td><code>activity/vote/VoteInfoActivity.kt</code></td><td>:332</td><td><span class="pill">确认</span></td><td>删除投票二次确认</td></tr>
+  <tr><td><code>activity/settings/login/AccountSwitchActivity.kt</code></td><td>:158</td><td><span class="pill">确认</span></td><td>删除账号二次确认</td></tr>
+</table>
+
+<div class="verdict">
+  <b>落地方式（推荐「主题层统一」而非「逐点改代码」）：</b>
+  <ul class="clean">
+    <li>在 7 套主题各加 <code>&lt;item name="alertDialogTheme"&gt;@style/Theme.&lt;X&gt;.Dialog&lt;/item&gt;</code>；</li>
+    <li>新增一个 <code>DialogStyle</code> 基线（圆角 12dp、底色、描边、文字色、按钮色全部引用 <code>?attr/</code>）；</li>
+    <li>7 套主题只覆盖各自的主色/危险色，其余继承基线；</li>
+    <li>17 个调用点<b>无需改动</b>，自动继承；仅「危险操作改红」需在 <code>setPositiveButton</code> 处按需标注（可用一个 <code>DialogUtil</code> 助手收敛）。</li>
+  </ul>
+</div>
+
+<!-- ============================================================= -->
+<h2>5. 待确认事项<span class="tag">需要你拍板</span></h2>
+<table>
+  <tr><th style="width:22%">问题</th><th style="width:34%">选项 A</th><th style="width:34%">选项 B</th><th>倾向</th></tr>
+  <tr>
+    <td>整体视觉语言</td>
+    <td>方案一 · 描边卡片（保守，贴近现有结构）</td>
+    <td>方案二 · 终端列表（等宽字体，贴合默认主题）</td>
+    <td><span class="pill ok">推荐 B</span></td>
+  </tr>
+  <tr>
+    <td>是否上滑式</td>
+    <td>保持居中弹窗</td>
+    <td>方案三 · 底部上滑 Bottom Sheet</td>
+    <td><span class="pill ok">先不上</span></td>
+  </tr>
+  <tr>
+    <td>菜单是否带图标</td>
+    <td>带 emoji/矢量图标，识别更快</td>
+    <td>纯文字，更简洁</td>
+    <td><span class="pill">待定</span></td>
+  </tr>
+  <tr>
+    <td>危险色</td>
+    <td>删除类统一改红 <code>#FF6A6A</code></td>
+    <td>保持主题主色</td>
+    <td><span class="pill ok">推荐 A</span></td>
+  </tr>
+  <tr>
+    <td>范围</td>
+    <td>只改「弹出选择框」</td>
+    <td>顺带统一 17 处确认框</td>
+    <td><span class="pill ok">推荐 B</span></td>
+  </tr>
+</table>
+
+<p class="note" style="margin-top:22px;">
+  说明：本稿为纯静态 HTML 渲染，配色与尺寸均取自仓库真实数值，可直接在浏览器中打开比对。
+  确认方向后我再落地到 <code>themes.xml</code> + <code>ColorScheme</code>，并补写 <code>AGENTS.md</code> 禁令。
+</p>
+
+</div>
+</body>
+</html>

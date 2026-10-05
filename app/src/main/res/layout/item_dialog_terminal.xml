@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  终端列表方案（方案 B）的单个条目。
+
+  三个替身由 Java/Kotlin 侧（util/TerminalDialog.kt）填：
+    · terminal_item_glyph —— 引导符（未选 › / 选中 ▸）
+    · terminal_item_text  —— 条目文字
+    · terminal_item_state —— 文本型状态位（确认框的「」/ 当前项可留空）
+
+  条目自带 44dp 最小高度（手表触控下限），并走 SelectableItemBackgroundBorderless
+  的父级 selectableItemBackground 拿水波纹 —— 水波纹色由主题 colorControlHighlight 决定。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="@dimen/dialog_item_min_height"
+    android:background="?android:attr/selectableItemBackground"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="@dimen/dialog_item_padding_h"
+    android:paddingVertical="@dimen/dialog_item_padding_v">
+
+    <TextView
+        android:id="@+id/terminal_item_glyph"
+        android:layout_width="@dimen/dialog_glyph_width"
+        android:layout_height="wrap_content"
+        android:text="›"
+        android:textColor="?attr/colorPrimary"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/terminal_item_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_weight="1"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:text="条目"
+        android:textColor="?attr/colorOnSurface"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/terminal_item_state"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:textColor="?attr/colorPrimary"
+        android:textSize="12sp" />
+
+</LinearLayout>

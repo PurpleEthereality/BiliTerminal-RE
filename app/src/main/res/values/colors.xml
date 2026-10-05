@@ -507,4 +507,38 @@
     <color name="terminal_deep">#E84B85</color>
     <color name="text_on_primary">#FFFFFF</color>
 
+    <!-- =========================================================== -->
+    <!-- 弹窗语义色（alertDialogTheme overlay 用）                     -->
+    <!--                                                             -->
+    <!-- 为什么需要：弹窗此前没有 overlay，Material 的正文色取自        -->
+    <!-- colorOnSurface、破坏性按钮取自 colorError，两者此前全工程 0 处 -->
+    <!-- 声明，于是回退到 Material 默认值——正文是「Material 默认近白」、 -->
+    <!-- 破坏性按钮是「Material 默认红」，都不跟随本项目的主题。        -->
+    <!--                                                             -->
+    <!-- 取值与 ui/appearance/ColorScheme.kt 各主题的 ON_SURFACE /     -->
+    <!-- ERROR 字段对齐（那边是 Kotlin 色表，这里给 XML 用；两处必须同改）。-->
+    <!-- =========================================================== -->
+
+    <!-- B站粉主题 -->
+    <color name="on_surface_bili">#F0E8EC</color>
+    <color name="error_bili">#E84B85</color>
+    <!-- 知乎蓝主题 -->
+    <color name="on_surface_zhihu">#F0F7FF</color>
+    <color name="error_zhihu">#FF6A6A</color>
+    <!-- 爱奇艺绿主题 -->
+    <color name="on_surface_iqiyi">#E6FDF0</color>
+    <color name="error_iqiyi">#FF6A6A</color>
+    <!-- 紫色空灵主题 -->
+    <color name="on_surface_purple">#F5EBFC</color>
+    <color name="error_purple">#FF6A6A</color>
+    <!-- 五彩斑斓主题 -->
+    <color name="on_surface_rainbow">#FFF5F5</color>
+    <color name="error_rainbow">#FF6A6A</color>
+    <!-- 经典灰主题 -->
+    <color name="on_surface_classic_gray">#EBE0E2</color>
+    <color name="error_classic_gray">#FF6A6A</color>
+    <!-- 经典终端主题（默认） -->
+    <color name="on_surface_terminal">#EBE0E2</color>
+    <color name="error_terminal">#FF6699</color>
+
 </resources>
