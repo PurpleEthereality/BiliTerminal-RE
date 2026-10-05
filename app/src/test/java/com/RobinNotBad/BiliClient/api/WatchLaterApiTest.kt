@@ -22,14 +22,15 @@ class WatchLaterApiTest {
     }
 
     @Test
-    fun isUnfinished_requiresPositiveProgress() {
-        assertFalse(WatchLaterApi.isUnfinished(0, 100))
-        assertFalse(WatchLaterApi.isUnfinished(-5, 100))
+    fun isUnfinished_treatsNeverPlayedAsUnfinished() {
+        // 核心 bug 回归：「从未播放」属于未看完，不能被排除，否则筛选结果为空
+        assertTrue(WatchLaterApi.isUnfinished(0, 100))
+        assertTrue(WatchLaterApi.isUnfinished(0, 0))
     }
 
     @Test
     fun isUnfinished_treatsUnknownDurationAsUnfinished() {
-        // 总时长未知（0）时只看进度，避免整表被判成「已看完」
+        // 总时长未知（<=0）时无法判定看完，一律算未看完，避免整表被判成「已看完」
         assertTrue(WatchLaterApi.isUnfinished(1, 0))
         assertTrue(WatchLaterApi.isUnfinished(50, -1))
     }
@@ -39,6 +40,11 @@ class WatchLaterApiTest {
         assertTrue(WatchLaterApi.isUnfinished(50, 100))
         assertFalse(WatchLaterApi.isUnfinished(100, 100))
         assertFalse(WatchLaterApi.isUnfinished(120, 100))
+    }
+
+    @Test
+    fun isUnfinished_negativeProgressIsStillUnfinished() {
+        assertTrue(WatchLaterApi.isUnfinished(-5, 100))
     }
 
     @Test
@@ -59,14 +65,23 @@ class WatchLaterApiTest {
     }
 
     @Test
-    fun filterUnfinished_returnsOnlyUnfinishedInOriginalOrder() {
+    fun filterUnfinished_keepsNeverPlayedAndDropsFinished() {
+        // 「用户说所有视频都没看完」的场景：进度为 0 的必须留在未看完档位
         val first = card(1, 30, 100)
         val done = card(2, 100, 100)
         val untouched = card(3, 0, 100)
         val unknownDuration = card(4, 5, 0)
         val result = WatchLaterApi.filterUnfinished(listOf(first, done, untouched, unknownDuration), true)
-        assertEquals(listOf(1L, 4L), result.map { it.aid })
+        assertEquals(listOf(1L, 3L, 4L), result.map { it.aid })
         assertSame(first, result[0])
+    }
+
+    @Test
+    fun filterUnfinished_allNeverPlayedIsNotEmpty() {
+        // 全部从未播放时，未看完档位应等于全表（曾经是空的）
+        val list = listOf(card(1, 0, 100), card(2, 0, 200))
+        val result = WatchLaterApi.filterUnfinished(list, true)
+        assertEquals(2, result.size)
     }
 
     @Test
