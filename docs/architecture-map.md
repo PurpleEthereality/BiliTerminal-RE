@@ -290,9 +290,9 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 ### 7.3 结构性风险（改功能时容易放大）
 
-- **巨型类**：`activity/player/PlayerActivity.kt` 127 KB、`service/DownloadService.kt` 65 KB、`activity/video/ShortVideoPlayerActivity.kt` 35 KB。改播放/下载相关功能前先想清楚在哪个位置插入。
+- **巨型类**：`activity/player/PlayerActivity.kt` 127 KB、`activity/video/ShortVideoPlayerActivity.kt` 35 KB。`service/DownloadService.kt` 曾是第二条 65 KB 的巨型类，26.10.04 批次 8（E2）已拆到 **1284 行**，实现分居 `service/download/` 的 4 个文件（见 §7.27）。改播放相关功能前先想清楚在哪个位置插入；改下载相关功能请先读 §7.27 的锁与状态契约。
 - **Application 静态状态已收敛为一套**：26.10.02 起只有 `BiliTerminal.context` / `BiliTerminal.instance`（`BiliTerminal.kt` 伴生对象 `@JvmField`，`:43-44`），`BiliTerminalApp` 已整文件删除。**新代码一律用 `BiliTerminal`**。
-- **测试覆盖仍偏低**：`app/src/test/` 36 个文件（35 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **295 个用例**，对 378 个源文件（26.10.04 批次 7 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`FollowApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`BangumiApiTest`、`DynamicApiTest`、`TopicApiTest`、`NoteApiTest`、`WatchLaterApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`ReplySortTest`、`NetWorkUtilTest`、`PerformanceManagerTest`、`BangumiUpdateCheckerTest`、`MsgNotifierTest`、`ApkVerifierTest`、`SettingsKeysTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
+- **测试覆盖仍偏低**：`app/src/test/` 39 个文件（38 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **327 个用例**，对 383 个源文件（26.10.04 批次 8 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`FollowApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`BangumiApiTest`、`DynamicApiTest`、`TopicApiTest`、`NoteApiTest`、`WatchLaterApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`ReplySortTest`、`NetWorkUtilTest`、`PerformanceManagerTest`、`BangumiUpdateCheckerTest`、`MsgNotifierTest`、`ApkVerifierTest`、`SettingsKeysTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`、`DownloadPathSpecTest`、`DownloadProgressMathTest`、`DownloadBatchStatsTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
 - **主题色表带缓存，失效点只有一处**：`ColorScheme.getCurrentTheme()`（26.09.11 起）缓存当前色表，**只由 `AppearanceManager.setTheme()` 经 `ColorScheme.invalidateCache()` 置空**。这是刻意的——36 个属性 getter 全走它，而列表滚动时一个 item 要调多次，此前每次都重读 SharedPreferences（热路径重复 IO）。**若将来给主题 key 增加第二个写入路径（比如直接 `SharedPreferencesUtil.putString(SettingsKeys.THEME, …)`），必须同步调用 `ColorScheme.invalidateCache()`，否则改主题后色表不跟着变且在 `onResume` 重建后依然错**。守卫测试：`ColorSchemeTest.themeCache_isInvalidatedOnEverySetTheme`、`colorGetters_doNotTouchSharedPreferencesAfterFirstRead`。
 - **主题体系有 3 个"裸 Activity"不参与**：`SplashActivity`、`GetIntentActivity` 不继承 `BaseActivity`（开屏/外链恒定 B站粉），`PlayerActivity` 自己 `setTheme` 但**不调 `applyWindowTheme`、也不参与 `onResume` 主题检测**。改主题相关行为时别以为全局都生效了。
 - **文案硬编码**：遗留页面标题/Toast 直接写中文字符串（Manifest 里 `android:label` 也是中文），只有设置页用 `desc_*` 资源。改文案按现有风格来，别顺手抽 `strings.xml`。
@@ -573,6 +573,26 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 - **系统分组不可编辑**：`isEditableTag(tag) = tag.tagid > 0`——默认分组（`tagid = 0`）与特别关注（`-10`）长按只提示「默认分组和特别关注不能改名或删除」。
 - **分组模式不再过滤 `count == 0` 的分组**：原先 `loadGroupMode()` 只 `addGroup` 关注数 > 0 的分组，导致刚建好的空分组在列表里看不到、也就没法改名/删除；现在全部列出（空分组展开为空）。
 - 增删改成功后一律**整页重拉**（重新 `loadGroupMode()` 造新 adapter——`RefreshListActivity.setAdapter` 只是赋值，没有「只能设一次」的守卫，安全）。
+
+### 7.27 下载服务分层：`DownloadService` 已拆分（26.10.04 批次 8 的 E2）
+
+`app/src/main/java/com/RobinNotBad/BiliClient/service/DownloadService.kt` 从 **1593 行**拆到 **1284 行**，实现按关注点搬到 `service/download/` 下四个新文件（同一 `service` 包的子包，**不是**新模块）。**对外 API 一字未改**——Java/Kotlin 调用点照旧写 `DownloadService.startDownload(...)` / `DownloadService.getDownloadProgress(...)`，`Companion` 里保留全部 10 个 `@JvmStatic` 字段与 24 个 `@JvmStatic` 函数做转发。
+
+| 文件 | 关注点 | 关键点 |
+| --- | --- | --- |
+| `service/download/DownloadPathSpec.kt`（72 行） | 分片路径、分段数、分段区间 | 纯函数，无 IO 无 Context；`DownloadPathSpecTest` 72 行 |
+| `service/download/DownloadProgressMath.kt`（60 行） | `progressForBytes` / `pseudoProgress` / 批次统计 | 纯函数；`DownloadProgressMathTest` 159 行 + `service/DownloadBatchStatsTest` 136 行 |
+| `service/download/DownloadProgressStore.kt`（143 行） | 进程级状态：进度映射、`pausedMap`、累计字节、速度采样 | `internal object`；顶层 `DownloadProgressInfo` 是 **public**（被 public 门面返回） |
+| `service/download/DownloadRepository.kt`（157 行） | DB 访问（`DownloadSqlHelper` 的增删查改） | `firstDown` 与视频元信息写入一起搬入 |
+| `service/download/DownloadNotifier.kt`（122 行） | 通道、两个 Builder、每秒进度、`notifyExit` / `notifyCompletion` | **普通 class 持 Service 引用**，由 `onCreate` new 出来 |
+
+**改下载相关代码前必读的三条**：
+
+1. **锁：`start(Long)` 一行未搬**，仍是 `Companion` 的 `@JvmStatic @Synchronized`（`javap`：`DownloadService$Companion.start(long)` = `public final synchronized`、静态桥 = `public static synchronized`），`started` 的 check-then-act 全靠它；`batchRunning` 守卫（审计 S6）也在原位。**`speedLock`（`DownloadProgressStore` 内）与 Companion 监视器是两把独立的锁，不得互换或合并**——速度采样全程只认 `speedLock`。
+2. **刻意保留的现状，不要"顺手修"**：`speedStr` / `isSpeedMode` / `activeDownloadsCount` **不是** volatile（UI 线程读、下载线程写是既有数据竞争）；`totalBytesDownloaded` 允许被减（失败分片回滚）；死代码 `clear()` 与从未赋值的 `toastTimer` 原样保留。
+3. **`pausedMap` 必须还是同一个实例**：`activity/video/local/DownloadListActivity.kt` 直接对它 add/remove，`Companion.pausedMap` 的 getter 直接返回 `DownloadProgressStore.pausedMap`，**不能复制**。同理 `notifyTimer` / `statusBuilder` / `completionBuilder` / `notifyManager` 仍声明在 Service 实例上（notifier 只读写、不另存），因此 `notifyTimer` 由 `private` 放宽为 `internal`。
+
+**行为契约不变的部分**：channel id `biliterminal_download`、前台通知 `1027`、`notifyExit` 的 `2`、`notifyCompletion` 的 `id % 100 + 100`、download 表 11 列 / version 4、SP 键（`aria2_enabled` / `aria2_split` / `parallel_download_videos`）。**已知的可见性变化**：`DownloadProgressInfo` 的 FQN 由 `DownloadService$Companion$DownloadProgressInfo` 变为 `com.RobinNotBad.BiliClient.service.download.DownloadProgressInfo`（全仓无显式引用，按旧 FQN 反射的代码会失配）。
 
 ---
 
@@ -899,7 +919,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 **不可单测**（内部发网络 / 依赖 Context / 弹 UI）：`DynamicApi.analyzeDynamic`、`MessageApi` 全部解析（SpannableString）、`PrivateMsgApi.getPrivateMsgList`、`LikeCoinFavApi.getVideoStats`。
 
-**测试覆盖现状（26.10.04 批次 7 实测）**：`app/src/test/` 35 个测试类 / 295 个用例；api 层只有 10 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`FollowApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`BangumiApiTest`、`DynamicApiTest`、`TopicApiTest`、`NoteApiTest`、`WatchLaterApiTest`，另有 `PlayerApiPbpTest`、`ReplyApiTest`、`ReplySortTest` 覆盖部分纯逻辑）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口；`PerformanceManagerTest` 覆盖档位换算与图片/分页参数（见 §7.10）；`ApkVerifierTest` 覆盖更新包校验的判定规则（见 §7.11）；`SettingsKeysTest` 把 `player`/`play_qn`/`bangumi_update_notify_enable` 三个磁盘键名钉死（见 §7.12）；`PrivateMsgApiTest` 另覆盖会话列表解析（含 `top_ts`）、`opTypeForTop` 的 0/1 映射（见 §7.13）与图片消息 content 的字段/单位换算（见 §7.14）；`MsgNotifierTest` 覆盖新消息通知的提醒判据与正文拼装（见 §7.15）以及追番更新的文案；`BangumiApiTest` 覆盖追番列表解析（见 §7.16）；`BangumiUpdateCheckerTest` 覆盖追番快照序列化与更新判定（见 §7.16）。
+**测试覆盖现状（26.10.04 批次 8 实测）**：`app/src/test/` 38 个测试类 / 327 个用例；api 层只有 10 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`FollowApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`BangumiApiTest`、`DynamicApiTest`、`TopicApiTest`、`NoteApiTest`、`WatchLaterApiTest`，另有 `PlayerApiPbpTest`、`ReplyApiTest`、`ReplySortTest` 覆盖部分纯逻辑）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口；`PerformanceManagerTest` 覆盖档位换算与图片/分页参数（见 §7.10）；`ApkVerifierTest` 覆盖更新包校验的判定规则（见 §7.11）；`SettingsKeysTest` 把 `player`/`play_qn`/`bangumi_update_notify_enable` 三个磁盘键名钉死（见 §7.12）；`PrivateMsgApiTest` 另覆盖会话列表解析（含 `top_ts`）、`opTypeForTop` 的 0/1 映射（见 §7.13）与图片消息 content 的字段/单位换算（见 §7.14）；`MsgNotifierTest` 覆盖新消息通知的提醒判据与正文拼装（见 §7.15）以及追番更新的文案；`BangumiApiTest` 覆盖追番列表解析（见 §7.16）；`BangumiUpdateCheckerTest` 覆盖追番快照序列化与更新判定（见 §7.16）。
 
 ### API 层的坑
 

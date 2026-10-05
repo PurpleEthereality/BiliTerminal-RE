@@ -1,7 +1,7 @@
 # ReBiliClient 修复进度报告
 
 > 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八/§二十九/§三十
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八/§二十九/§三十/§三十一
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
 
 ---
@@ -2341,6 +2341,70 @@ C20 没有新增纯函数（`buildResources`/`resourceErrorMsg` 已在 C19 测�
 - `docs/architecture-map.md` 新增 §7.26「关注分组增删改」，并把测试数改为 35 个测试类 / 295 个用例（api 层 10 个类被覆盖）。
 - 接口依据：`bilibili-API/docs/user/relation.md:2398-2458`（`x/relation/tag/create`，`tag` 最长 16 字符、错误码 22101/22102/22103/22106）、`:2460-2508`（`.../tag/update`，错误码含 22104）、`:2512-2560`（`.../tag/del`）；输入页复用见 `app/src/main/java/com/RobinNotBad/BiliClient/activity/InputDialogActivity.kt` 与 `app/src/main/java/com/RobinNotBad/BiliClient/activity/video/local/LocalListActivity.kt:46`、`:62-69`、`:302-336`。
 - 批次 7 进度：C18（§二十七）→ C19（§二十八）→ C20（§二十九）→ **C21（本条）**，批次 7 全部完成；下一批 ⑧ E2 拆分 DownloadService + F4 漫画。
+
+---
+
+## 三十一、26.10.04 批次 8（1/2）：拆分 DownloadService（E2）
+
+### 为什么做
+
+调研报告 §12.4 的 E2 列：**拆分 `DownloadService`**（依据是「65KB」）。实测 `app/src/main/java/com/RobinNotBad/BiliClient/service/DownloadService.kt` **1593 行**，一个类里同时装着五类关注点：纯函数（分片路径、进度数学、批次统计）、进程级状态（进度映射 / 暂停标志 / 速度采样）、数据库访问（`DownloadSqlHelper` 的增删查改）、前台通知（通道 / 两个 Builder / 进度定时器）、下载主循环。任何一个下载 bug 都要在上千行里定位，且**这个文件原来一条单测都没有**——因为纯函数和 IO/通知纠缠在同一个类里，拿不出来测。
+
+本次是**行为零变化的结构拆分**：对外 API（Java 侧仍写 `DownloadService.startDownload(...)` / `DownloadService.getDownloadProgress(...)`）一个字都不改，只把实现按关注点搬到 `service/download/` 下，并给纯函数补 JVM 单测。
+
+### 改动
+
+| 提交 | 文件 | 改动 |
+| --- | --- | --- |
+| `51c0306`（1/4） | `service/download/DownloadPathSpec.kt`（72 行）、`service/download/DownloadProgressMath.kt`（60 行）+ 3 个测试文件 | 抽走纯函数：分片路径 / 分段数 / 分段区间、`progressForBytes` / `pseudoProgress`、批次统计；`DownloadService` 内改为调用并保留同名 `@JvmStatic` 门面 |
+| `ea83063`（2/4） | `service/download/DownloadProgressStore.kt`（143 行） | `internal object` 持有 `downloadProgressMap` / `pausedMap` / 累计字节 / `speedSampler` + `speedLock` / `speedStr` / `isSpeedMode`，`Companion` 只留 `@JvmStatic` 转发 |
+| `d48c0fd`（3/4） | `service/download/DownloadRepository.kt`（157 行） | DB 访问（`getFirst` / `getAll` / `deleteSection` / `clear` / `setState` / `firstDown` / 视频元信息写入）整体搬入 |
+| `3cdf02c`（4/4） | `service/download/DownloadNotifier.kt`（122 行） | 通知通道 + 两个 Builder + 每秒进度刷新 + `notifyExit` / `notifyCompletion` 搬入，**普通 class 持 Service 引用**（不可做 object） |
+| 收尾 | `service/DownloadService.kt` | 1593 → **1284 行**；`onCreate` 里 `DownloadNotifier(this).init()`，实例字段只留持有者 |
+
+合计 9 files changed, +1159/−422（含 3 个测试文件 367 行）。
+
+### 取舍
+
+- **只搬实现，不动公开契约**：10 个 `@JvmStatic` 字段 + 24 个 `@JvmStatic` 函数全部保留原签名、原位转发。Java 调用点（`api/PlayerApi.java`）与 Kotlin 调用点（`DownloadListActivity` / `DownloadAdapter`）零改动。用 `javap` 逐项核对过。
+- **`start(Long)` 一行未搬**：它是 Companion 的 `@JvmStatic @Synchronized`，`started` 的 check-then-act 全靠这把锁。行为等价优先于"看起来更干净"，把锁一起搬走风险远大于收益。
+- **两把锁不合并**：`speedLock` 是速度采样自己的锁，与 Companion 监视器从来就是两把；`synchronized(speedLock)` 原样保留、`speedSampler` 与锁对象成对搬进 `DownloadProgressStore`。**换锁即改语义**，注释里已写明"不得互换、合并"。
+- **刻意不加 `volatile`**：`speedStr` / `isSpeedMode` / `activeDownloadsCount` 本来就不是 volatile（UI 线程读、下载线程写，是既有数据竞争）。顺手加 volatile 属于行为变更，不归结构拆分管。
+- **`pausedMap` 必须还是同一个实例**：`DownloadListActivity` 直接对 `DownloadService.pausedMap` 做 add/remove，所以 `Companion` 里用带 getter 的 `val` 转发生成的新实例风险极高——实现上直接返回 `DownloadProgressStore.pausedMap`（同一个 `ConcurrentHashMap`）。
+- **`DownloadNotifier` 是普通 class 而不是 object**：object 是进程级单例，会跨批次抓住第一个 Service 的 Context 与 Timer——服务销毁后定时器还在跑（线程泄漏）且继续往通知栏写已经死掉的服务。实例字段随 Service 回收。
+- **通知可变状态仍留在 Service 实例上**（`statusBuilder` / `completionBuilder` / `notifyManager` / `notifyTimer`）：notifier 只读写、不另存一份，避免"两处真相"。代价是 `notifyTimer` 由 `private` 放宽为 `internal`（M11-d 幂等守卫在 notifier 里）。
+- **`DownloadProgressInfo` 的 FQN 变了**：`DownloadService$Companion$DownloadProgressInfo` → `com.RobinNotBad.BiliClient.service.download.DownloadProgressInfo`。它是 public 门面的返回类型，不能是 internal；全仓无显式引用（调用点靠类型推断），但按旧 FQN 反射的外部代码会失配——记录在此。
+- **死代码原样保留**：`clear()` 与从未赋值的 `toastTimer` 照旧留在原位，删除属于另一件事（本次不做功能/行为变更）。
+- **通知常量与数据库 schema 一个字不动**：channel `biliterminal_download`、前台 id `1027`、`notifyExit` 的 `2`、`notifyCompletion` 的 `id % 100 + 100`、download 表 11 列 / version 4、SP 键（`aria2_enabled` / `aria2_split` / `parallel_download_videos`）。
+
+### 单测
+
+新增 3 个纯 JVM 测试文件 **32 例**（不碰 android，不碰 `SharedPreferences`）：`app/src/test/java/com/RobinNotBad/BiliClient/service/download/DownloadPathSpecTest.kt`（72 行）、`.../service/download/DownloadProgressMathTest.kt`（159 行）、`.../service/DownloadBatchStatsTest.kt`（136 行）。覆盖 0 字节、除零、最后一节、越界 id、负数回滚等边界。测试总数 **38 个测试类 / 327 个用例**（批次 7 后 35 类 / 295 例）。这些用例正是拆分前拿不到的：纯函数原来和 `DownloadSqlHelper`、`NotificationCompat` 混在一个类里。
+
+### 验证
+
+四步每步各自 `.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --no-configuration-cache` → BUILD SUCCESSFUL，测试从 35/295 一路到 38/327/0/0；收尾额外跑了一次 `:app:clean :app:testDebugUnitTest :app:assembleDebug`（`res/` 未动，但本次改动量大，按 AGENTS.md 走 clean 两连），4 个 APK 全部重出、测试仍 38/327/0/0。Lead 复核：`git diff --stat 95b38aa..HEAD` 与声称一致（9 files, +1159/−422，`DownloadService.kt` 1593 → 1284）；删掉 `test-results` 后 `:app:testDebugUnitTest --no-build-cache` **真实重跑**（不是 FROM-CACHE 回放）→ **38 个 XML / 327 个用例 / 0 失败 / 0 错误 / 0 跳过**；`javap` 核对 `DownloadService$Companion.start(long)` 仍是 `public final synchronized`、静态桥 `public static synchronized`，静态字段与函数数量与拆分前一致。
+
+### 真机验证清单
+
+1. 下载一个视频：通知栏前台通知正常出现（标题「下载视频中」、进度随下载更新），完成后「下载结束」通知出现，前台通知消失。
+2. 下载中退出列表页再进来：进度条、速度、状态与退出前一致（说明进度映射仍是同一份）。
+3. 暂停一个下载任务：状态变「已暂停」，其他任务继续；恢复后能继续下载（`pausedMap` 仍是同一实例、`resumeDownload` 能拉起服务）。
+4. 并行下载多个视频：总进度 = 各任务平均，速度是聚合速度（`DownloadProgressStore` 的采样没有被拆坏）。
+5. 下载中断网再恢复：失败分片回滚后继续，累计字节数正确（`addDownloadedBytes(-x)` 仍允许减小）。
+6. 重复拉起点下载 / 服务被 START_STICKY 重建：不会出现两个批次并发写同一文件（`start()` 的 `@Synchronized` 未动，`batchRunning` 守卫仍在）。
+7. 下载完成后杀掉 App 再打开：已下载条目、封面、质量列表正常（DB 访问搬到 `DownloadRepository` 后写入一致）。
+8. 删除一条下载记录、清空全部记录：列表与数据库同步变化。
+9. 通知每秒刷新不造成卡顿或崩溃；后台放置 10 分钟后回来，进度通知仍在刷新（定时器挂在 Service 实例上、随 Service 销毁而 cancel）。
+10. 长时间下载后查看日志：无 `DownloadService` 相关异常刷屏；不出现"通知停止更新但服务还在下载"（TimerTask 异常已被吞掉并记日志）。
+
+### 交叉引用
+
+- 调研报告 §12.4 的 E2 行改为「已实现（26.10.04 批次 8）」；§12.6 测试数改 38 类 / 327 例；§12.7 的「想要实现」行与批次顺序 ⑧ 同步；F4 漫画由用户裁为**不做**（见下条）。
+- **F4 漫画本轮不做**：勘察确认快照 `bilibili-API/docs/manga/` 只有 `comic.v1.Comic/ComicDetail`（详情）、`GetImageIndex`（章节图片）、`ImageToken`（取图 token）、`BuyEpisode`，**没有任何「追漫 / 收藏漫画列表」接口**（全库 grep `追漫`/`收藏`/`Favorite` 只命中 `bilibili-API/docs/user/space.md:866` 的追漫**计数**），也没有漫画搜索接口；项目内漫画实现为零（只有 `activity/user/VipActivity.kt:79-80` 的会员权益文案）。原范围「追漫列表 + 详情 + 长条阅读器」缺了首环就无法闭环，用户 26.10.04 明确「漫画算了」→ 从「想要实现」移出，记为**不做**（不是暂缓：暂缓意味着还打算做）。
+- `docs/architecture-map.md` 新增 §7.27「下载服务分层」，并把测试数改为 38 个测试类 / 327 个用例。
+- 接口/结构依据：拆分前 `app/src/main/java/com/RobinNotBad/BiliClient/service/DownloadService.kt`（1593 行，`Companion` 52–491、实例成员 493–1592）；外部调用点 `app/src/main/java/com/RobinNotBad/BiliClient/api/PlayerApi.java:74/79/95/100`、`app/src/main/java/com/RobinNotBad/BiliClient/activity/video/local/DownloadListActivity.kt:83/84/86/118/131/164/170/175/176/178` 等、`app/src/main/java/com/RobinNotBad/BiliClient/adapter/video/DownloadAdapter.kt:63/121/128`。
+- 批次 8 进度：**E2（本条）✅** → F4 漫画 ❌（不做）。批次 8 结束，8 批落地顺序全部走完。
 
 
 

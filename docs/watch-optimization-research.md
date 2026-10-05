@@ -683,7 +683,7 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | D5 | 搜索优先点选候选词 | **基本已实现**（勘误）：建议列表 `SearchActivity.kt:232-239` 点击即 `setText` + 直接搜索；输入框 `:197-202` 会主动弹键盘。**仅剩「搜索历史点击只填入、不触发搜索」（`:213`），该项 = 暂缓** |
 | D6 | 常亮屏 ambient | 无计划 | 官方不建议，且视频场景本就亮屏 |
 | E1 | 拆分 `PlayerActivity` | 暂缓 | 实测 **3494 行**，大重构且无界面测试兜底 |
-| E2 | 拆分 `DownloadService` | 想要实现 | 65KB |
+| E2 | 拆分 `DownloadService` | **已实现（26.10.04 批次 8）** | 实测 **1593 行**（原述 65KB）；拆成 4 步 4 提交（`51c0306` / `ea83063` / `d48c0fd` / `3cdf02c`）：`service/download/DownloadPathSpec.kt` + `DownloadProgressMath.kt`（纯函数）、`DownloadProgressStore.kt`（`internal object` 持进度/暂停/速度采样）、`DownloadRepository.kt`（DB 访问）、`DownloadNotifier.kt`（**普通 class 持 Service 引用，不可 object**，否则跨批次泄漏 Context 与 Timer）。`DownloadService.kt` 1593 → **1284 行**；对外 10 个 `@JvmStatic` 字段 + 24 个函数签名零改动（`javap` 核对），`start(Long)` 的 `@JvmStatic @Synchronized` 一行未搬，`speedLock` 与 Companion 监视器仍是两把锁、不合并不互换；`pausedMap` 仍返回同一 `ConcurrentHashMap` 实例；channel `biliterminal_download`、前台 id 1027、download 表 11 列/version 4 未动。`DownloadProgressInfo` 的 FQN 变为 `service.download.DownloadProgressInfo`（public 门面返回类型，不能 internal）；`notifyTimer` 由 `private` 放宽为 `internal`。新增 32 例纯 JVM 单测。详见 `docs/review/fix-progress.md` §三十一 |
 | E3 | 补单元测试 | 想要实现 | 持续投入；现状见 §12.6 |
 | E4 | `SettingsKeys` 收敛收尾 | **已实现（26.10.04 批次 4）** | 勘误：字面量是 **13 处**不是 14 处（`SettingMainActivity.kt:118` 的 `"player"` 是分组 id 不是 SP 键；`SharedPreferencesUtil.java:59` 是定义）。13 处全部改调 `SettingsKeys.PLAYER`/`PLAY_QN`，并删掉 `SharedPreferencesUtil.player` 死字段；`SettingsKeysTest` 2 例钉死键名 |
 | E5 | 删死方法 `SharedPreferencesUtil.beginBatchEdit` | **已实现（26.10.04 批次 4）** | 连同同类的 `applyBatch(Runnable)` 一起删（两个都零调用且都是"拿到 editor 就丢"的假批量 API）；保留真正在用的 `edit(Consumer<Editor>)` |
@@ -691,30 +691,31 @@ private fun applyLowPerfSettings() {          // :189  注释写着"低性能设
 | F1 | 创作中心 / 会员购 / 课堂 / 直播礼物 / 舰长 / 桌面小组件 / 多窗口 | 无计划 | 手表端无场景或成本极高 |
 | F2 | DLNA 投屏 / 超分辨率 / Live Photo / AI 原声翻译 / 互动视频增强 | 无计划 | 需解码或服务端能力，超出纯客户端 |
 | F3 | 关注粉丝列表管理 / 登录密码短信 / 风纪委员 / 入站考试 | 无计划 | 低频 / 与手表定位不符 |
-| F4 | 漫画（**F1 中单独捞回**） | 想要实现 | 范围 = 追漫列表 + 漫画详情 + 长条阅读器；工期约 5~6 天 |
+| F4 | 漫画（**F1 中单独捞回**） | **不做**（用户 26.10.04 裁定） | 原范围 = 追漫列表 + 漫画详情 + 长条阅读器。勘察发现快照 `bilibili-API/docs/manga/` 只有 `comic.v1.Comic/ComicDetail`、`GetImageIndex`、`ImageToken`、`BuyEpisode`（赛季/漫读券/签到另算），**没有「追漫 / 收藏漫画列表」接口**（全库 grep `追漫`/`收藏`/`关注`/`Favorite` 只命中 `bilibili-API/docs/user/space.md:866` 的追漫**计数**），也没有漫画搜索接口；项目内漫画实现为零（只有 `activity/user/VipActivity.kt:79-80` 的会员权益文案）。首环无数据源即无法闭环，故不做（不是暂缓） |
 
 ### 12.6 勘误与台账数字更新
 
 - **D2 / D3 / D5 原被本文 §8 列为待办，核实后为「已实现」**，相应条目作废（D5 只剩历史点击一个 10 分钟小项，已裁为暂缓）。
 - `activity/player/PlayerActivity.kt` 实际 **3494 行**（原述 3090 行）。
-- 单元测试实际 **35 个测试类 / 295 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例、C12 同文件 +4 例、C14 新增 `util/MsgNotifierTest` 5 例、C16 新增 `api/BangumiApiTest` 6 例 + `util/BangumiUpdateCheckerTest` 8 例 + `MsgNotifierTest`/`SettingsKeysTest` 各 +1 例；批次 6 的 C3 在 `api/ReplyApiTest` +2 例、`model/ReplyParseActionTest` +3 例，C4 新增 `model/ReplySortTest` 6 例，C6b 在 `api/ReplyApiTest` +2 例，C7 新增 `api/DynamicApiTest` 6 例、C8 同文件 +5 例、C9 同文件 +5 例，C10 新增 `api/TopicApiTest` 4 例、C27 新增 `api/NoteApiTest` 12 例、C18 新增 `api/WatchLaterApiTest` 7 例、C19 在 `api/FavoriteApiTest` +5 例、C21 新增 `api/FollowApiTest` 5 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
+- 单元测试实际 **38 个测试类 / 327 个用例**（26.10.03 原述 16 类 / 112 例；26.10.04 批次 1 后 21 类 / 165 例；批次 2 新增 `api/ReplyApiTest` 9 例、`model/ReplyParseActionTest` 4 例、`util/NetWorkUtilTest` +6 例；批次 3 新增 `util/PerformanceManagerTest` 10 例；批次 4 新增 `util/SettingsKeysTest` 2 例、`util/ApkVerifierTest` 8 例；批次 5 的 C13 在 `api/PrivateMsgApiTest` 内 +3 例、C12 同文件 +4 例、C14 新增 `util/MsgNotifierTest` 5 例、C16 新增 `api/BangumiApiTest` 6 例 + `util/BangumiUpdateCheckerTest` 8 例 + `MsgNotifierTest`/`SettingsKeysTest` 各 +1 例；批次 6 的 C3 在 `api/ReplyApiTest` +2 例、`model/ReplyParseActionTest` +3 例，C4 新增 `model/ReplySortTest` 6 例，C6b 在 `api/ReplyApiTest` +2 例，C7 新增 `api/DynamicApiTest` 6 例、C8 同文件 +5 例、C9 同文件 +5 例，C10 新增 `api/TopicApiTest` 4 例、C27 新增 `api/NoteApiTest` 12 例、C18 新增 `api/WatchLaterApiTest` 7 例、C19 在 `api/FavoriteApiTest` +5 例、C21 新增 `api/FollowApiTest` 5 例；批次 8 的 E2 新增 `service/download/DownloadPathSpecTest` 72 行 + `service/download/DownloadProgressMathTest` 159 行 + `service/DownloadBatchStatsTest` 136 行，共 +32 例）；`app/build.gradle` 已含 `testImplementation 'org.json:json:20231013'`，JVM 单测可直接用 `org.json`，但**纯解析函数里不得调用 `android.util.Log`**（未开 `returnDefaultValues`，会抛 not-mocked）。
 - **本文 §10.4 与用户裁决存在三处冲突，以本台账为准**：① §10.4 把「关注主播开播提醒」列为"高价值低成本、值得做"，用户裁为**无计划**；② §10.4 把「漫画」列入"明确不值得做"，用户裁为**想要实现（F4）**；③ §10.4 把「收藏夹批量整理」「发布动态/评论/弹幕」列入"明确不值得做"，用户分别裁为**想要实现（C19/C20）**与**想要实现（C7/C9/C10）**——即"需要输入"不是本项目的否决理由（无键盘只影响输入方式，不影响功能取舍）。
 
 ### 12.7 量化汇总与建议顺序
 
 | 结论 | 项数 |
 |---|---|
-| 想要实现 | 36（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C12 / C13 / C14 / C16 已于批次 5 落地、C3 / C4 / C6b / C7 / C8 / C9 / C10 / C27 已于批次 6 落地，C18 / C19 / C20 / C21 已于批次 7 落地，剩 10） |
+| 想要实现 | 35（其中 A1 / A10 已于 26.10.04 批次 2 落地、B1 / B2 / B3 / B5 / B8 已于批次 3 落地、E4 / E5 / E6 已于批次 4 落地、C12 / C13 / C14 / C16 已于批次 5 落地、C3 / C4 / C6b / C7 / C8 / C9 / C10 / C27 已于批次 6 落地，C18 / C19 / C20 / C21 已于批次 7 落地，E2 已于批次 8 落地；F4 漫画由用户 26.10.04 裁为**不做**并从本行移入「无计划」，故总数 36 → 35、剩 **8**） |
 | 暂缓 | 10 |
-| 无计划 | 25 |
+| 无计划 | 26（含 26.10.04 从「想要实现」移入的 F4 漫画） |
 | 已经实现（勘误） | 4（D2 / D3 / D5 主体，另 C3·C6·C8 的「已实现」子项） |
 | **26.10.04 批次 1/2/3 落地** | 6（A2 A3 A4 A5 A6 + A10）+ 5（B1 B2 B3 B5 B8）；2 项勘误作废（A11 A12） |
 | **26.10.04 批次 4 落地** | 3（E4 E5 E6），另有 2 项勘误（E4 字面量 13 处而非 14 处；`applyBatch` 与 `beginBatchEdit` 同类一并删） |
 | **26.10.04 批次 5 落地** | 4（C13 会话删除 + 置顶/取消置顶；C12 私信发图；C14 新消息通知栏提醒；C16 追番更新提醒），本批 4 项全部完成 |
 | **26.10.04 批次 6 落地** | 8 项全部完成（C3 评论置顶/删除菜单；C4 楼中楼排序；C6b 带图评论发送闸门；C7 动态编辑；C8 动态置顶/取消；C9 动态定时发布；C10 话题广场 + 话题动态列表；C27 视频笔记查看），每项（或小分组）独立提交，见 `docs/review/fix-progress.md` §十九~§二十六 |
 | **26.10.04 批次 7 落地** | 全部完成（4/4）：C18 稍后再看「未看完」分类见 §二十七、C19 收藏夹排序/复制/移动见 §二十八、C20 收藏夹多选删除见 §二十九、C21 关注分组增删改见 §三十 |
+| **26.10.04 批次 8 落地** | E2 拆分 `DownloadService`（4 步 4 提交 `51c0306`/`ea83063`/`d48c0fd`/`3cdf02c`，1593 → 1284 行 + 4 个新文件，对外契约零改动，+32 例单测）见 §三十一；F4 漫画**不做**（追漫列表无接口） |
 
-**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（**批次 5 全部完成**：C13 ✅ 见 §十五；C12 ✅ 见 §十六；C14 ✅ 见 §十七；C16 ✅ 见 §十八，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27（**批次 6 全部完成**：C3 ✅ 见 §十九；C4 ✅ 见 §二十；C6b ✅ 见 §二十一；C7 ✅ 见 §二十二；C8 ✅ 见 §二十三；C9 ✅ 见 §二十四；C10 ✅ 见 §二十五；C27 ✅ 见 §二十六）→ ⑦ C18 C19 C20 C21（**批次 7 全部完成**：C18 ✅ 见 §二十七；C19 ✅ 见 §二十八；C20 ✅ 见 §二十九；C21 ✅ 见 §三十）→ ⑧ E2 DownloadService + F4 漫画；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
+**已确认的 8 批落地顺序（用户 26.10.04 拍板，取代下面这段原「建议顺序」）**：① A2 A3 A4 A5 A6（✅已提交 `9580705`）→ ② A1 + A10（✅已提交 `94a2b80`，见 `docs/review/fix-progress.md` §十二）→ ③ B1 B2 B3 B5（限推荐/热门/搜索）B8（✅已提交 `a683954`，见 §十三）→ ④ E4 E5 E6（✅已提交 `35fc507`，见 §十四）→ ⑤ C12 C13 C14 C16（**批次 5 全部完成**：C13 ✅ 见 §十五；C12 ✅ 见 §十六；C14 ✅ 见 §十七；C16 ✅ 见 §十八，各自独立提交）→ ⑥ C3 C4 C6b C7 C8 C9 C10 C27（**批次 6 全部完成**：C3 ✅ 见 §十九；C4 ✅ 见 §二十；C6b ✅ 见 §二十一；C7 ✅ 见 §二十二；C8 ✅ 见 §二十三；C9 ✅ 见 §二十四；C10 ✅ 见 §二十五；C27 ✅ 见 §二十六）→ ⑦ C18 C19 C20 C21（**批次 7 全部完成**：C18 ✅ 见 §二十七；C19 ✅ 见 §二十八；C20 ✅ 见 §二十九；C21 ✅ 见 §三十）→ ⑧ E2 DownloadService + F4 漫画（**批次 8 结束**：E2 ✅ 见 §三十一；F4 ❌ 用户裁为不做——快照与公开文档均无「追漫列表」接口，见 §12.4 F4 行）；E3 补单测贯穿每一批。**写操作类（C3/C7/C8/C9/C10/C13/C19/C20）必须排在 A1 之后**，否则 csrf 用旧快照会被风控回 -111/-412。
 
 ---
 
