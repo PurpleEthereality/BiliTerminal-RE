@@ -7,8 +7,6 @@ import android.util.Log
 import android.view.View
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
-
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.InputDialogActivity
 import com.RobinNotBad.BiliClient.activity.base.RefreshListActivity
@@ -20,6 +18,7 @@ import com.RobinNotBad.BiliClient.model.UserInfo
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
+import com.RobinNotBad.BiliClient.util.TerminalDialog
 
 class FollowUsersActivity : RefreshListActivity() {
 
@@ -107,6 +106,7 @@ class FollowUsersActivity : RefreshListActivity() {
                     groupAdapter = FollowGroupAdapter(this@FollowUsersActivity)
                     groupAdapter!!.setOnGroupExpandListener { tagid -> loadGroupUsers(tagid) }
                     groupAdapter!!.setOnGroupLongClickListener { tag -> showGroupMenu(tag) }
+                    groupAdapter!!.setOnUserLongClickListener { tag, user -> showMoveUserDialog(tag, user) }
                     setAdapter(groupAdapter!!)
                     // 空分组也要列出来，否则刚建好的分组在列表里看不到、也就没法改名/删除
                     for (tag in tagList) {
@@ -136,16 +136,77 @@ class FollowUsersActivity : RefreshListActivity() {
             MsgUtil.showMsg("默认分组和特别关注不能改名或删除")
             return
         }
-        AlertDialog.Builder(this)
-            .setTitle(tag.name)
-            .setItems(arrayOf("重命名分组", "删除分组")) { _, which ->
-                when (which) {
-                    0 -> showRenameGroupDialog(tag)
-                    1 -> showDeleteGroupDialog(tag)
+        // 「删除分组」是破坏性操作（索引 1），用危险色标出来
+        TerminalDialog.menu(
+            context = this,
+            title = tag.name,
+            items = listOf("重命名分组", "删除分组"),
+            danger = setOf(1)
+        ) { which ->
+            when (which) {
+                0 -> showRenameGroupDialog(tag)
+                1 -> showDeleteGroupDialog(tag)
+            }
+        }.show()
+    }
+
+    // ==================== 移动成员到其它分组（26.10.04 批次 7 的 C22） ====================
+
+    /**
+     * 长按分组里的成员 → 选一个目标分组 → 调 `x/relation/tags/moveUsers` 移过去。
+     *
+     * 目标分组列表排除**当前分组**（移到自己等于什么都没做），但**保留默认分组**
+     * （tagid 0）——那是把成员移出分组、而不是取关的唯一办法。
+     */
+    private fun showMoveUserDialog(fromTag: FollowTag, user: UserInfo) {
+        val targets = groupAdapter?.groupList
+            ?.map { it.tag }
+            ?.filter { it.tagid != fromTag.tagid }
+            ?: emptyList()
+
+        if (targets.isEmpty()) {
+            MsgUtil.showMsg("还没有别的分组可以移过去")
+            return
+        }
+
+        val items = targets.map { it.name }
+        TerminalDialog.singleChoice(
+            context = this,
+            title = "把「${user.name}」移动到",
+            items = items
+        ) { sheet, which ->
+            sheet.dialog.dismiss()
+            val target = targets.getOrNull(which) ?: return@singleChoice
+            confirmMoveUser(fromTag, target, user)
+        }.show()
+    }
+
+    /** 移动是写操作、会改变分组归属，先确认一次再发请求 */
+    private fun confirmMoveUser(fromTag: FollowTag, toTag: FollowTag, user: UserInfo) {
+        TerminalDialog.confirm(
+            context = this,
+            title = "移动分组",
+            message = "把「${user.name}」从「${fromTag.name}」移动到「${toTag.name}」？",
+            confirmText = "移动",
+            confirmIsDanger = false
+        ) {
+            CenterThreadPool.run {
+                try {
+                    val code = FollowApi.moveFollowTagUsers(fromTag.tagid, toTag.tagid, listOf(user.mid))
+                    runOnUiThread {
+                        if (code == 0) {
+                            MsgUtil.showMsg("已移动到「${toTag.name}」")
+                            // 分组归属和人数都变了，整页重拉最稳（服务端才是唯一真相）
+                            loadGroupMode()
+                        } else {
+                            MsgUtil.showMsg(FollowApi.tagErrorMsg(code))
+                        }
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread { MsgUtil.err("移动分组失败", e) }
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }.show()
     }
 
     private fun showCreateGroupDialog() {
@@ -211,28 +272,28 @@ class FollowUsersActivity : RefreshListActivity() {
     }
 
     private fun showDeleteGroupDialog(tag: FollowTag) {
-        AlertDialog.Builder(this)
-            .setTitle("删除分组")
-            .setMessage("确定删除「${tag.name}」吗？\n分组里的关注不会取关，只是回到默认分组。")
-            .setPositiveButton("删除") { _, _ ->
-                CenterThreadPool.run {
-                    try {
-                        val code = FollowApi.deleteFollowTag(tag.tagid)
-                        runOnUiThread {
-                            if (code == 0) {
-                                MsgUtil.showMsg("分组已删除")
-                                loadGroupMode()
-                            } else {
-                                MsgUtil.showMsg(FollowApi.tagErrorMsg(code))
-                            }
+        TerminalDialog.confirm(
+            context = this,
+            title = "删除分组",
+            message = "确定删除「${tag.name}」吗？\n分组里的关注不会取关，只是回到默认分组。",
+            confirmText = "删除"
+        ) {
+            CenterThreadPool.run {
+                try {
+                    val code = FollowApi.deleteFollowTag(tag.tagid)
+                    runOnUiThread {
+                        if (code == 0) {
+                            MsgUtil.showMsg("分组已删除")
+                            loadGroupMode()
+                        } else {
+                            MsgUtil.showMsg(FollowApi.tagErrorMsg(code))
                         }
-                    } catch (e: Exception) {
-                        runOnUiThread { MsgUtil.err("删除分组失败", e) }
                     }
+                } catch (e: Exception) {
+                    runOnUiThread { MsgUtil.err("删除分组失败", e) }
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }.show()
     }
 
     fun loadGroupUsers(tagid: Int) {

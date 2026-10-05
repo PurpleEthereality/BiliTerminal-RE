@@ -25,11 +25,11 @@ import com.RobinNotBad.BiliClient.ui.widget.recycler.CustomLinearManager
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.MsgNotifier
 import com.RobinNotBad.BiliClient.util.MsgUtil
+import com.RobinNotBad.BiliClient.util.SessionSorter
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.google.android.material.card.MaterialCardView
 
 import org.json.JSONObject
-import java.util.Collections
 
 class MessageActivity : InstanceActivity() {
     private lateinit var sessionsView: RecyclerView
@@ -127,17 +127,9 @@ class MessageActivity : InstanceActivity() {
             try {
                 val stats = MessageApi.getUnread()
                 val sessionsList = PrivateMsgApi.getSessionsList(20)
-                Collections.sort(sessionsList) { o1, o2 ->
-                    val o1Unread = o1.unread > 0
-                    val o2Unread = o2.unread > 0
-                    if (o1Unread && !o2Unread) {
-                        -1
-                    } else if (!o1Unread && o2Unread) {
-                        1
-                    } else {
-                        0
-                    }
-                }
+                // 置顶优先 → 未读优先 → 维持服务端原序。原先只按「未读优先」排，
+                // 会把置顶但没未读的会话挤到下面去（见 SessionSorter 的类注释）。
+                SessionSorter.sort(sessionsList)
                 val uidList = ArrayList<Long>()
                 for (item in sessionsList) {
                     uidList.add(item.talkerUid)

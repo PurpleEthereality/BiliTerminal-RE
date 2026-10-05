@@ -13,7 +13,9 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 
@@ -152,6 +154,61 @@ public class FollowApi {
         return postTag("https://api.bilibili.com/x/relation/tag/del", formData);
     }
 
+    /**
+     * 把关注的人从一个分组移动到另一个分组（26.10.04 批次 7 的 C22）。
+     *
+     * 对应 `POST https://api.bilibili.com/x/relation/tags/moveUsers`，
+     * 参数 `beforeTagids`（原分组 id）/ `afterTagids`（新分组 id）/ `fids`（用户 mid 列表，逗号分隔）。
+     *
+     * 注意：这里是**移动**，不是取关，也不是「复制到多个分组」（那是 tags/addUsers）。
+     * 想把人移出分组而不取关，就把 [afterTagid] 传 0（默认分组）。
+     *
+     * @param beforeTagid 原分组 id（当前所在分组）
+     * @param afterTagid  新分组 id；0 表示默认分组
+     * @param fids        待移动的用户 mid 列表
+     * @return 服务端 code（0 成功）
+     */
+    public static int moveFollowTagUsers(int beforeTagid, int afterTagid, List<Long> fids) throws IOException, JSONException {
+        if (fids == null || fids.isEmpty()) return -400;
+        NetWorkUtil.FormData formData = new NetWorkUtil.FormData();
+        for (Map.Entry<String, String> entry : moveUsersFields(beforeTagid, afterTagid, fids, NetWorkUtil.currentCsrf()).entrySet()) {
+            formData.put(entry.getKey(), entry.getValue());
+        }
+        return postTag("https://api.bilibili.com/x/relation/tags/moveUsers", formData);
+    }
+
+    /**
+     * 组装 `tags/moveUsers` 的请求字段（纯函数，便于 JVM 单测）。
+     *
+     * 抽出来是为了**能断言字段名**：`beforeTagids`/`afterTagids`/`fids` 这三个名字是本接口最容易
+     * 写错又最难在真机上发现的坑（服务端对错字段名一律回 -400，看起来像「请求出错」）。
+     * 注意接口用的是**复数** `beforeTagids`/`afterTagids`（单分组也传单值）。
+     * 抽成 `Map` 而非 `FormData` 是为了不把 `NetWorkUtil`（依赖 Android）拖进单测。
+     *
+     * @return 字段名 → 字段值（顺序不保证）
+     */
+    public static Map<String, String> moveUsersFields(int beforeTagid, int afterTagid, List<Long> fids, String csrf) {
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("beforeTagids", String.valueOf(beforeTagid));
+        fields.put("afterTagids", String.valueOf(afterTagid));
+        fields.put("fids", joinMids(fids));
+        fields.put("csrf", csrf == null ? "" : csrf);
+        return fields;
+    }
+
+    /**
+     * 把 mid 列表拼成接口要的逗号分隔形式（纯函数，便于 JVM 单测）。
+     */
+    public static String joinMids(List<Long> fids) {
+        if (fids == null || fids.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < fids.size(); i++) {
+            if (i > 0) sb.append(',');
+            sb.append(fids.get(i));
+        }
+        return sb.toString();
+    }
+
     private static int postTag(String url, NetWorkUtil.FormData formData) throws IOException, JSONException {
         JSONObject result = new JSONObject(Objects.requireNonNull(NetWorkUtil.post(url, formData.toString(), NetWorkUtil.webHeaders).body()).string());
         return result.optInt("code", -1);
@@ -176,6 +233,8 @@ public class FollowApi {
                 return "分组名太长了，最多 " + TAG_NAME_MAX_LENGTH + " 个字";
             case 22104:
                 return "这个分组不存在，可能已经被删了";
+            case 22105:
+                return "你还没有关注这个人";
             case 22106:
                 return "已经有同名的分组了";
             default:

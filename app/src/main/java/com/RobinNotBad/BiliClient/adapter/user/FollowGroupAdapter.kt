@@ -32,6 +32,7 @@ class FollowGroupAdapter(
     val expandedMap: MutableMap<Int, Boolean> = HashMap()
     private var expandListener: OnGroupExpandListener? = null
     private var groupLongClickListener: ((FollowTag) -> Unit)? = null
+    private var userLongClickListener: ((FollowTag, UserInfo) -> Unit)? = null
 
     fun interface OnGroupExpandListener {
         fun onGroupExpand(tagid: Int)
@@ -44,6 +45,16 @@ class FollowGroupAdapter(
     /** 长按分组标题（分组增删改的入口，26.10.04 批次 7 的 C21） */
     fun setOnGroupLongClickListener(listener: ((FollowTag) -> Unit)?) {
         this.groupLongClickListener = listener
+    }
+
+    /**
+     * 长按分组里的成员（把成员移到其它分组的入口，26.10.04 批次 7 的 C22）。
+     *
+     * 回调带上成员所在的 [FollowTag]，因为移动接口必须知道**原分组 id**
+     * （`beforeTagids`），而成员项自身不记得自己在哪个分组里。
+     */
+    fun setOnUserLongClickListener(listener: ((FollowTag, UserInfo) -> Unit)?) {
+        this.userLongClickListener = listener
     }
 
     fun addGroup(tag: FollowTag, users: MutableList<UserInfo>) {
@@ -193,6 +204,30 @@ class FollowGroupAdapter(
         return null
     }
 
+    /**
+     * 成员项 [position] 属于哪个分组。
+     *
+     * 与 [getGroupForPosition] 的区别：后者对**成员位置**也会返回该组（用于取分组头本身），
+     * 而这里只在位置确实落在某个展开组的成员区间时才返回。移动成员需要的就是后者——
+     * 必须知道原分组 id（`beforeTagids`）。
+     */
+    private fun getUserOwnerGroup(position: Int): GroupItem? {
+        var currentPos = 0
+        for (group in groupList) {
+            currentPos++
+
+            val expanded = expandedMap[group.tag.tagid]
+            if (expanded != null && expanded) {
+                val userCount = group.users.size
+                if (position >= currentPos && position < currentPos + userCount) {
+                    return group
+                }
+                currentPos += userCount
+            }
+        }
+        return null
+    }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
         if (viewType == TYPE_GROUP) {
             val view = LayoutInflater.from(context).inflate(R.layout.cell_follow_group, parent, false)
@@ -254,6 +289,18 @@ class FollowGroupAdapter(
                 if (user.mid != -1L) {
                     holder.itemView.setOnClickListener {
                         BiliTerminal.jumpToUser(context, user.mid)
+                    }
+                }
+
+                // 长按成员 = 把 TA 移到别的分组（C22）。必须找回成员所在的分组，
+                // 因为移动接口要传原分组 id（beforeTagids）。
+                holder.itemView.setOnLongClickListener {
+                    val owner = getUserOwnerGroup(position)
+                    if (owner != null) {
+                        userLongClickListener?.invoke(owner.tag, user)
+                        true
+                    } else {
+                        false
                     }
                 }
             }
