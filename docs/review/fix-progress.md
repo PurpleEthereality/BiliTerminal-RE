@@ -4345,3 +4345,57 @@ return NONE
 - `FavoriteApi`、`VideoCardAdapter` 的勾选数据流（`selectedAids`/`selectionMode` 仍在页面侧持有）：未动。
 - 布局里 `manageToggle`/`manageDelete` 由 `Activity` 持有的引用与点击回调：未动（只是可见性跟着多选态走）。
 
+---
+
+## 四十、Release 说明漏掉更新日志：根因与兜底（26.10.05 发版后）
+
+### 40.1 现象
+
+26.10.05 的 GitHub Release 正文只有三样东西：`### APK 校验值（MD5）` 表、
+`<!-- update: versionCode=2610050 versionName=26.10.05 forceUpdate=false -->` 机器可读元数据、
+以及 GitHub 自动生成的 `**Full Changelog**` commits 链接 —— **没有「本次更新」说明**。
+用户点进 Release 看不到这版改了什么（更新日志只写在 App 内的「更新历史」页）。
+
+### 40.2 根因
+
+`.github/workflows/build-release.yml` 的「计算发行 tag 与发布说明」步骤里，正文分支是
+`if [ -n "$INPUT_BODY" ]`，而 `INPUT_BODY: ${{ inputs.release_body }}` 只在
+`workflow_dispatch` 下才有值。**推 tag 走的是 `push` 事件，`inputs.*` 恒为空**，
+于是 `has_body=false`、`final_body` 只剩 MD5 表，`generate_release_notes` 再补一段 commits 摘要。
+发版技能当时写的是「走 `workflow_dispatch` 并把 `release_body` 填上」，但实际发版习惯是推 tag，
+这条路没人走，说明就一直漏。（工作流 `conclusion=success` 不会暴露这个问题。）
+
+### 40.3 兜底（改完的两条路都给完整日志）
+
+- 新增 `.github/scripts/extract_update_log.py`：从 `app/src/main/res/values/strings.xml` 的
+  `update_log_current` 抽当版日志（去 `<item>` 标签、`html.unescape` 反转义、跳过空条目、
+  强制 UTF-8 输出）；读不到 / 找不到该 `<string-array>` / 抽出来为空 → 打印 `::error::` 并**退出 1**。
+  `update_log_current` 本来就是当版日志的单一真相（关于页读它、`:app:verifyVersionConsistency`
+  拿它当锚点），所以直接抽它，不引入第二份需要维护的文案。
+- 工作流：手工触发仍用 `release_body`；`log_body` 为空（即 push 事件）时自动抽取，
+  **抽不到就 `exit 1`，拒绝发出没有更新说明的 Release**。`has_body` 改为依据 `log_body`，
+  实际恒为 true，GitHub 不再自动补 commits 摘要。
+- 文档：`AGENTS.md` 加硬要求段；`.dsh/skills/rebili-version-release/SKILL.md` §4 加硬要求与
+  「别改回只取 `inputs.release_body`」，§5 加「**发布后必须回读 Release 正文**确认条数对得上，
+  别只看 `conclusion=success`」。
+
+### 40.4 验证
+
+- 抽取脚本：直接跑 → 29 行（1 行标题【26.10.05 本次更新】+ 28 条）；`nope.xml` → `::error::` + exit 1。
+- 把该步骤的 `run:` 块原样抽出来在 git bash 里模拟三条路径：
+  - push（`EVENT_NAME=push, REF_NAME=26.10.05, INPUT_BODY=""`）→ 抽出 29 条、
+    `has_body=true`、exit 0，`release-body.md` = 日志 + MD5 段 + 元数据；
+  - fail-closed（strings.xml 只有 `update_log_items`）→ `::error::…拒绝发出没有更新说明的 Release` + exit 1；
+  - 手工触发（`INPUT_BODY="…"`）→ 不走抽取脚本，body = 输入正文 + MD5 + 元数据，exit 0。
+- YAML：用 DSH 自带的 `yaml` 包解析三个 workflow 文件，`build-release.yml` 结构有效，
+  且断言『引用抽取脚本 / `if !` 守卫 / 空则失败 / `has_body` 依据 `log_body` / `final_body` 拼接 /
+  旧分支已移除』全部通过（本机无 PyYAML，pip 走代理装不上）。
+- 未做：**没有真正触发一次 push-tag 发版来端到端跑通**（`workflow_dispatch` 需要 token，本机没有；
+  推测试 tag 会真的建 Release 并让中转去同步 Gitee，代价太大）。下次正经发版时按技能 §5 回读正文确认。
+
+### 40.5 遗留
+
+- **26.10.05 那个已发布的 Release 说明没能补上**：本机没有 `gh` CLI 也没有 GitHub token，
+  只能人工在 GitHub 网页端编辑该 Release 的说明，把 `update_log_current` 的 28 条粘进去。
+- 本次改动**不是新版本**，`26.10.05` 的 tag 仍指向 `8fd53af`，不需要重新发版。
+
