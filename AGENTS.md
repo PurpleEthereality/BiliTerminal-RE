@@ -26,9 +26,16 @@
 
 - 网络请求包在 `CenterThreadPool.run { }` 里。
 - 列表页继承 `RefreshMainActivity`（菜单入口页）或 `RefreshListActivity`（返回式）；加载完必须 `setRefreshing(false)`，否则翻页永久卡死。`onLoad(page)` 的 page 已自增。
+- `activity_simple_refresh.xml` 里的 `filterBar`/`sortBar`/`manageBar`/`groupBar` 都是列表的**兄弟节点**（不是列表项），不会随列表滚走。想让某条**滚动时自动收回**，在子类里调 `setupAutoHideBars(条…)`（`RefreshListActivity`，**默认不启用**）；**别把「可见性在运行时才变化」的条放进去**（如收藏夹的多选条 `manageBar`）——展开时会把它强行点亮。判据抽在 `util/view/ScrollRetractDecider.kt`（纯函数，有单测）。
 - 新增菜单页改三处：`MenuActivity.btnNames`、`MenuConfig.ALL_ITEMS`、`AndroidManifest.xml`。**但新菜单 key 对老用户不会自动出现**——`MenuConfig.loadEnabled` 对已存的 `menu_enabled` 直接返回，只能靠「菜单设置」手动开。想让所有人都能立刻用到入口，别加菜单项，挂到既有页面（如动态页动作卡片）。
 - 新增设置项改三处：`util/SettingsKeys.kt`、设置页 `SettingSection`、`activity/settings/SettingsIndex.kt`。
 - 外观设置（配色 / 卡片圆角 / 字体）走 `ui/appearance/` 三模块：**模块只放候选值与纯函数，写入一律走 `AppearanceManager`**（它负责递增外观版本号）；模块里别做几何计算，也别在热路径上缓存。细则见 `docs/architecture-map.md` §8.7。
+- **弹窗一律走 `util/TerminalDialog.kt`，禁止在业务代码里裸写 `AlertDialog.Builder`。**（26.10.05 起，见 `docs/review/dialog-redesign-progress.md`）
+  - **禁止的写法**：`AlertDialog.Builder(context).setItems(...)` / `.setSingleChoiceItems(...)` / `.setMultiChoiceItems(...)` / `.setMessage(...).setPositiveButton(...)`，以及任何自己 `inflate` 一个带选项列表的弹窗布局。全工程现有 17 处此类调用已在 26.10.05 全部迁移，`app/src/main/java` 下除 `TerminalDialog.kt` 自身外**不应再出现 `AlertDialog` 字样**（用 `grep -r "AlertDialog" app/src/main/java` 自检）。
+  - **为什么**：弹窗的花色不只取决于调用点，更取决于主题层。7 族主题此前都没声明 `alertDialogTheme`，于是弹窗走 MaterialComponents 自带的 alert overlay，正文色取自全工程 0 处声明的 `colorOnSurface`（回退近白 → 用户看到的「灰底白字」），破坏性按钮缺 `colorError` 语义，而**唯一跟随主题的 `colorAccent` 恰好是 `#FF6699` 荧光粉**（→「粉按钮」），背景又是方角无描边（→「像安卓原生的一样」）。裸 Builder 无论怎么写都会踩这一套。
+  - **正确写法**：菜单型 `TerminalDialog.menu(context, title, items, danger)`、单选型 `TerminalDialog.singleChoice(context, title, items, checked)`、确认型 `TerminalDialog.confirm(context, title, message, confirmText, cancelText, confirmIsDanger)`、纯提示 `TerminalDialog.alert(context, title, message)`。破坏性项（删除/取消收藏之类）**必须**进 `danger`，别让用户靠文案猜。
+  - **给新主题补 overlay**：`ThemeOverlay.<X>.Dialog` 里 `colorSurface` / `colorOnSurface` / `colorError` / `android:background=@drawable/dialog_background` 四项缺一不可，并在该主题里加 `<item name="alertDialogTheme">`。漏写不会崩（`TerminalDialog` 取属性带兜底默认值），但弹窗会退回 Material 默认配色。
+  - 颜色**只读 `?attr/`**（`colorPrimary` / `colorOnSurface` / `colorError`），`TerminalDialog.kt` 内不写任何色值常量。
 - 新增设置子页面有两种形态，**先想清楚用哪种**：
   1. **独立 Activity**（如「菜单设置」「我的页面设置」）——有自定义交互/独立布局时用，改三处：`SettingGroupActivity` 对应分组加 `nav`、`SettingsIndex` 加可搜索条目、`AndroidManifest.xml` 注册。
   2. **本页的另一个 `group_type` 分组**——只是若干列表项、无自定义交互时用（如 `GROUP_APPEARANCE`「外观设置」），只需：`buildContent` 加分支 + 写一个 `buildXxxGroup()` + 在上级分组加 `nav` + `SettingsIndex` 加条目。**不需要新 Activity、manifest、布局**。对用户同样是独立一屏。

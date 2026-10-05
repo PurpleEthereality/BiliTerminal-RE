@@ -1,9 +1,11 @@
 # ReBiliClient 修复进度报告
 
-> 更新日期：2026-10-04
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八/§二十九/§三十/§三十一
+> 更新日期：2026-10-05（含批次 8）
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八/§二十九/§三十/§三十一/§三十二/§三十三/§三十四/§三十五/§三十六/§三十七
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
-> 真机回归：本文各节「真机验证清单」已按操作顺序合并成 `docs/review/real-device-regression-checklist.md`（201 条，发版前逐条勾）
+> 真机回归：本文各节「真机验证清单」已按操作顺序合并成 `docs/review/real-device-regression-checklist.md`（209 条，发版前逐条勾；批次 8 的两条口头需求见该文件第十章第 207-209 条）
+>
+> ⚠️ **章节编号有两处历史重号**：`## 二十二` 与 `## 二十九` 各出现两次（不同轮次独立编号所致），`## 30.` 为另一轮次遗留的阿拉伯数字写法。**为避免打断既有交叉引用（§二十二/§二十九/§30.x 被多处正文引用），已保持原编号不动**；本轮新增章节统一编号为 **§三十三～§三十七**。索引见 §三十六.2。
 
 ---
 
@@ -2409,3 +2411,1659 @@ C20 没有新增纯函数（`buildResources`/`resourceErrorMsg` 已在 C19 测�
 
 
 
+
+## 三十二、26.10.05：弹窗（选择框）主题接入 + 终端列表收口
+
+> 用户反馈：表盘上弹出的选择框「灰底白字 + 粉色按钮」，且**没有圆角，像安卓原生的一样**。
+> 设计稿：`docs/design/dialog-redesign-v2.html`（方案 B 终端列表）。专项记录：`docs/review/dialog-redesign-progress.md`。
+
+### 根因（不是「没接入主题系统」，而是只接入了一半）
+
+7 族主题都声明了 `colorSurface`，弹窗底色**是**跟随主题的（前序 `themes.xml:681-682` 注释提过的
+`colorSurface`/`colorBackground` 那半已补）。真正缺的是三个属性，全工程 `app/src/main/res` **0 命中**：
+
+| 缺失属性 | 谁在用 | 回退到什么 | 现象 |
+|---|---|---|---|
+| `alertDialogTheme` | AlertDialog 选哪个颜色 overlay | `Theme.MaterialComponents` 自带的 alert overlay | 弹窗不读本主题定制 |
+| `colorOnSurface` | Material 正文/标题文字色 | Material 默认近白 | **「白字」**（`android:colorForeground` 救不了，Material 正文不读它） |
+| `colorError` | 破坏性按钮色 | Material 默认红 | 删除类操作无危险语义 |
+
+**「粉按钮」来源**：按钮文字色走 `colorAccent`，这是 7 族主题里**唯一都设了**的属性，
+B站粉与经典终端恰好都是 `#FF6699`。**「方角」来源**：AppCompat AlertDialog 背景方角无描边 +
+dialog window 自带一层背景底衬。
+
+> 教训：断言「某属性全工程缺失」必须**同时 grep 相邻属性做对照组**。最初结论「弹窗层从未接入
+> 主题系统」被「7 族主题都声明了 `colorSurface`」与「XML 侧 71 处 `?attr/` 引用」直接推翻。
+
+### 修复明细
+
+**主题层**（让既有裸 Builder 立刻正常，调用点零改动）
+- `res/values/colors.xml`：新增 14 个弹窗语义色（`on_surface_*` / `error_*` × 7 族）。
+- `res/values/dimens.xml`：新增 7 个弹窗 token（条目内距 15/11dp、最小高 44dp、标题内距、引导符宽 11dp）。
+- 新建 `res/drawable/dialog_background.xml`：`solid=?attr/colorSurface` + `stroke 1dp ?attr/colorPrimary`
+  + `corners @dimen/card_round`。
+- 新建 `res/layout/item_dialog_terminal.xml` 与 `res/layout/layout_dialog_terminal.xml`。
+- `res/values/themes.xml`：新增 7 份 `ThemeOverlay.<X>.Dialog`（各含 `colorSurface`/`colorOnSurface`/
+  `colorError`/`android:background`），并给 7 族主题各加一行 `alertDialogTheme`。
+
+**统一入口**：新建 `util/TerminalDialog.kt`（约 369 行），四个静态方法 `menu` / `singleChoice` /
+`confirm` / `alert`。颜色只读 `?attr/`，文件内无色值常量；`attrColor` 带兜底默认值。
+`Sheet.init` 必须清 window 背景（`setBackgroundDrawable(TRANSPARENT)`），否则圆角被方角底衬盖掉。
+
+**17 处调用点全部迁移**（`adapter/ReplyAdapter.kt` 2、`adapter/dynamic/DynamicHolder.kt` 2、
+`adapter/message/PrivateMsgSessionsAdapter.kt` 2、`activity/vote/VoteInfoActivity.kt` 1、
+`activity/dynamic/send/SendDynamicActivity.kt` 1、`activity/settings/login/AccountSwitchActivity.kt` 1、
+`activity/user/FollowUsersActivity.kt` 2、`activity/user/favorite/FavoriteVideoListActivity.kt` 4、
+`activity/video/info/BangumiInfoFragment.kt` 2+1）。
+
+### 验证
+
+**未执行编译与单测**：本次环境下 `pwsh` 工具完全不可用（任何命令返回空输出 + `[exit code: 3221225794]`，
+即 `0xC0000142 STATUS_DLL_INIT_FAILED`，进程起不来），`assembleDebug` / `testDebugUnitTest` 均未跑。
+已做的只有静态核查：逐文件回读 + 全仓 grep 确认
+`app/src/main/java` 下除 `TerminalDialog.kt` 自身外 **0 处 `AlertDialog`**；
+7 处 `alertDialogTheme` 与 7 份 overlay 名字一一对应；14 个新色值与 7 个新 dimen 全部存在且被正确引用。
+**恢复环境后第一件事**：`:app:clean` 与 `assembleDebug --no-build-cache --no-configuration-cache`
+**分两次调用**（本次新增 3 个 `res/` 文件，按已知坑极易触发缓存回放陈旧资源）。
+
+### 交叉引用
+
+- `AGENTS.md` 硬约定新增弹窗禁令（禁止裸写 `AlertDialog.Builder`，含正确写法与给新主题补 overlay 的清单）。
+- `docs/architecture-map.md` 新增 §8.7.0「弹窗的主题属性接入」，§8.4 补 `TerminalDialog` 四方法表，
+  §8.4b 公共落点表补一行。
+- 专项进度：`docs/review/dialog-redesign-progress.md`。
+- 与既有报告的关系：`docs/visual-experience-report.md` §2.25 的对比度问题（`#EBE0E2` 叠 `#FF6699`
+  约 2.1:1）属同一视觉面，本次新增的 `colorError` 语义色**未重新做对比度测量**；
+  §2.12「86 处布局引用静态调色板」与 `styles.xml` 组件样式硬编码同源，本次未动。
+
+---
+
+## 二十二、26.10.04 批次 7（5/5）：置顶会话排序 + 关注分组移动成员（C22）
+
+本轮处理三件事：**A 置顶会话排序修复**、**B 收藏夹排序行的排查结论**、**C 关注分组移动成员**。
+
+### A. 置顶会话排序：真因是「未读优先」把置顶项挤下去
+
+**清单第 40 条**点名验 `op_type` 有没有写反。**核对结果是没写反**：
+
+- `api/PrivateMsgApi.java:274` `opTypeForTop(boolean top) { return top ? 0 : 1; }` —— 0 = 置顶、1 = 取消置顶。
+- 接口快照 `bilibili-API/docs/message/private_msg.md:1150` 确认 `op_type` 语义；`:1173-1179` 的示例就是 `op_type=0`（置顶）。
+- `setSessionTop`（`:284-290`）经 `postSessionAction`（`:310-326`）发公共参数 `talker_id`/`session_type`/`csrf_token`/`csrf`/`build=0`/`mobi_app=web`，链路正确。
+
+**真因在客户端本地排序**：`activity/message/MessageActivity.kt` 的 `loadSessions()` 里对服务端返回的会话列表又做了一次「未读优先」的 `Collections.sort`。而服务端 `get_sessions` 返回的顺序本身就是**置顶在前、其余按时间倒序**。这段排序把「有未读的会话」整体提前，于是**置顶但没有未读的会话被挤到未读会话之后、甚至列表最底部**——用户看到的就是「提示已置顶、`[置顶]` 前缀也出来了，但会话反而排到下面去了」。
+
+**修法**：抽出纯函数 `util/SessionSorter.kt`，判据从高到低：
+
+1. 置顶优先（`topTs > 0`，服务端置顶时间戳，微秒级）；
+2. 都是置顶时，`topTs` 大的靠前（服务端置顶也有先后）；
+3. 都未置顶时，有未读的靠前（保留「先看未读」的诉求）；
+4. 其余保持服务端原序 —— 靠的是 `Collections.sort` 的**稳定性**，所以不再按时间重排，避免打乱服务端顺序。
+
+`MessageActivity.kt` 里原地的 `Collections.sort` 块替换为 `SessionSorter.sort(sessionsList)`，并移除不再需要的 `import java.util.Collections`。
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/util/SessionSorter.kt` | 新增。`@JvmStatic fun sort(MutableList<PrivateMsgSession>)` + `@JvmStatic fun compare(o1,o2): Int`（比较逻辑抽成纯函数便于单测） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/message/MessageActivity.kt` | `loadSessions()` 里的「未读优先」`Collections.sort` 换成 `SessionSorter.sort(sessionsList)`；去掉 `import java.util.Collections`；补中文注释说明为什么不能只按未读排 |
+| `app/src/test/java/com/RobinNotBad/BiliClient/util/SessionSorterTest.kt` | 新增，7 例（见下） |
+
+**单测覆盖**（`SessionSorterTest`）：
+
+1. **置顶会话排在最前，即使它没有未读** —— 这条就是用户 bug 的回归用例（修复前会把未读的普通会话排前面）；
+2. 两个置顶会话按置顶时间倒序；
+3. 都未置顶时有未读的排前面；
+4. 未读会话不会越过置顶会话；
+5. 排序是稳定的，同优先级保持服务端原序；
+6. 空列表与单元素列表不崩；
+7. `topTs == 0` 视为未置顶。
+
+### B. 收藏夹排序行「没看到」：链路 100% 通，问题不在代码
+
+**清单第 159 条**要求「进入自己的收藏夹：顶部出现 收藏时间/播放量/投稿时间」。用户补充原话是「两个地方有，第一个是我的，第二个是用户信息里，**请注意了**」——本轮把这条从「代码没写」一路查到「运行时状态」，**结论是静态链路逐环正确，没有可修的缺陷**。
+
+**两处入口汇合到同一个页面**（这是排查的重点，一度怀疑「两处入口不同源、只通了一处」，已排除）：
+
+- 入口①「我的」：`MySpaceActivity`/`MySpaceMoreActivity` → `MySpaceMenu.open(activity, "favorite", mid)`（`activity/user/MySpaceMenu.kt:49`）→ **`FavoriteFolderListActivity`**（收藏夹*列表*页）→ 点某个收藏夹 → `adapter/favorite/FavoriteFolderAdapter.kt:115-126` `putExtra("fid"/"mid"/"name"/"mediaId")` + `putExtra("readOnly", false)` → `FavoriteVideoListActivity`。
+- 入口②「用户信息」：`UserInfoActivity:43-44` `UserFavoriteFragment.newInstance(mid)`（第 3 个 tab，`:74` 标题「收藏夹」）→ `activity/user/info/UserFavoriteFragment.kt:47-51` → `adapter/favorite/UserFavoriteFolderAdapter.kt:64-72` `putExtra("mediaId"/"mid"/"name")` + `putExtra("readOnly", true)` → **同一个 `FavoriteVideoListActivity`**。
+- 全仓 grep `FavoriteVideoList|getFolderVideos|fav/resource/list` 确认：**全项目只有 `FavoriteVideoListActivity` 一个页面渲染收藏夹内容**，没有第二个变体。
+
+**排序行的点亮是无条件的**（所有「可能被跳过」的路径都排除了）：
+
+- `FavoriteVideoListActivity.kt:77-80` `onCreate` 是三条无条件直线：`setupSortBar()` → `setupManageBar()` → `setOnLoadMoreListener{...}` → `loadFirstPage()`。
+- `setupSortBar()` 第一行就是 `findViewById<View>(R.id.sortBar).visibility = View.VISIBLE`；**没有** `mediaId` 前置判断、**没有** early return，且**先于** `loadFirstPage()`。
+- grep `R.id.sortBar` 全 `app/src/main/java` **只有 1 处命中**（`FavoriteVideoListActivity.kt:84`），没有别处把它设回 `GONE`。
+- `mediaId == 0` 只影响 `fetch()` 走老接口 `getFolderVideos`，**不影响可见性**。
+- 布局 `res/layout/activity_simple_refresh.xml:117` 默认 `gone`，但 `:110-159` 三个 TextView（`sortFavTime`「收藏时间」/`sortView`「播放量」/`sortPubtime`「投稿时间」）齐全；构建产物 `app/build/intermediates/packaged_res/debug/packageDebugResources/layout/activity_simple_refresh.xml` 里也都在，**资源确实进包**。
+- 排除项（均读全文确认）：`BaseActivity.asyncInflate` 会二次 `setContentView` 重置 visibility，但本类**不用**它；`BaseActivity.onContentChanged` → `ui/appearance/AppearanceApplier.applyToContentView` 只处理 typeface/radius，**不碰 visibility/textColor**；`RefreshListActivity.onCreate`（`:47`）只 `setContentView(R.layout.activity_simple_refresh)` 并取 emptyTip/loadMoreTip/swipeRefreshLayout/recyclerView，**不碰 sortBar**。
+
+**结论与处置**：
+
+- **代码上无可修缺陷**，链路是通的。用户的「没看到」最可能是**没点进具体收藏夹**：清单第 159 条要的是「进入自己的收藏夹」后顶部出现，而入口①的第一屏是 `FavoriteFolderListActivity`（**文件夹列表，有意不放排序行**——排序是视频内容的属性，文件夹列表排不了）。用户「两个地方有…请注意了」是指路语气（叮嘱别只修一处），不是陈述已经看到。
+- **本轮的处置**：① 在此记录事实（排序行的确切位置 = 点进具体收藏夹后的**内容页顶部**；两处入口都会到达同一个 `FavoriteVideoListActivity`；收藏夹列表页有意不放）；② 在 `setupSortBar()` 末尾加**一行临时诊断埋点**，供真机确认运行时状态。
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/user/favorite/FavoriteVideoListActivity.kt` | `setupSortBar()` 末尾加一行 `Log.e`，打印 `sortBar.visibility` + `mediaId` + `fid` + `readOnly`。**只加日志，不加逻辑、不改 visibility、不加网络请求** |
+
+**真机排查指令**：`adb logcat -s "debug-收藏夹排序"` —— 正常应看到 `sortBar.visibility=0 mediaId=<非0> fid=<非0> readOnly=false`（`0` 即 `View.VISIBLE`）。若看到 `visibility=8`（`GONE`）则说明有别的代码路径在点亮后又把它设回去了，那是新线索。埋点沿用了 `api/FavoriteApi.java:92-97` 已有的 `"debug-收藏夹…"` tag 风格，**倾向保留**（本项目已有同类埋点先例，且对 Debug 包无害）。
+
+**未做**：没有改 `docs/review/real-device-regression-checklist.md` 第 159 条（不属本轮范围）；没有为了「更醒目」给排序行加视觉标识（无依据，且会动 `res/layout/activity_simple_refresh.xml`，那是稍后再看那条线的范围）。
+
+### C. 关注分组移动成员：从「完全没有入口」到「长按成员即可移动」
+
+**用户原话**：「我不能移动被我关注的人到其他分组」。排查确认这不是「入口坏了」，而是**入口根本不存在**：
+
+- `activity/user/FollowUsersActivity.kt` 原本只有分组的**增/改/删**（C21：`showGroupMenu` 重命名/删除、`showCreateGroupDialog` 新建）；`groupBar` 上只有「新建分组」一个按钮。
+- `adapter/user/FollowGroupAdapter.kt` 的成员项**只有短按** `BiliTerminal.jumpToUser`，**没有长按、没有任何成员操作入口**。
+- `api/FollowApi.java` 有 `createFollowTag`/`renameFollowTag`/`deleteFollowTag`，**没有移动成员**。
+- 台账 `docs/review/fix-progress.md` §三十（C21）当初明确写了「**不做分组内成员的增删**（那是另一套「从关注列表勾选后加入分组」的交互，收益低）」——这正是现在用户抱怨的缺口。
+- 注：`api/RelationApi.java` **不存在**（曾以为接口在这里）。接口依据是 `bilibili-API/docs/user/relation.md:2674`。
+
+**接口快照**（`bilibili-API/docs/user/relation.md:2674-2722`）：
+
+```
+POST https://api.bilibili.com/x/relation/tags/moveUsers
+参数：beforeTagids（原分组 id，逗号分隔）/ afterTagids（新分组 id，逗号分隔）
+      / fids（待移动用户 mid 列表，逗号分隔）/ csrf
+错误码：0 成功 / -111 csrf 失败 / -101 未登录 / -400 请求错误 / 22104 分组不存在 / 22105 未关注
+```
+
+注意这是**移动**（不是取关，也不是「复制到多个分组」——后者是 `tags/addUsers`）。把人移出分组而不取关的办法是把 `afterTagids` 传 0（默认分组）。
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/FollowApi.java` | ① 新增 `moveFollowTagUsers(int beforeTagid, int afterTagid, List<Long> fids)`：空列表直接返回 `-400` 不发请求；走 `FormData` 装 `beforeTagids`/`afterTagids`/`fids`/`csrf`，POST 到 `moveUsers`。② 新增纯函数 `joinMids(List<Long>)`：把 mid 列表拼成逗号分隔串（`null`/空返回空串）。③ `tagErrorMsg` 补 `case 22105: "你还没有关注这个人"`（`22104` 原本已有） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/user/FollowGroupAdapter.kt` | ① 新增成员长按回调 `setOnUserLongClickListener(listener: ((FollowTag, UserInfo) -> Unit)?)`（带上成员**所在分组**，因为移动接口必须知道原分组 id）。② `onBindViewHolder` 的 `UserHolder` 分支加 `setOnLongClickListener`。③ 新增私有 `getUserOwnerGroup(position)`：只在位置确实落在某个展开组的成员区间时才返回该组（区别于 `getGroupForPosition`，后者对成员位置也返回该组） |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/user/FollowUsersActivity.kt` | ① `loadGroupMode()` 里挂 `setOnUserLongClickListener`。② 新增 `showMoveUserDialog(fromTag, user)`：用 `TerminalDialog.singleChoice` 列目标分组，**排除当前分组**（移到自己等于没做）但**保留默认分组**（移出分组而不取关的唯一办法）；没有别的分组时提示「还没有别的分组可以移过去」。③ 新增 `confirmMoveUser(fromTag, toTag, user)`：`TerminalDialog.confirm`（`confirmIsDanger = false`，移动不是破坏性操作）确认后走 `CenterThreadPool.run` → `FollowApi.moveFollowTagUsers` → 成功提示「已移动到「X」」+ `loadGroupMode()` 整页重拉（分组归属和人数都变了，服务端才是唯一真相）；失败显示 `tagErrorMsg(code)` |
+| `app/src/test/java/com/RobinNotBad/BiliClient/api/FollowApiMoveUsersTest.kt` | 新增，10 例（见下） |
+
+**单测覆盖**（`FollowApiMoveUsersTest`）—— 按「请求与错误码→文案分离」的原则，只测不联网的纯逻辑：
+
+- `joinMids`：单个 mid 不加分隔符 / 多个 mid 逗号连接 / 空列表返回空串 / `null` 返回空串而不是崩（4 例）；
+- `moveUsersFields`（**字段名断言**）：字段名恰好是 `beforeTagids`/`afterTagids`/`fids`/`csrf` 四个 / 原分组与新分组用复数形式且是单值 / `fids` 是逗号分隔串 / 移动到默认分组时 `afterTagids` 为 `0` / `csrf` 为 `null` 时退化成空串而不是 `"null"` 字面量（5 例）。**字段名写错是本接口最容易犯又最难发现的错**——服务端对错字段名一律回 `-400`，真机上只显示「请求出错了，请稍后再试」，猜不到是拼写问题；为此把字段组装抽成纯函数 `moveUsersFields(...) : Map<String, String>`（返回 `Map` 而非 `FormData`，以免把依赖 Android 的 `NetWorkUtil` 拖进 JVM 单测）；
+- `tagErrorMsg`：成功码返回空串 / -101 与 -111 有专门文案 / **22104 分组不存在** / **22105 未关注** / -400 兜底 / 未知码兜底带上错误码本身（6 例）。
+
+**边界与取舍**：
+
+- 移动是写操作但**不是破坏性操作**（不取关、不丢数据），所以 `confirmIsDanger = false`，确认按钮走主色而非危险色。
+- 目标分组列表**保留默认分组（tagid 0）**：这是「把成员移出分组」的正规做法，比让人去取关再关注友好得多。
+- `singleChoice` 按实现**不会自动关闭**，所以回调里显式 `sheet.dialog.dismiss()`。
+
+**真机验证要点 —— 弹窗里显示的是分组名，不是 id**：
+
+目标分组列表的文案直接取 `groupList` 里每个 `FollowTag.name`，也就是 `x/relation/tags`（`getFollowTags`）返回的 `name` 字段。接口快照 `bilibili-API/docs/user/relation.md:2076-2079` 的响应示例确认**默认分组服务端返回的 name 就是 `"默认分组"`**（`{"tagid": 0, "name": "默认分组", "count": 340, "tip": ""}`），`:2046` 的字段表也写明 `-10：特别关注 / 0：默认分组`。
+
+所以真机上：
+
+- **看不到裸的 `0` / `-10`**，弹窗里显示的是「默认分组」「特别关注」这样服务端给的可读名字。若真机上真的出现 `0`，说明该账号的 `tags` 响应异常，是**新线索**，需要单独查。
+- 想**把成员移出分组但不取关**：长按该成员 → 在弹窗里选「**默认分组**」。这就是 `afterTagids=0` 那条路径（接口文档 `relation.md:2574` 对 `addUsers` 的同款说明：「如需删除分组中的成员，请将 `tagids` 设为 0，即移动至默认分组，而不是取关」）。
+- 「特别关注」（tagid -10）也在列表里，所以也能把成员移进/移出特别关注；`FollowUsersActivity.isEditableTag(tag) = tag.tagid > 0` 只限制**改名/删除**，不影响移动的目标选择。
+- 弹窗**不会**列出成员当前所在分组（`filter { it.tagid != fromTag.tagid }`），避免「移到自己」这种空操作。
+- 注意 `count` 是服务端快照：移动成功后走 `loadGroupMode()` 整页重拉，人数才会刷新；**UI 不做本地乐观更新**（有意为之，分组归属以服务端为准）。
+
+
+### 验证
+
+`.\gradlew.bat :app:assembleDebug --offline --no-build-cache --no-configuration-cache` → **BUILD SUCCESSFUL in 56s**。
+
+`.\gradlew.bat :app:testDebugUnitTest --offline --no-build-cache --no-configuration-cache` → **398 例中 3 例失败，均不在本轮改动范围内**：
+
+| 测试类 | 结果 | 归属 |
+|---|---|---|
+| `util.SessionSorterTest` | **7/7 通过** | 本轮 A |
+| `api.FollowApiMoveUsersTest` | **15/15 通过** | 本轮 C |
+| `api.DynamicApiTest` | 20 例中 2 例失败 | 非本轮（话题广场那条线） |
+| `api.NoteApiTest` | 16 例中 1 例失败 | 非本轮（笔记那条线） |
+
+失败详情（供归属方参考，本轮**未修**）：
+
+- `DynamicApiTest.parseTopicNodes_picksEveryTopicNodeInOrder` at `DynamicApiTest.kt:151` —— `java.lang.AssertionError: expected:<#A#> but was:<null>`；
+- `DynamicApiTest.parseTopicNodes_topicWithoutJumpUrlIsStillCollected` at `DynamicApiTest.kt:203` —— 同样是 `AssertionError`；
+- `NoteApiTest.failureText_hidesGenericFallback` at `NoteApiTest.kt:198` —— `java.lang.NullPointerException: null cannot be cast to non-null type kotlin.String`。
+
+**一次真实的编译错误（已修，记录在此以免重犯）**：首次 `:app:assembleDebug` 报
+
+```
+e: adapter/user/FollowGroupAdapter.kt:300:55 Argument type mismatch: actual type is
+   '...FollowGroupAdapter.GroupItem', but '...model.FollowTag' was expected.
+```
+
+原因是 `getUserOwnerGroup(position)` 返回 `GroupItem?`（它要遍历展开后的扁平位置，自然产物就是 `GroupItem`），而 `setOnUserLongClickListener` 的形参是 `FollowTag`，我漏了取 `.tag`。修法是 `userLongClickListener?.invoke(owner.tag, user)`——**不是强转**（`GroupItem` 本就持有 `val tag: FollowTag`，见 `FollowGroupAdapter.kt:352-355`）。
+
+**教训**：这个错误纯函数单测**测不到**（泛型/类型层面的错，只有编译器能发现）。本轮 15 + 7 例单测全绿的同时 `compileDebugKotlin` 失败，正说明「单测绿 ≠ 编得过」，**`assembleDebug` 必须跑**。
+
+### 交叉引用
+
+- 接口依据：`bilibili-API/docs/user/relation.md:2674-2722`（`tags/moveUsers`）、`:2568-2616`（`tags/addUsers`，对照「复制/添加」与「移动」的区别）；`bilibili-API/docs/message/private_msg.md:1150`/`:1173-1179`（`op_type` 语义，确认没写反）、`:510`（`session_list` 排序）、`:12`（`top_ts` 字段）。
+- 台账前序：§二十八（C19 收藏夹排序，`fix-progress.md:2178-2232`）、§三十（C21 关注分组增删改，`:2292-2342`，其中「不做分组内成员的增删」正是本轮 C22 补上的缺口）。
+- 清单条目：`docs/review/real-device-regression-checklist.md:102`（第 40 条 op_type）、`:266`（第 159 条收藏夹排序）、`:292-301`（第 179-188 条关注分组）。
+- 相关架构：`docs/architecture-map.md` 中 `PrivateMsgApi`/`FavoriteApi`/`FollowApi` 的条目。
+
+
+
+
+
+## 三十三、26.10.05：片头片尾跳过默认开启 + 新增「通知设置」大类
+
+> 本轮对应两条用户反馈：
+> ①「片头片尾自动跳过 —— 没看到实现了，且默认不是开启吗，这边默认关闭了」
+> ②「另外各种新加的通知应该在设置里新增一个大类-通知设置来关闭他，默认开启」
+
+### 一、片头片尾自动跳过（任务 B）
+
+#### 结论先说：功能不是没实现，是默认关 + 引导判据有问题
+
+用户说「没看到实现了」，容易误判成「压根没接线」。逐行读源码后的结论是：**接线是完整的，跳过逻辑本身没有任何缺失**，
+用户看不到效果的唯一原因是默认值写死为 `false`。证据链如下（改前状态）：
+
+- `app/src/main/java/com/RobinNotBad/BiliClient/player/ViewPointSkip.kt`（91 行，纯 object、零 Android 依赖）：
+  `TYPE_OP = 1` / `TYPE_ED = 2`、`MAX_SEGMENT_SECONDS = 600.0`、`data class Segment(type, fromSec, toSec)`、
+  `isSkippable(type)`、`keyOf(segment)`、`buildSegments(raw)`（只保留 1/2 类型、`toSec > fromSec`、时长 ≤ 600s，按起点排序）、
+  `segmentAt(pos, segments)`（**左闭右开** `[from, to)`——因为跳过后的落点正好等于 `toSec`，右闭会自我重复命中）、
+  `shouldSkip(pos, segments, handled)`（命中 `handled` 返回 null，保证每段只跳一次）、`keyForManualSeek(pos, segments, handled)`。
+- `app/src/main/java/com/RobinNotBad/BiliClient/activity/player/PlayerActivity.kt`：`skipSegments` 字段（:321）；
+  `maybeAutoSkipOpEd(positionSec: Double)`（:2303-2313）挂在**既有的 250ms 主线程定时器** `progressChange()` 里（调用点 :1197）；
+  命中后 `seekToPosition((segment.toSec * 1000.0).toLong())` + `lastSkippedSegment = segment` + `showSkipUndoSnack(segment)`；
+  `showSkipUndoSnack`（:2316-2328）用 `MsgUtil.createSnack(anchor, "已跳过片头/片尾", LENGTH_LONG, MsgUtil.Action("撤回"){...})`；
+  `onUserSeekTo(positionMs)`（:2336-2341）在 `seekToPosition()`（:2282）里调用，避免用户手动拖进片头又被弹走；
+  `loadViewPoints()`（:2905-2941）调 `PlayerApi.getViewPoints(aid, cid)` → `ViewPointSkip.buildSegments(...)`，
+  在 `runOnUiThread` 里重置 `skipSegments` / `skipHandled` / `lastSkippedSegment` 并调 `maybeShowSkipGuide()`（:2931）。
+
+**「没看到」的直接原因 = 四处调用点全部把默认值写死成 `false`**（改前）：
+
+- `PlayerActivity.kt:2295`（`needViewPoints()` 里的 `getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, false)`）
+- `PlayerActivity.kt:2305`（`maybeAutoSkipOpEd` 里的开关判断）
+- `PlayerActivity.kt:2351`（`maybeShowSkipGuide` 里的开关判断）
+- `app/src/main/java/com/RobinNotBad/BiliClient/activity/settings/SettingTerminalPlayerActivity.kt:131-132`
+  `SettingSection("switch", "自动跳过片头片尾", SettingsKeys.PLAYER_SKIP_OP_ED, getString(R.string.desc_player_skip_op_ed), "false")`
+
+**用户「默认不是开启吗」是有根据的**：设计参照对象 PiliPlus 的同类开关默认就是跳过。
+`D:\tmp\piliplus\lib\utils\storage_pref.dart:977-979`：
+
+```dart
+static SkipType get pgcSkipType =>
+    SkipType.values[_setting.get(SettingBoxKey.pgcSkipType) ?? SkipType.skipOnce.index];
+```
+
+默认档位是 `SkipType.skipOnce`（`D:\tmp\piliplus\lib\models\common\sponsor_block\skip_type.dart` 五档：
+`alwaysSkip('总是跳过') / skipOnce('跳过一次') / skipManually('手动跳过') / showOnly('仅显示') / disable('禁用')`）。
+（注：PiliPlus 里 `SKIPOPED` 只出现在生成的 protobuf（`lib/grpc/bilibili/playershared.pbenum.dart`），
+其真实实现走 sponsor_block 的 `pgcSkipType`，不是那个枚举。）B 站官方播放器同样默认跳过。
+
+#### 改动 1：默认值改为开启，且收敛到唯一来源
+
+新建 `app/src/main/java/com/RobinNotBad/BiliClient/player/SkipOpEdPrefs.kt`（纯 object，零 Android 依赖）：
+
+```kotlin
+const val DEFAULT_ENABLED = true
+fun shouldShowGuide(hasSegments: Boolean, alreadyGuided: Boolean): Boolean = hasSegments && !alreadyGuided
+fun guideText(enabled: Boolean): String        // 开="已自动跳过片头/片尾，可在下方撤回"；关="这个视频有片头片尾，可以自动跳过"
+fun guideActionText(enabled: Boolean): String  // 开="知道了"；关="开启"
+```
+
+**为什么必须收敛成一个常量**：改前四个调用点各写一遍字面量 `false`，改默认值时只要漏掉一处，就会出现
+「设置页显示开着、播放器却不跳」这种极难排查的半生效状态。现在四个点全部引用 `SkipOpEdPrefs.DEFAULT_ENABLED`：
+
+- `PlayerActivity.kt` 新增 `private fun skipOpEdEnabled(): Boolean = SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, SkipOpEdPrefs.DEFAULT_ENABLED)`
+- `PlayerActivity.needViewPoints()` 的默认值参数 → `SkipOpEdPrefs.DEFAULT_ENABLED`
+- `PlayerActivity.maybeAutoSkipOpEd` → `if (!skipOpEdEnabled()) return`
+- `SettingTerminalPlayerActivity.kt:132` 的 `SettingSection(..., "false")` → `SkipOpEdPrefs.DEFAULT_ENABLED.toString()`
+
+#### 改动 2：老用户显式关过的必须保持关（不需要任何迁移代码）
+
+`SharedPreferences.getBoolean(key, def)` 的语义就是「**键不存在时才用 def**」。因此只改默认值就天然满足
+「新装默认开 + 升级后尊重用户显式选择」，**不需要写任何迁移/重置逻辑**（写了反而危险）。
+仓库里已有同样的判定范式可参照：`app/src/main/java/com/RobinNotBad/BiliClient/util/SharedPreferencesUtil.java:132-144`
+的 `loadMenuEnabled()` 就是用 `sharedPreferences.contains(key)` 区分「已存值 / 缺失」。
+
+新建 `app/src/test/java/com/RobinNotBad/BiliClient/player/SkipOpEdPrefsTest.kt`（JUnit4 + 共享 `FakeSharedPreferences`，
+`@Before` 注入 / `@After` 置 null），共 9 例，其中**「老用户显式关过之后仍然是关闭」是必须保留的一条**——
+它防的正是用户骂「我明明关过怎么又给我开了」：
+
+- `默认值是开启`
+- `从未存过时读取默认值得到开启`
+- **`老用户显式关过之后仍然是关闭`**
+- `老用户显式开过之后仍然是开启`
+- `没引导过且有片段时要引导`
+- `引导过之后不再引导`
+- `视频没有片头片尾时不引导`
+- `开关已开时文案是提示而不是劝开`
+- `开关未开时文案是劝开`
+
+#### 改动 3：引导判据与开关解耦（否则默认一改，引导立刻变死代码）
+
+改前的 `maybeShowSkipGuide()` 是三重 return：`skipSegments` 空就 return → **开关开着就 return** → 引导过就 return。
+一旦默认值改成 `true`，第二个 return 永远命中，**这段引导就成了永远跑不到的死代码**，
+真机清单第 200 条也就永远测不到。改为只看「引导过没有」：
+
+- 判据：`SkipOpEdPrefs.shouldShowGuide(skipSegments.isNotEmpty(), getBoolean(PLAYER_SKIP_OP_ED_GUIDED, false))`
+- 弹过即写 `putBoolean(PLAYER_SKIP_OP_ED_GUIDED, true)`，之后进任何视频都不再弹
+- 文案随开关状态分两套：开关已开 →「已自动跳过片头/片尾，可在下方撤回」+「知道了」（这是**提示**，不是劝开）；
+  开关未开（用户自己先关掉的）→「这个视频有片头片尾，可以自动跳过」+「开启」，点开启才写 `PLAYER_SKIP_OP_ED = true`
+- `PLAYER_SKIP_OP_ED_GUIDED`（`player_skip_op_ed_guided`）**只是「引导已弹过」的记账位，不出现在设置页**，别当成用户可见开关
+
+### 二、新增顶层「通知设置」大类（任务 A）
+
+#### 关键核实：两个开关早已存在且早已接线，问题只是「找不到」
+
+调查用户诉求时先做了全库 grep，结论推翻了「需要新增开关」的初始假设：
+
+- `app/src/main/java/com/RobinNotBad/BiliClient/util/SettingsKeys.kt:59`
+  `const val PRIVATE_MSG_NOTIFY_ENABLE = "private_msg_notify_enable"`
+- `app/src/main/java/com/RobinNotBad/BiliClient/util/SettingsKeys.kt:64`
+  `const val BANGUMI_UPDATE_NOTIFY_ENABLE = "bangumi_update_notify_enable"`
+- 唯一读取方 `app/src/main/java/com/RobinNotBad/BiliClient/BiliTerminal.kt:331`
+  `val notifyEnabled = SharedPreferencesUtil.getBoolean(SettingsKeys.PRIVATE_MSG_NOTIFY_ENABLE, true)`
+  → `MsgNotifier.shouldNotify(previousUnread, totalUnread, notifyEnabled)` → `MsgNotifier.notifyNewMessages(...)`
+- 唯一读取方 `app/src/main/java/com/RobinNotBad/BiliClient/BiliTerminal.kt:346`
+  `if (SharedPreferencesUtil.getBoolean(SettingsKeys.BANGUMI_UPDATE_NOTIFY_ENABLE, true) && ... mid != 0L)`
+  → `BangumiUpdateChecker.checkAndNotify(it)`
+
+**两处默认值本来就都是 `true`**。所以本任务**不新增任何 SP 键、`SettingsKeys.kt` 一行未动**——
+这也意味着老用户升级后天然保持开启，完全不需要迁移。
+问题只在位置：两项原先被埋在「内容与浏览 → 通用偏好 → 更新提醒」段（`SettingPrefActivity.kt:38-41`），入口太深，用户找不到。
+
+`grep` 全库 19 处引用确认：除 `SettingsKeys.kt` 的定义、`BiliTerminal.kt` 的两个读取点、`SettingPrefActivity.kt` 的旧 UI、
+`strings.xml` 的文案、`SettingsKeysTest.kt:29`（只钉键名字符串）以及文档提及外，**没有任何单测或代码依赖旧 UI 位置**，
+可以安全移除。
+
+#### 形态选择：复用「本页另一个 group_type 分组」，不新建 Activity
+
+设置页有两种子页面形态：①独立 Activity（要改三处含 manifest）；②同一个 `SettingGroupActivity` 里的另一个 `group_type` 分组。
+选②，需要动的只有四处：`buildContent` 加分支 + 写 `buildXxxGroup()` + 上级分组加 `nav` + `SettingsIndex` 加条目，
+**不需要新 Activity、manifest、布局文件**。范式完全照抄既有的 `GROUP_APPEARANCE`。
+
+#### 落地改动（5 个文件）
+
+1. `app/src/main/java/com/RobinNotBad/BiliClient/activity/settings/SettingGroupActivity.kt`
+   - 新增顶层常量 `const val GROUP_NOTIFY = "notify"`（紧跟 `const val GROUP_APPEARANCE = "appearance"`）
+   - `buildContent(groupType)` 的 `when` 加分支 `GROUP_NOTIFY -> buildNotifyGroup()`
+   - 新增 `buildNotifyGroup()`，复用既有的 `title()` / `switch()` 私有 helper（未新增 helper）：
+     ```kotlin
+     private fun buildNotifyGroup() {
+         title("通知开关")
+         switch("新消息通知", getString(R.string.desc_private_msg_notify_enable),
+             SettingsKeys.PRIVATE_MSG_NOTIFY_ENABLE, true)
+         switch("追番更新提醒", getString(R.string.desc_bangumi_update_notify_enable),
+             SettingsKeys.BANGUMI_UPDATE_NOTIFY_ENABLE, true)
+     }
+     ```
+   - 只放「**会响通知的开关**」。「新动态数量检查」「消息数量检查」等只影响应用内红点、不产生系统通知的项**仍留在通用偏好**——
+     搬进来会让用户误以为关掉它们就没通知了。（中途曾一度多加一个「后台自动检查更新」开关，判定为 scope creep 已删除还原。）
+2. `app/src/main/java/com/RobinNotBad/BiliClient/activity/settings/SettingMainActivity.kt`
+   - `buildGroups()` 在 `buildContentGroup()` 之后插入 `buildNotifyGroup()`（第一层级第 5 个分组）
+   - 新增：
+     ```kotlin
+     private fun buildNotifyGroup() {
+         addGroup(
+             R.drawable.icon_announcement,
+             "通知设置",
+             "新消息、追番更新等通知栏提醒的开关",
+             GROUP_NOTIFY
+         )
+     }
+     ```
+   - 图标用 `R.drawable.icon_announcement`（`res/drawable/` 下无 bell/notification 类图标，`icon_announcement` 语义最贴近）
+3. `app/src/main/java/com/RobinNotBad/BiliClient/activity/settings/SettingPrefActivity.kt`
+   - 从「更新提醒」段**移除**「新消息通知」「追番更新提醒」两项，替换为三行中文注释（写明已迁到 `buildNotifyGroup()`，
+     别再加回来——**同一开关留两个入口会出现「一处改了另一处不刷新」的假故障**，用户会以为设置没生效）
+   - 该段其余项不动：新动态数量检查 / 消息数量检查 / 最近更新的UP主 / 私信自动已读 / 夜深了 / 后台自动检查更新
+4. `app/src/main/java/com/RobinNotBad/BiliClient/activity/settings/SettingsIndex.kt`（设置页全局搜索的索引）
+   - 一级分组加条目 `Entry("通知设置", "新消息、追番更新等通知栏提醒的开关") { a -> openGroup(a, GROUP_NOTIFY, "通知设置") }`
+   - `addLeafItems(list, "通用偏好", SettingPrefActivity::class.java, ...)` 列表里**删掉** `"新消息通知", "追番更新提醒"`
+   - 新增两条可搜索叶子项：
+     ```kotlin
+     list += Entry("新消息通知", "发现新消息时在通知栏提醒") { a -> openGroup(a, GROUP_NOTIFY, "通知设置", "新消息通知") }
+     list += Entry("追番更新提醒", "追的番剧有新一集时在通知栏提醒") { a -> openGroup(a, GROUP_NOTIFY, "通知设置", "追番更新提醒") }
+     ```
+     **`Entry.name` 必须与 `buildNotifyGroup()` 里 `SettingSection.name` 严格一致**——分组页靠 `highlight` 参数按项名滚动定位。
+5. `app/src/main/res/values/strings.xml`：**未新增任何条目**，直接复用既有的 `:165 desc_private_msg_notify_enable`
+   与 `:167 desc_bangumi_update_notify_enable`（文案本身已经写得很清楚：只在打开应用时对比、不做后台定时检查、点通知进哪里）。
+
+`GROUP_NOTIFY` 与 `SettingsIndex` 同属 `package com.RobinNotBad.BiliClient.activity.settings` 顶层常量，**无需 import**。
+
+### 三、明确没有碰的东西
+
+- **`SettingsKeys.kt` 一行未动**（共享热点文件，本轮只做「复用既有键」，不重排、不重命名、不动 `mid` 等其它键）
+- **`app/src/main/java/com/RobinNotBad/BiliClient/util/MsgNotifier.kt` 未动**：通知 ID 无冲突风险。
+  现状（供核对）：`CHANNEL_ID = "private_msg_channel"`（:28）、`NOTIFICATION_ID = 1029`（:31，注释写明 1027/1028 已被
+  `DownloadService`/`PlaybackService` 占用）、`BANGUMI_CHANNEL_ID = "bangumi_update_channel"`（:101）、`BANGUMI_NOTIFICATION_ID = 1030`（:104）
+- 未触碰话题、稍后再看、评论、动态、收藏夹、关注分组等其它模块
+
+### 四、真机验收步骤
+
+**片头片尾（第 199/200 条）**
+1. 覆盖安装（或新装）后**不碰任何设置**，进一个有片头/片尾的番剧 → 应自动跳到正片、片尾处自动跳过，下方出现「撤回」，点撤回回到被跳过的地方。
+2. 设置 → 播放器 → 关掉「自动跳过片头片尾」→ 重进视频 → **必须完全不跳**。
+3. 首次遇到带片头片尾的视频 → 弹一次引导，之后再进别的视频**不再弹**。
+4. 老用户场景：在旧版本里手动关过该开关 → 覆盖安装 → 该开关**仍然是关的**、视频仍然不跳。
+
+**通知设置（第 202-206 条）**
+1. 主页 → 设置 → 第一层级看到「通知设置」→ 进去有「新消息通知」「追番更新提醒」，**默认都是开**。
+2. 留一条未读 → 回主页触发未读变多 → 通知栏出现「N 条新私信」（点通知进消息页）；关掉「新消息通知」→ 再制造一次未读变多 → **不再出现**；重开 → 恢复。
+3. 追一部在更新的番 → 打开应用触发追番检查（同一部番最新集变了才提醒）→ 通知栏出现「《XXX》更新了」（点通知进追番列表）；关掉开关 → 再次触发 → **不再出现**。
+4. 设置 → 内容与浏览 → 通用偏好 → 「更新提醒」段里**不应再有**这两项；在设置页搜索「新消息通知」→ 应跳进「通知设置」并滚动定位到该开关。
+5. 升级不丢设置：旧版本里关掉「新消息通知」→ 覆盖安装 → 进「通知设置」→ 该开关**仍然是关的**。
+
+### 五、构建与测试状态
+
+- `./gradlew.bat :app:assembleDebug` 与 `./gradlew.bat :app:testDebugUnitTest` 的**最终结果见本章末尾的补充**；
+  本轮改动涉及 `res/` 之外的资源引用与新增 Kotlin 文件，验证按团队规则执行
+  （`--offline --no-build-cache --no-configuration-cache`，需要时 `:app:clean` 与 `:app:assembleDebug` 分两次调用，
+  避免 `mergeDebugResources` 回放陈旧结果验出**假绿**）。
+- 新增单测：`app/src/test/java/com/RobinNotBad/BiliClient/player/SkipOpEdPrefsTest.kt`（9 例，覆盖默认值 / 旧值尊重 / 引导判据 / 文案）。
+- 既有单测 `app/src/test/java/com/RobinNotBad/BiliClient/util/SettingsKeysTest.kt`、`util/MsgNotifierTest.kt`、
+  `player/ViewPointSkipTest.kt` 不受影响。
+
+### 六、交叉引用
+
+- `docs/architecture-map.md` §7.7（片头片尾跳过，整段重写）、§7.15（新消息通知）、§7.16（追番更新提醒）已同步。
+- `docs/review/real-device-regression-checklist.md`：第 199/200 条重写，新增第九章含第 202-206 条，总数 **201 → 206**。
+
+## 三十四、26.10.05：话题广场加载不出来 + #话题# 不解析（C23）
+
+**用户报告（原文）**：「话题广场加载不出来，且一般动态里的话题比如#A#没有正常解析，解析应该是蓝色的且可以跳转」。
+
+这是**两个独立缺陷**：一个是数据源已废弃，一个是富文本分支缺失。分开说。
+
+### A. 话题广场「加载不出来」：真因是接口已废弃 + 静默空列表
+
+**任务书里写的根因（「可能抛异常」）是错的**，实测后纠正如下。
+
+原实现（`api/TopicApi.java`）打的是
+`https://app.bilibili.com/x/topic/web/dynamic/rcmd?page_size=9&source=Web&web_location=333.1365`，
+代码形如：
+
+```java
+if (all.getInt("code") != 0) throw new JSONException(all.optString("message"));
+JSONObject data = all.optJSONObject("data");
+if (data == null) return new ArrayList<>();   // ← 实际走到这里
+```
+
+**实测结论**：该端点**恒返回 `{"code":0,"message":"OK","ttl":1,"data":null}`**。
+带参数/不带参数、带游客 Cookie（`buvid3`）/不带、伪装浏览器 headers、`page_size` 取 9/25/26 —— 全部一样。
+
+关键在于 **`code` 是 0**，所以那句 `if (code != 0) throw` **永远不会触发**，
+代码静默走到 `data == null → 返回空列表`，页面于是 `showEmptyView()`。
+用户看到的「加载不出来」= **静默空列表**，既不是抛异常、也不是 `loadFail`——
+所以按「网络异常/抛异常」方向排查全是死路。**接口已废弃，不再下发数据。**
+
+**替代数据源（实测可用）**：`https://api.bilibili.com/x/topic/pub/search`
+
+| 实测项 | 结果 |
+|---|---|
+| `keywords` 留空 | 按热度返回**整页话题**（稳定 20 条，连拉 3 次一致） |
+| 首条 | `小剧场过大年` `id=1269670` `view=2247738435` `discuss=2204644` |
+| 字段 | 只有 `id/name/view/discuss/stat_desc/description/show_interact_data`，**没有 `dynamics`** |
+| 翻页 | `data.page_info{offset:20,has_more:true}` |
+| 登录要求 | 匿名可用 |
+
+所以 `keywords` 留空这一个用法**本身就是广场**：零硬编码词表、内容随服务端热度自然更新、无需登录
+（这正是「不要用硬编码热门词表」要求的落地方式——不需要退化词表，因为空关键词就够用）。
+PiliPlus 亦已改用同名端点（`lib/http/api.dart:866 topicPubSearch`）。
+
+| 位置 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/TopicApi.java` | ① `getRecommendedTopics()` 改为 `return searchTopics("", 20);`，**保留「空列表 = 没数据、不抛异常」语义**（`DynamicTopicActivity.loadPlaza()` 依赖它走 `showEmptyView()`）；② 新增 `searchTopics(String keywords, int pageSize)`；③ 新增纯函数 `parseSearchResponse(JSONObject all)`（`code != 0` 或 `data == null` 返回空列表）；④ 加 `import java.net.URLEncoder;` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/TopicAdapter.kt` | stats 文案改用 `discuss`：`"${toWan(discuss)} 讨论 · ${toWan(view)} 浏览"`；`discuss` 也为 0 时退化成只显示浏览数。原因：新端点**不返回 `dynamics`**，原写法会永远显示「**0 动态**」，属于误导 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/dynamic/DynamicTopicActivity.kt` | `loadPlaza()` 空态显式覆盖文案为「话题广场没有取到数据\n可能是服务端暂时没有下发\n点我重试」（`setOnEmptyRetry` 会写入通用文案「啥都木有~」，这里在其后覆盖），让用户看懂是**服务端没数据**而不是自己操作错 |
+
+### B. `#话题#` 不解析：富文本 switch 缺 TOPIC 分支
+
+动态正文与 Opus 段落各有一处解析富文本节点的 `switch`，**都没有 `RICH_TEXT_NODE_TYPE_TOPIC` 分支**，
+于是话题节点被当普通文本落进 `stringBuilder`——**既不上色也点不动**。共 3 个渲染点：
+
+| 位置 | 原状 | 改动 |
+|---|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/DynamicApi.java` `analyzeTextContent`（`:1018`，调用点 `:822`/`:914` 覆盖动态 desc 与 summary） | **完全没有 TOPIC 分支** | 在 `RICH_TEXT_NODE_TYPE_AT` 后新增 `case "RICH_TEXT_NODE_TYPE_TOPIC"` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/OpusParagraph.java:264`（`analyzeOpus`） | 有分支，但只挂 `LinkClickableSpan`、**没设颜色**（保持黑字） | 改走 `StringUtil.setSingleTopic(...)` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/OpusParagraph.java:215`（`analyzeText` 的 `TEXT_NODE_TYPE_RICH` 内层 switch） | 只处理 `EMOJI`/`RICH`，TOPIC 退化成黑字 | 新增 `case "RICH_TEXT_NODE_TYPE_TOPIC"`，用 `stringBuilder.length() - text.length()` 算起点 |
+
+三处统一收敛到一个入口，避免「两处真相」：
+
+`app/src/main/java/com/RobinNotBad/BiliClient/util/StringUtil.java` 新增
+`public static void setSingleTopic(SpannableStringBuilder stringBuilder, int start, int end, String jumpUrl)`。
+
+**这里踩到并修掉了一个真实的坑（值得记下来）**：最初打算复用现有的
+`StringUtil.LinkClickableSpan(text, TYPE_WEB_URL, jumpUrl)`，但读实现后发现**两个问题**：
+
+1. `LinkClickableSpan.onClick` 的 `case TYPE_WEB_URL:` 调的是
+   `LinkUrlUtil.handleWebURL(widget.getContext(), text)`——取的是 **`text`（span 的显示文本）**，
+   **`val`（第三个构造参数）在这个分支根本不会被读**。
+   `StringUtil.java:205` 处之所以能正常工作，是因为那里的 `text` 就是 URL 本身（巧合）。
+   我们若把 `#A#` 当 `text`、`jump_url` 当 `val` 传进去，**点击时会拿 `#A#` 去当网址解析**，必然跳不过去。
+2. `LinkClickableSpan.updateDrawState` **硬编码 `ds.setColor(Color.rgb(0x66,0xcc,0xff))`（青色）**，
+   且 `updateDrawState` 在 span 生效时执行、会**覆盖** `ForegroundColorSpan`，
+   所以「先上主色再挂 LinkClickableSpan」的做法**颜色一定会被吃掉**。
+
+于是不复用它，改为新增专用 `StringUtil.TopicClickableSpan`：`updateDrawState` 取
+`ColorScheme.INSTANCE.getPRIMARY()`（**不硬编码色值**，符合 AGENTS.md 与「7 套主题」的约定），
+`onClick` 直接 `startActivity` 进站内 `DynamicTopicActivity`（带 `topic_id`），不走 Web。
+
+配套在 `app/src/main/java/com/RobinNotBad/BiliClient/util/LinkUrlUtil.java` 新增：
+
+```java
+public static final int TYPE_TOPIC = 5;
+public static final Pattern TOPIC_ID_PATTERN = Pattern.compile("[?&]topic_id=(\\d+)");
+public static long parseTopicId(String jumpUrl);   // 解析不出返回 0，不抛异常
+```
+
+话题的 `jump_url` 形如 `https://m.bilibili.com/topic-detail?topic_id=1305890&topic_name=%E5%A4%A9...`
+（见 `bilibili-API/docs/dynamic/space.md:2252`、`bilibili-API/docs/opus/features.md:1117`），
+只需要其中的 `topic_id` 就能进站内话题页。**解析不出 `topic_id` 时退化为「只上色、不可点」**——
+宁可有色不可点，也不要拿 `#话题#` 去当网址请求。
+
+**可点击性依赖**：`app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/DynamicHolder.kt:685` 已对正文
+`content` 装了 `StringUtil.ClickableSpanTouchListener`，Opus 路径经
+`app/src/main/java/com/RobinNotBad/BiliClient/adapter/article/OpusContentAdapter.kt:397` 的
+`StringUtil.setLink(textView)` 也会装上（`StringUtil.java:243`），所以两条路径点击都生效，无需额外改动。
+
+**新增纯函数便于单测**：`api/DynamicApi.java` 新增
+`public static java.util.List<android.util.Pair<String,String>> parseTopicNodes(JSONArray richTextNodes)`，
+挑出全部 TOPIC 节点的 `text`/`jump_url`。
+
+### 单测覆盖
+
+- `app/src/test/java/com/RobinNotBad/BiliClient/api/TopicApiTest.kt` 新增 4 例：
+  `parseSearchResponse` 对 **`data: null`（即废弃端点 rcmd 的返回）返回空列表且不抛** /
+  真实 `pub/search` 结构（含「**没有 `dynamics` 字段**」的断言）/ `code != 0`（-101 未登录）与 `null` 入参 /
+  跳过无 `id` 项。
+- `app/src/test/java/com/RobinNotBad/BiliClient/api/DynamicApiTest.kt` 新增 4 例（针对 `parseTopicNodes`）：
+  按顺序挑出全部 TOPIC / **不把 AT、EMOJI、WEB 误当话题** / 空 `text`、`null` 项跳过 /
+  **缺 `jump_url` 的话题仍要被收集**（否则会退回黑字）。
+- `app/src/test/java/com/RobinNotBad/BiliClient/util/LinkUrlUtilTest.kt` 新增（新文件，5 例）：
+  `parseTopicId` 读真实 `jump_url` / 忽略其后的 `topic_name` / `topic_id` 不在首个参数位也能读 /
+  缺失或不可解析时返回 `0` 而非抛异常 / 锚定 `[?&]` 防串味。
+
+### 边界与取舍
+
+- **`getRecommendedTopics()` 保持「返回空列表 = 没数据」，不改成抛异常**：调用方 `loadPlaza()` 依赖它走空态；改成抛异常会让「服务端没数据」变成「加载失败」，反而更糟。
+- **不引入硬编码热门词表**：`pub/search` 的 `keywords` 留空本身就返回热门话题页，无需词表；也就没有「词表过期」和「每次打开都是那几条」的问题。
+- 广场仍是**单页**（`bottom = true`，不翻页），与改造前一致；`page_info.has_more` 已在数据里，将来要翻页可直接接。
+- 空态文案**必须诚实**：明确写成「可能是服务端暂时没有下发」，而不是「啥都木有~」——后者会让用户以为自己网络或操作有问题。
+
+### 验证
+
+`.\gradlew.bat :app:assembleDebug` 与 `.\gradlew.bat :app:testDebugUnitTest`（全队串行窗口内跑）。
+
+### 交叉引用
+
+- 接口依据：`bilibili-API/docs/dynamic/topic.md:74`（`feed/topic`，本页话题动态列表用，实测匿名可用、**无需改动**）、`:5376-5448`/`:5539-5559`/`:5718-5723`（TOPIC 节点的 `jump_url` 真实形态）；`bilibili-API/docs/dynamic/space.md:2252`、`bilibili-API/docs/opus/features.md:1117`（带 `topic_name` 的形态）。
+- 台账前序：`fix-progress.md:2020-2028`（话题广场/话题页首建，即本轮 C23 修的数据源）。
+- 相关架构：`docs/architecture-map.md:527`（`DynamicTopicActivity` 一个 Activity 两种形态）、`docs/watch-optimization-research.md:649`（C10 条目，其中记载的广场走 `rcmd` 已被本轮推翻）。
+- PiliPlus 对照：`lib/http/api.dart:866-867`（`topicPubSearch`，已在用）、`:887`（`dynTopicRcmd`，仍在但同样拿不到数据）、`lib/http/search.dart:242-265`（传参形态）；`lib/pages/dynamics/widgets/rich_node_panel.dart:115-132`（TOPIC 渲染参考）。
+
+---
+
+## 二十九、26.10.04 批次 6 复查（C27 视频笔记 + C6b 带图评论）
+
+本节处理用户报的两条：**「笔记无法正常加载」**与**「评论带图报错 12066」**。
+
+> **先说结论，避免误读：**
+> - **「笔记无法正常加载」的根因至今未确证**，本次交付的是**可观测性**（分级错误提示 + 真机埋点），
+>   **不是「修好了笔记」**。详见 §29.1 / §29.2。
+> - **「12066」的确切触发条件也未复现**，无大会员账号、无真机；本次修的是同一条链路上
+>   **与官方语义不符的确定性缺陷**（`img_size` 小数被截断），**未与 12066 做因果绑定**。详见 §29.3。
+
+### 29.1 笔记：已排除的与仍存疑的
+
+#### 调用链（现状）
+
+`activity/video/info/VideoInfoFragment.kt:563-569`（点「笔记」）→ 只 `putExtra("aid", videoInfo!!.aid)`，
+**不传 `note_id`** → `activity/note/NoteActivity.kt:52-53` 读 `aid`、`note_id` 缺省空串
+→ `NoteActivity.kt:66-73` 因 `noteId.isEmpty()` 先走 `NoteApi.getNoteIdsOfVideo(aid)` 取 `ids[0]`
+→ `NoteActivity.kt:74` `NoteApi.getNoteInfo(aid, noteId)`。
+
+#### 已排除（有依据，不是这三处）
+
+1. **不是 csrf 问题**：`NoteApi.getNoteInfo`（`api/NoteApi.java:259-276`）按
+   `bilibili-API/docs/note/info.md:65-71` 的参数表**不带 csrf**，与文档一致；
+   `getNoteIdsOfVideo` 带 csrf 是因为 `bilibili-API/docs/note/list.md:19` 将其标为**非必要**（非禁止），保留无收益损失。
+2. **不是 `note_id_str` 精度设计问题**：`pickNoteId` 优先 `note_id_str` 是**正确**的
+   ——`list.md:42` 明确 `noteIds` 项类型为 `str`、`:64-66` 示例 `"3809605586518023"`；
+   且 `info.md:131-139` 官方示例自己就用 17 位 `note_id=24508729145690112`。**该设计保持原样，一行未动。**
+3. **不是 UI 层**：`activity_note.xml` 的 `RotaryScrollView` + 单 `TextView` 渲染链路结构正确，
+   `renderBlocks`/`applyStyle` 的样式逐段套用逻辑无缺陷；`parseColor` 已对脏色值做 try/catch。
+
+#### 仍存在的假设（**未验证，禁止当作结论**）
+
+**假设 H1**：`info.md:71` 把请求参数 `note_id` 的类型标为 **`num`**，而 `list/archive` 返回的是**字符串**
+（`list.md:42`）。若服务端真按 `num` 解析这个 17 位 id，则**服务端自己**会丢精度
+（17 位 > 2^53），查不到 → 返回 **79502**。这可以解释用户报的「笔记无法正常加载」。
+**但这只是假设**：`info.md:131-139` 的示例本身用 17 位串，说明服务端**可能**按字符串收；
+无有效 Cookie 打真接口，**本地无法证实或证伪**。
+
+**假设 H2**：`getNoteIdsOfVideo` 在未登录/凭据过期时拼出 `&csrf=`（空值），
+服务端是否把空 csrf 当参数错误**无证据**。
+
+#### 验证方法（留给有 Cookie 的人）
+
+1. 用有效 SESSDATA 抓 `GET https://api.bilibili.com/x/note/list/archive?oid=<真有笔记的稿件>&oid_type=0`
+   ，看 `data.noteIds[0]` 的**原始字符串**。
+2. 用它抓 `GET https://api.bilibili.com/x/note/info?oid=<同稿件>&oid_type=0&note_id=<上一步的值>`，
+   记录原始响应 `code` / `message`。
+3. **对比两种传参**：把同一个 id 分别按字符串（原样）与按 `num`（即先 `Number()` 再转回字符串，
+   观察是否已丢精度）各发一次，看服务端返回是否不同。**这是判定 H1 的唯一办法。**
+4. 若返回 79502/79503，**服务端的 `message` 原文是唯一权威线索**，请回传。
+
+### 29.2 本次实际交付：可观测性（这才是这次改的东西）
+
+用户看到的一直是笼统的「获取笔记失败」，因为原 `catch (e: Exception)` 把
+**断网 / 未登录 / 79502 / 79503 / 解析异常**五种完全不同的情况压成了同一句话。
+本次把它拆开：
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/NoteApi.java` | 新增纯函数 `failureText(Throwable)`；两个接口补真机诊断埋点 `logFailure(...)` 与成功分支日志；新增 `maskCsrf(String)` 脱敏 csrf；新增 tag 常量 `TAG = "BiliNote"` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/note/NoteActivity.kt` | `:77-83` 的 `catch` 改为 `failureText(e)` 分级显示（走既有 `showEmpty` 链路，未新造 UI） |
+| `app/src/test/java/com/RobinNotBad/BiliClient/api/NoteApiTest.kt` | 新增 4 例纯函数单测（见 §29.4） |
+
+**分级规则**（`NoteApi.failureText`）：
+
+| 异常 | 页面显示 |
+|---|---|
+| `IOException`（断网 / DNS / 超时） | 「网络异常，请检查网络后重试」 |
+| `JSONException` 且 message 是服务端原话 | **服务端原文**（如「没有找到这篇笔记」「这篇笔记还没有正文」「还没有登录喵~」）|
+| `JSONException` 且 message 是兜底文案 | 「获取笔记失败」 |
+| 其它 | 「获取笔记失败」 |
+
+两个关键取舍：
+
+- **不原样吐异常描述**：断网的描述是 `java.net.UnknownHostException: api.bilibili.com`，
+  手表小屏上既长又无意义，也**不该把内部类名暴露给用户**；故按类型给固定文案。
+- **判断顺序**：`UnknownHostException` 继承链上是 `IOException`，**先判 `IOException` 再判 `JSONException`**，
+  否则网络异常会被 `JSONException` 分支抢走。
+
+**真机埋点**：两个接口的失败分支都打 **code + 服务端 message + 完整 URL**（`Log.e`），
+成功分支打「笔记数」与「标题长度 + 正文块数」。后者是为了把
+**「接口没给 content」**和**「content 没解析出块」**分开——两者现象都是「还没有正文」，
+只看错误码分不清。过滤命令：
+
+```
+adb logcat -s BiliNote
+```
+
+**csrf 已脱敏**：`maskCsrf` 把 `csrf=` 后的值换成 `***`，日志不留凭据明文；
+`note_id` **保留原值**（精度问题正是要查的东西）。
+
+### 29.3 带图评论 12066：改了什么、没改什么
+
+#### 已确证的确定性缺陷（与 12066 **不做因果绑定**）
+
+**`img_size` 小数被截断。** 官方与上游都按浮点处理，只有我们按整数读：
+
+| 依据 | 内容 |
+|---|---|
+| `bilibili-API/docs/dynamic/publish.md:40` | `img_size` 类型 `number`，内容「已上传图片大小」，单位 `k`（KB，小数）|
+| `bilibili-API/docs/dynamic/publish.md:66` | 官方响应示例 `"img_size": 6.261` |
+| `bilibili-API/docs/dynamic/card_info.md:133` | `1425.97998046875` |
+| 上游 PiliPlus `lib/models_new/upload_bfs/data.dart:5,19` | `double? imgSize;` / `(json['img_size'] as num?)?.toDouble()` |
+
+原先 `api/ReplyApi.java` 用 `public long img_size` + `data.optLong("img_size", 0)`，
+会把 `6.261` 读成 `6`、`662.6005859375` 读成 `662`。
+
+改动：
+- `api/ReplyApi.java`：`UploadImageData.img_size` 改为 `double`；`optLong` → `optDouble`；
+  新增纯函数 `buildPictures(List<UploadImageData>)`（组装 `pictures` JSON 数组）。
+- `api/ImageApi.java`：`UploadedImage.size` 改为 `double`。
+  **`toDynamicPicJson()` 逻辑未动**（它本来就是对的）。
+- `activity/reply/WriteReplyActivity.kt`：`buildPictures()` 改为委托 `ReplyApi.buildPictures(...)`，
+  **原有的 `synchronized(uploadDataList)` 保留**（写方 `:241-243` 与读方 `:169-173`、`:361-362`
+  都在 `CenterThreadPool.run` 的后台线程上，`ArrayList` 非线程安全，取值快照必须在锁内完成）。
+
+#### 顺带修掉的既有缺陷：私信图片 `size` 小 1024 倍（**HEAD 就存在，非本次引入**）
+
+调用点传的是图床返回的 **KB** 值，而 `api/PrivateMsgApi.java` 的 `buildImageContent(..., long byteSize, ...)`
+第 4 参数按**字节数**语义做 `sizeToKb`（`:353-356` 除以 1024），导致 `size` 只有真实值的 1/1024。
+官方 `bilibili-API/docs/message/private_msg_content.md:42` 明确单位是**千字节**、`:55` 示例 `55.443`。
+
+改动：新增 `buildImageContentOfKb(url, width, height, sizeKb, imageType)` 显式接收 KB；
+调用点（`activity/message/PrivateMsgActivity.kt` 的 `sendImage` 段）改用它。
+**保留** `buildImageContent(long byteSize)` 作为委托入口（将来只有字节数的调用方路径仍然正确，
+且删除会波及既有单测）。
+
+> **归因澄清（重要）**：`uploaded.size.toLong()` 是**临时编译修复**，唯一目的是让 `Double` 能传给
+> `long` 参数。**1/1024 的来源是 `buildImageContent` 的字节数语义与调用点传入的 KB 值不匹配**
+> （HEAD 既有缺陷），`.toLong()` 只是让它得以编译通过、从而暴露出来。
+
+#### 已排除（不是这两处）
+
+- **不是字段名写错**：`bilibili-API/docs/comment/readme.md:289-296` 的 `pictures[]` 字段为
+  `img_src` / `img_width` / `img_height` / `img_size`（单位 KB），与上游
+  `lib/pages/common/publish/common_rich_text_pub_page.dart:519-524` **完全一致**。
+- **不是编码问题**：`util/NetWorkUtil.java:367-385` 已用 `charset=utf-8`；
+  `sendReply` 对 `message` 与 `pictures` 各自 `URLEncoder.encode(..., "UTF-8")`。
+- **`plat` 非必要**：`docs/comment/action.md:21`、`docs/comment/readme.md:225`、`docs/comment/list.md:879` 均写明非必要、默认 1。
+
+#### 12066 本身：**未复现**，且是**未文档化错误码**
+
+- 本地 `bilibili-API/` 全库 grep `12066` **零命中**；上游 collector `docs/comment/action.md`
+  错误码表末尾明写「**（其他错误码有待补充）**」，表中只到 12001-12052。
+- 这解释了用户看到**裸数字**：`WriteReplyActivity.kt` 的 `msgMap` 无此项。
+  已补 `12066 to "图片信息异常，请重新选图后再试"`（只保证不再显示裸码，**不是**声称已修好）。
+
+#### 真机验证步骤（改动效果的直接判据）
+
+1. **大会员账号**（带图评论仅大会员，见「图」按钮的 `VipApi.getVipInfo` 判断）→ 视频评论 →「图」→ 选一张 **>1MB** 的图 → 发送。
+2. 抓 `POST https://api.bilibili.com/x/v2/reply/add` 的 `pictures` 参数，确认 `img_size` 是
+   **小数**（如 `662.6005859375`）而非整数（`662`）。**这是本次改动最直接的判据。**
+3. **若仍回 12066**，则说明 `img_size` 不是成因。此时需要拿到 `message` 原文：
+   在 `ReplyApi.sendReply` 的失败分支打印完整响应体（`code` / `message` / `data`），
+   把 `message` 回传。**12066 无文档，服务端 `message` 是唯一权威线索。**
+4. 私信：发一张 >1MB 的图，抓 `msg[content]` 的 `size`，确认是 **KB** 且与图床 `img_size` 一致
+   （不再是被多除过 1024 的值）。
+
+### 29.4 新增单测
+
+`app/src/test/java/com/RobinNotBad/BiliClient/api/NoteApiTest.kt`（+4 例）：
+
+- `failureText_givesNetworkAdviceForIoExceptions`（`UnknownHostException` 与 `SocketTimeoutException` 都走网络文案）
+- `failureText_passesThroughServerMessage`（含剥掉 `org.json.JSONException:` 前缀）
+- `failureText_hidesGenericFallback`（兜底文案不再重复显示；`null` 异常也给文案）
+- `failureText_hidesInternalDetailForUnknownTypes`（不外泄内部类名）
+
+`app/src/test/java/com/RobinNotBad/BiliClient/api/ReplyApiTest.kt`（+5 例）：
+`buildPictures_keepsFractionalKb`（`6.261` 不被截成 `6`）、`buildPictures_hasAllFourDocumentedFields`、
+`buildPictures_emptyMeansNoParameter`（空表/null → **空串**而非 `"[]"`）、
+`buildPictures_skipsNullEntriesButKeepsTheRest`、`buildPictures_keepsOrderAndCount`。
+
+`app/src/test/java/com/RobinNotBad/BiliClient/api/PrivateMsgApiTest.kt`（+3 例）：
+`buildImageContentOfKb_不再次除以1024`、`buildImageContentOfKb_与字节版对同一个值给出一致结果`
+（`56774` 字节 == `55.443` KB，保证两条入口不漂移）、`buildImageContentOfKb_非正数按0处理`。
+
+> `buildPictures` 空表返回**空串**这个细节很关键：`"[]"` 可能被服务端当成「有 0 张图」而报错。
+
+### 29.5 明确没有碰的东西
+
+- **`note_id` 的传参方式一行未动**（在 H1 未确证前改动属赌博，会掩盖真因）。
+- **`activity/video/` 下无任何写入**（该目录有其它队友与用户的未提交改动）。
+- **`model/Reply.java` 未动**（归其它任务）。
+- **`ImageApi.toDynamicPicJson()` 逻辑未动**。
+- **`WriteReplyActivity.kt` 的 `pendingUploads++/--`（`:224`/`:253`）未加同步保护**：
+  已发现该计数在主线程入口与后台 `finally` 各改一次、无同步，但**与本次用户报的 bug 无关**，
+  改动会引入无法验证的风险，故**发现但不动**，仅此记录。
+- `activity/message/` 下除 `PrivateMsgActivity.kt` 的 `sendImage` 段外未动。
+
+### 29.6 构建与测试状态
+
+`./gradlew.bat :app:assembleDebug --offline --no-build-cache --no-configuration-cache` 与
+`./gradlew.bat :app:testDebugUnitTest --offline --no-build-cache --no-configuration-cache` 的
+最终结果见本节末尾补充。**编写本文档时尚未取得构建窗口**（团队规则：同一时刻只允许一人跑 Gradle，
+且需在 Lead 协调的窗口内执行，避免多人并发写同一个 `app/build/` 产生假的编译失败）。
+
+**未复现清单（如实记录）**：
+
+- 79502 / 79503 的**确切触发条件未复现**（无有效 Cookie、无真机）。
+- **12066 未复现**，其与 `img_size` 截断的因果关系**未建立**。
+- 用户是否在真机上因私信 `size` 的 1/1024 看到异常表现**未复现**（该缺陷有代码依据）。
+
+---
+
+## 30. 长按冲突与楼中楼排序二次切换失效（task-4）
+
+用户报告原文：
+
+> 「长按操作按钮/长按动态」与「长按复制」冲突。
+> 楼中楼评论详情页排序「切换一次后可以再次切换，但评论顺序不会再次变化」。
+
+两件事各自独立，分列如下。
+
+### 30.1 楼中楼排序二次切换失效（**确证并修复**）
+
+#### 根因
+
+`app/src/main/java/com/RobinNotBad/BiliClient/model/Reply.java` 的
+`public static void sortReplies(List<Reply> replies, int sort, int fromIndex)` 首行是：
+
+```java
+if (replies == null || sort != SORT_LIKE) return;
+```
+
+`SORT_TIME`（`= 0`）**直接 return，从不重排**。于是：
+
+1. 初始 `sort = SORT_TIME`（列表是服务端回复序，恰好是时间序）；
+2. 用户切到 `SORT_LIKE` → 真正排序 → 列表变热度序；
+3. 用户切回 `SORT_TIME` → **什么都不做** → 顺序永久停在热度序。
+
+⇒ 这是**单向排序**缺陷，**与 `notifyDataSetChanged()` 无关**。用户描述的「可以再次切换」是对的
+（`sort` 变量确实翻转、按钮文案确实变化），「顺序不会再次变化」也是对的（因为时间分支是空操作）。
+两句描述完全吻合这个根因。
+
+#### ⚠️ 本次是**推翻一个旧的设计取舍**，不是修一处疏忽
+
+**这一点必须写明，否则未来 reviewer 只看新代码会以为旧实现是粗心，进而把本次改动误判为
+「修疏忽」——而实际是「改设计决定」。改设计决定需要更充分的理由，理由在下面。**
+
+「时间序 = 不做任何本地重排」**是上一轮有意做出的取舍，不是遗漏**。原文见
+`docs/review/fix-progress.md:1758`（§上一轮 C4 改动「取舍」段）：
+
+> **「按时间」不做任何本地重排**：接口返回顺序本身就是回复顺序，动它反而可能把顺序弄乱。
+> **没有用 `floor` 排**——该字段在部分评论区不存在
+> （`bilibili-API/docs/comment/readme.md:56` 注明「若不支持楼层则无此项」），
+> 用它排会出现「不支持楼层时整片乱序」。
+
+当时这个取舍**在它自己的前提内是成立的**：楼中楼接口
+（`/x/v2/reply/reply`，参数只有 `type`/`oid`/`root`/`ps`/`pn`，**无 sort/mode**）
+返回的确实是回复顺序，直接沿用不会出错；而且选 `floor` 做排序键**确实有真实缺陷**。
+
+**它失效的条件是「本地重排不可逆」**：一旦用户切到热度序，`Collections.sort` 就地打乱了列表，
+服务端原始顺序**在客户端已经不存在了**；此时再切回时间序若只 `return`，那份被丢弃的顺序
+**再也拿不回来**。所以这个取舍有一个**延迟触发的失效模式** —— 静态看没问题，只有「切换过一次」
+之后才暴露，这正是用户报的现象。
+
+**推翻它的理由（三条，缺一不可）：**
+
+1. **失效模式的代价高于取舍的收益**：正确性问题（顺序不可恢复）> 省一次本地排序。
+2. **`ctime` 恰好避开了当初否决 `floor` 的那个理由**：`ctime` 是服务端**恒返回**字段
+   （不像 `floor` 在部分评论区不存在），且解析用 `optLong("ctime", 0L)` 缺省 `0` +
+   比较器稳定排序兜底 —— 即使个别项缺 `ctime` 也只是「保持其原有相对位置」，不会整片乱序。
+   **所以「不能用服务端字段排序」这个当初的前提，对 `ctime` 不成立。**
+3. **替代方案（备份原始顺序）被否决**：见下节，`Reply` 是 `Serializable` 且跨页传递，
+   藏 mutable 备份字段容易变脏数据 —— 那就只能选「用 `ctime` 真排序」这条路。
+
+> **给未来 reviewer 的结论**：本次改动是**在已知旧取舍的前提下、针对其延迟失效模式**做的设计变更，
+> 不是没看见旧代码就重写。若要再次推翻（例如改回「不重排」），需要先解决「切换后原始顺序
+> 不可恢复」这个问题。
+
+#### 修法（Lead 明令：不用「备份原始顺序」这种带状态写法）
+
+**否决了「排序前备份原列表、切回时还原」的方案**：`Reply` 实现 `Serializable` 且会在页面间传递，
+在模型里藏一个 mutable 备份字段，经过翻页 / 点赞 / 删除之后极易变成脏数据。
+
+改为**让 `SORT_TIME` 成为真正执行的排序分支**，按 `ctime` 显式升序重排：
+
+```java
+public static void sortReplies(List<Reply> replies, int sort, int fromIndex) {
+    if (replies == null) return;
+    if (fromIndex < 0) fromIndex = 0;
+    if (replies.size() - fromIndex < 2) return;
+    Collections.sort(replies.subList(fromIndex, replies.size()),
+            sort == SORT_LIKE ? LIKE_ORDER : TIME_ORDER);
+}
+```
+
+两个比较器为 `private static final` 常量（避免每次调用重新分配 lambda），并各自带 `null` 兜底
+（`null` 项排到最后）：
+
+- `LIKE_ORDER`：`Integer.compare(b.likeCount, a.likeCount)`，点赞数降序。同赞数时由
+  `Collections.sort` 的**稳定性**保住原有（时间）顺序。
+- `TIME_ORDER`：`Long.compare(a.ctime, b.ctime)`，时间升序。
+
+两个分支都是**幂等**的，所以「时间→热度→时间」往返必然回到原序。未知 `sort` 值
+（如主评论列表用的 2/3）现在**一律回落到时间序**，不再被当成「不打乱」而留下脏顺序。
+
+#### 新增字段 `ctime`（排序键，非展示字段）
+
+`Reply` 新增 `public long ctime;`，取服务端 `ctime` **原值（秒）**：
+
+```java
+this.ctime = replyJson.optLong("ctime", 0L);
+```
+
+- 用 `optLong` 带默认值，接口缺 `ctime` 时不抛异常；默认 `0` 表示无时间信息，
+  此时靠稳定排序保持原有相对位置。
+- **为什么不复用已有的 `pubTime`**：`pubTime` 是**展示文案**（「3小时前」「2026-10-04 12:00 | IP:上海」），
+  **不单调**，不能做排序键。
+- 单位刻意与局部变量 `ctime`（`replyJson.getLong("ctime") * 1000`，毫秒）区分开，避免单位歧义。
+
+#### 为什么不做成「每次切换都重新请求服务端」
+
+参考上游 PiliPlus（`D:\tmp\piliplus`）：
+
+- `lib/pages/common/reply_controller.dart:91-107` 的 `queryBySort()` 每次切换都
+  `feedBack(); onReload();`，因为它的**服务端接口支持 `mode`**（`Mode.MAIN_LIST_HOT` / `Mode.MAIN_LIST_TIME`）。
+- `lib/models/common/reply/reply_sort_type.dart` 是 `time` / `hot` / `select` 三态。
+
+而我们的**楼中楼接口没有 `sort`/`mode` 参数**，服务端不提供热度序，只能本地重排。
+`lib/utils/storage_pref.dart:744-753` 显示 PiliPlus 的 `reply2SortType`（楼中楼）默认 `time`。
+
+#### 顺带澄清：`ctime` 不需要同步任何 Parcelable（**理由修正、结论不变**）
+
+Lead 一度担心「新增字段没同步 `Parcelable` 会导致跨页变 0、排序静默失效」。
+**结论正确（不需要补任何东西），但理由需要修正**：
+
+- `model/Reply.java:31` 是 `public class Reply implements Serializable {` —— **只实现
+  `Serializable`，全文无 `Parcelable` / `writeToParcel` / `CREATOR` / `describeContents`**
+  （四个关键字全库 grep，除第 31 行外零命中）。新增非 transient 字段由 Java 序列化自动带上，不会丢。
+- 也没有「整对象 `putExtra`」的传递路径：评论相关 `putExtra` **只传标量**
+  （`ReplyAdapter.kt:493-498` 传 `rpid`/`parent`/`replyType`/`parentSender`/`pos`；`:344` 传 `imageList`；
+  `:639` 传 `type`；`activity/message/MessageActivity.kt:66` 传 `type`；
+  `activity/article/OpusInfoActivity.kt:52` 与 `adapter/video/VideoCardHolder.kt:86` 传 `seekReply`）。
+
+> 记录方式说明：这是**理由修正、结论不变**，不是「防住了一个风险」——
+> 原本担心的失效路径**不存在**，写清楚是为了避免后人照着一个错误前提去做多余的 Parcelable 同步。
+
+### 30.2 长按与「长按复制」的冲突（动态侧**确证并修复** / 评论侧**未复现**）
+
+先厘清「长按复制」到底是什么：它**不是** `LinkMovementMethod` / `textIsSelectable`，
+而是业务代码自己注册的长按监听 ——
+`util/StringUtil.java:170` 的 `setCopy(TextView textView, String customText)`，在
+`SharedPreferencesUtil.getBoolean("copy_enable", true)` 为真时执行
+`textView.setOnLongClickListener(v -> { startActivity(CopyTextActivity, extra "content" ...); return true; })`。
+（开关项 `SettingsKeys.COPY_ENABLE`，文案「长按复制」。）
+
+所以**同一个 TextView 上只能有一个长按结果**，修复方向是「让长按按需让位」，而不是去改复制本身。
+
+#### 动态侧：**确证并修复**（真实存在过的双弹窗）
+
+`app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/DynamicHolder.kt` 原代码是：
+
+```kotlin
+item_dynamic_delete!!.setOnClickListener { item_dynamic_delete!!.performLongClick() }
+```
+
+即「点一下」通过 `performLongClick()` 转发给长按。**长按手势结束后系统还会补发一次 click**，
+于是转发的 `performLongClick()` 再触发一次 → **弹出两个菜单**。这是真实缺陷，已修复。
+
+#### 评论侧：**未复现（布局层面不可能，附 `cell_reply_list.xml` 兄弟节点依据）**
+
+逐行核对 `app/src/main/res/layout/cell_reply_list.xml`：
+
+- 根节点 `androidx.constraintlayout.widget.ConstraintLayout` 只带
+  `android:foreground="?attr/selectableItemBackground"`，**没有 `android:clickable` / `android:focusable`**，
+  不参与触摸拦截；
+- `replyText`（`:46-56`，正文）、`item_reply_delete`（`:87-99`，操作按钮）、`likes`（`:58`）、
+  `dislikeBtn`（`:71`）、`replyBtn`（`:179`）**全部是同级兄弟节点**，互不包含、位置不重叠。
+
+Android 的命中测试只会把一次触摸派发给**其中一个** View，不存在「两个 View 互相补发手势」的路径。
+⇒ **评论侧结构上不可能出现双弹窗**，故记为**未复现**，并给出上述结构性依据（而非含糊的「没测出来」）。
+
+#### 那么用户说的「冲突」到底是什么：**入口不可发现 + 长按语义二义**
+
+原始代码（`git show HEAD:` 核对确认）：
+
+```kotlin
+replyHolder.item_reply_delete.setOnClickListener { MsgUtil.showMsg("长按操作") }
+replyHolder.item_reply_delete.setOnLongClickListener { showManageMenu(reply); true }
+```
+
+即**点一下只弹 toast「长按操作」，必须长按才出菜单** → 入口几乎不可发现。叠加第二条：
+**同一屏内「长按」在正文上等于「复制」、在操作按钮上等于「管理菜单」** → 用户感知到的
+「长按操作按钮和长按复制冲突」，本质是**长按这一手势承载了两种互斥语义**，
+加上操作入口本身藏得深（要点必须长按）。
+
+#### 修法
+
+**评论侧** `adapter/ReplyAdapter.kt`：
+
+1. `item_reply_delete` 改为**点一下与长按都弹同一个菜单**（点击成为主路径 → 入口可发现），
+   替换掉原来只弹 toast 的写法；
+2. 正文 `message` 上，`setCopy(...)` 先注册长按复制，**仅当 `canManage(reply)` 为真时**
+   才覆盖成长按弹菜单 —— 为假时**保留复制**（是「让位」，不是把复制砍掉）；
+3. 新增 `private fun canManage(reply: Reply)`，让「操作按钮显不显示」与「正文长按弹不弹菜单」
+   共用同一判据（否则会出现「按钮看得见但长按没反应」）；
+4. 顺带把 `reply.sender!!.mid == SharedPreferencesUtil.getLong("mid", 0)` 的字面量
+   `"mid"` 换成已有常量 `SharedPreferencesUtil.mid`，`!!` 换成 `?.`。
+
+**动态侧** `adapter/dynamic/DynamicHolder.kt`：把「管理入口」收敛成**唯一真相源**
+`showManage()`，点击与长按都调它，并加 400ms 去重：
+
+```kotlin
+private const val MANAGE_DEDUP_MS = 400L
+private var manageAction: (() -> Unit)? = null
+private var lastManageAt = 0L
+
+fun setManageAction(action: (() -> Unit)?) {
+    manageAction = action
+    lastManageAt = 0L   // 复用时清旧时间戳，否则新动态的首次点击会被上一条的时间戳吞掉
+}
+
+fun showManage(): Boolean {
+    val action = manageAction ?: return false
+    val now = SystemClock.uptimeMillis()
+    if (now - lastManageAt < MANAGE_DEDUP_MS) return true
+    lastManageAt = now
+    action()
+    return true
+}
+```
+
+- 存**普通 lambda** 而不是 `View.OnLongClickListener`：若存后者并用 `performLongClick()` 转发，
+  长按结束补发的 click 会再弹一次（正是动态侧原缺陷的成因）。
+- `showManage()` 在 `manageAction == null` 时返回 `false` → **不消费长按事件** →
+  自动回落到 `setCopy` 注册的长按复制。这就是动态正文侧「让位」的实现机制。
+- 新增 `getManageAction(...)` 系列（`@JvmStatic`，纯 lambda 版）供三个调用点注入；
+  **旧 `getManageListener(...)` 的 4 个重载全部保留为兼容入口**（内部委托到 `getManageAction`），
+  因为 `adapter/dynamic/TopicDynamicAdapter.kt:69` 仍在调用它（该文件属其它任务，未动）。
+
+最终调用链（真机验收用）：
+
+| 触发 | 路径 |
+|---|---|
+| 管理按钮**点击** | `setOnClickListener` → `showManage()` → 守卫 → `manageAction()` → `showManageMenu(...)` → `TerminalDialog.menu(...)` |
+| 管理按钮**长按** | `setOnLongClickListener` → **同一个 `showManage()`** |
+| 动态**正文长按** | `content.setOnLongClickListener` → **同一个 `showManage()`** |
+
+`manageAction` 的注入者只有三个：`adapter/dynamic/DynamicAdapter.kt`、
+`adapter/dynamic/UserDynamicAdapter.kt`、`activity/dynamic/DynamicInfoFragment.kt`。
+⇒ **只有一个真相源**，点击与长按绝不分叉。
+
+#### 全仓 `AlertDialog` 约束
+
+本次改动全部走 `util/TerminalDialog.kt` 的 `menu` / `confirm`，**未新增任何裸
+`AlertDialog.Builder`**；删除类项均经 `danger` 集合高亮（`dangerIndex = actions.indexOfFirst { it.first.startsWith("删除") }`）。
+
+### 30.3 新增与改写的单测
+
+`app/src/test/java/com/RobinNotBad/BiliClient/model/ReplySortTest.kt`（整文件重写，11 例）：
+
+| 用例 | 覆盖点 |
+|---|---|
+| `sortReplies_likeMode_ordersByLikeCountDesc` | 热度降序 |
+| `sortReplies_likeMode_isStableForEqualLikeCounts` | 同赞数保持原序（稳定性） |
+| `sortReplies_timeMode_ordersByCtimeAscending` | 时间升序（数据构造使两档结果可区分） |
+| `sortReplies_timeMode_restoresOrderAfterLikeMode` | **用户报的 bug**：时间→热度→时间可还原 |
+| `sortReplies_repeatedSwitching_isIdempotent` | `repeat(3)` 三轮往返，每轮断言 |
+| `sortReplies_timeMode_isStableForMissingCtime` | `ctime` 全 `0` 时保持原序 |
+| `sortReplies_likeMode_doesNotTouchItemsBeforeFromIndex` | 根评论 `assertSame` 在下标 0 |
+| `sortReplies_timeMode_doesNotTouchItemsBeforeFromIndex` | 根评论 `ctime` 设最大仍不被排进去 |
+| `sortReplies_toleratesNullEmptyAndShortLists` | `null` / 空 / 单元素 / `fromIndex = 5` / `-1` 均不抛 |
+| `sortReplies_toleratesNullItems` | 列表混入 `null` 不崩（比较器 null 兜底） |
+| `sortReplies_unknownMode_fallsBackToTimeOrder` | `sort = 2/3` 回落时间序 |
+
+**删除的两个旧用例**（与新语义冲突，不能保留）：
+
+- `sortReplies_timeMode_keepsServerOrder` —— 断言「时间序 = 保持服务端顺序」，正是缺陷本身的断言；
+- `sortReplies_unknownMode_keepsOrder` —— 断言「未知排序不重排列表」，与「未知值回落时间序」冲突。
+
+（该文件既有的 `sortReplies_likeMode_doesNotTouchItemsBeforeFromIndex`、
+`sortReplies_toleratesNullEmptyAndShortLists` 语义保留，改为新 helper 写法。）
+
+helper：`private fun reply(rpid: Long, likeCount: Int, ctime: Long = rpid): Reply`（`ctime` 默认等于
+`rpid`，便于直接构造时间序）。**环境限制**：`app/build.gradle` 只有 `junit:junit:4.13.2` 与
+`org.json:json:20231013`，**没有 Robolectric**，故 `SystemClock` 相关逻辑（`MANAGE_DEDUP_MS` 去重）
+无法进 JVM 单测，只能真机验证。
+
+### 30.4 构建与测试状态（如实记录）
+
+`./gradlew.bat --stop` 后按 Lead 给的独占窗口，序列执行
+`:app:clean` → `:app:assembleDebug` → `:app:testDebugUnitTest`（均带
+`--offline --no-build-cache --no-configuration-cache`）。结果：
+
+- `:app:clean` **FAILED**：`New files were found. This might happen because a process is still
+  writing to the target directory`（daemon 关闭竞态）。**但实际效果已达成**：`app/build` 递归文件计数
+  = **0**，只剩 `outputs/apk/release` 等空目录壳被某进程句柄占用
+  （`cmd rmdir` 诊断：`The process cannot access the file because it is being used by another process.`，
+  已确认无 `java.exe` 残留，仅剩两个与构建无关的 node 进程）。
+- `:app:assembleDebug` **BUILD FAILED**，`:app:compileDebugKotlin FAILED`，
+  **失败点不在本次改动范围内**：
+
+```
+e: .../app/src/main/java/com/RobinNotBad/BiliClient/adapter/user/FollowGroupAdapter.kt:300:55
+   Argument type mismatch: actual type is
+   'com.RobinNotBad.BiliClient.adapter.user.FollowGroupAdapter.GroupItem',
+   but 'com.RobinNotBad.BiliClient.model.FollowTag' was expected.
+```
+
+  `adapter/user/FollowGroupAdapter.kt` 属**关注分组移动**（task-5，另一名队友在途），
+  是**真实的源码错误**，非并发噪声。
+- `:app:testDebugUnitTest` **未能跑完**：编译单元里存在上述在途错误，任务链到不了测试阶段。
+
+> **本次改动曾取得过一次 `assembleDebug` 成功**（清理增量产物后重跑，`BUILD SUCCESSFUL`，
+> `compileDebugKotlin` / `compileDebugJavaWithJavac` / `dexBuilderDebug` / `packageDebug` 全走完），
+> 该次成功**早于** `FollowGroupAdapter.kt` 的在途改动落地。故本节的准确表述是：
+> **本次改动自身在编译层面已验证过一次通过，但「clean 后完整 assembleDebug + testDebugUnitTest
+> 全绿」这一最终验收未取得干净窗口。**
+
+> ### ⚠️ 结论：本批代码的编译验证**被队友在途源码阻塞，未取得干净窗口**
+>
+> **不得读作「已验证通过」。**`build.gradle` 的验收项（`assembleDebug` 通过 +
+> `testDebugUnitTest` 全绿）在本批代码上**均未取得最终结果**：
+>
+> - `:app:assembleDebug` 唯一的一次成功发生在 `FollowGroupAdapter.kt` 在途改动落地**之前**；
+>   干净窗口下的重跑被 `FollowGroupAdapter.kt:300:55` 的类型不匹配错误拦下，
+>   该错误**不在本批改动范围内**。
+> - `:app:testDebugUnitTest` **一次都没有成功跑完**（编译单元被上述错误阻断，任务链到不了测试阶段）。
+>
+> 该错误的归属**已由 Lead 裁定为 w5（关注分组移动 / task-5）负责修复**；
+> 修复后由 **Lead 在全队冻结后串行重跑全量验证**（届时本批代码已在树中）。
+> 在此之前，本节的单测用例**只做过静态审查，未经 JVM 实际执行**。
+
+**未复现清单（如实记录）**：
+
+- **评论侧双弹窗未复现**（布局层面不可能，依据见 §30.2 的 `cell_reply_list.xml` 兄弟节点分析）。
+- `MANAGE_DEDUP_MS = 400L` 的去重效果**未经真机验证**（无 Robolectric，`SystemClock` 无法单测）。
+- 300×300 表盘上弹窗的实际可点性**未在真机确认**。
+- `ReplyInfoActivity.kt` 分页插入起点的 `+2` **疑似越界但未确证、未修改**（详见 §30.5b，属未决项）。
+
+### 30.5 明确没有碰的东西
+
+- `util/StringUtil.java`（`setCopy` 本体）**一行未动** —— 只在其调用点决定「让位」与否。
+- `activity/dynamic/DynamicTopicActivity.kt`、`adapter/dynamic/TopicAdapter.kt`、
+  `adapter/dynamic/TopicDynamicAdapter.kt`、`api/TopicApi.java`、`api/DynamicApi.java`、
+  `model/OpusParagraph.java` 均未动（属其它任务）。
+- `Reply` 的 `Parcelable` / `Serializable` 实现未动；字段语义未变（仅新增 `ctime` 排序键）。
+- `activity/dynamic/DynamicInfoActivity.kt` 未动（经核实只是 ViewPager 容器，无长按逻辑）。
+
+### 30.5b 未决项：`ReplyInfoActivity.kt` 分页插入起点疑似越界（**发现但未修改**）
+
+> **疑似越界，但未确证；未修改；建议后续单独立项，需真机复现。**
+
+`app/src/main/java/com/RobinNotBad/BiliClient/activity/reply/ReplyInfoActivity.kt` 的
+`continueLoading()` 在非 `SORT_LIKE` 分支写的是：
+
+```kotlin
+replyAdapter!!.notifyItemRangeInserted(replyList!!.size - list.size + 2, list.size)
+```
+
+起点用了 `+2`。可疑之处：`ReplyAdapter.getItemCount()` 是 `replyList.size + 1`，
+且详情页列表**第 0 位是根评论本身**（不是头部占位），所以「头部占位应占 1 个」这个常见解释
+在这里未必成立 —— 看起来是 `+1` 更合理，`+2` 会报出超出 `getItemCount()` 的范围。
+
+**但为什么不当场改（三条理由）：**
+
+1. **不在用户报告的问题范围内**。「排序切换第二次不生效」走的是 `applySort()` /
+   `notifyDataSetChanged()` 路径；这条是**分页插入**路径（`sort != SORT_LIKE` 且翻页时）。
+2. **静态推不出结论**。`+2` 是否真的越界，取决于运行时的 `replyList.size` 与 `list.size`
+   的关系（即「本次请求的 `list` 中有多少条是真新增」）—— 若接口每页最多返回 20 条而
+   `ps` 定义域是 1-49，`list.size` 与实际新增数是否恒等**无法从代码静态判定**。
+   猜错会引入新的分页 bug（漏插 / 位置错位 / `Inconsistency detected`）。
+3. **本轮已冻结**：任何改动都要重新开 Gradle 窗口，而这是**存量可疑点**、不是本次改动引入的回归，
+   收益不值。
+
+**参考既有约定（说明为什么不能只凭「看到 `+1` 就判越界」）**：
+`docs/review/fix-progress.md:1305` 已记录过同类判断坑 ——
+「`notifyItemRangeInserted(x + 1, …)` 在本项目**大多数是对的**」（这些 adapter 的
+`getItemCount()` 带一个头部占位，`data.size + 1`，位置 0 是标题/头部）。
+当时逐一核实并**保持不动**的清单包含 `activity/reply/ReplyFragment.kt:250`
+（其 `ReplyAdapter.getItemCount() = replyList.size + 1`）。
+⇒ **结论：判越界前必须先读对应 adapter 的 `getItemCount()`，并确认位置 0 到底是
+「头部占位」还是「根评论」。** 详情页属于后者（位置 0 是根评论），所以这一处
+**与那些「保持不动」的案例前提不同**，但也因此更需要真机确认而非静态直接改。
+
+> **对 `AGENTS.md` 那条「已知坑」的补充（重要）**：
+> AGENTS.md 的 `+1` 规则写的是「有头部占位的 adapter（`ReplyAdapter` / `UserDynamicAdapter` /
+> 系列详情）`getItemCount() == data.size + 1`，起点要 `sizeBefore + 1`」——
+> **但该规则不能只看 adapter 类名，必须看宿主 Activity。**
+> **同一个 `ReplyAdapter`，在 `activity/reply/ReplyFragment.kt`（主评论列表）位置 0 是
+> 「头部占位」，在 `activity/reply/ReplyInfoActivity.kt`（楼中楼详情页）位置 0 却是
+> 「根评论」—— 前提正好相反。** 只按类名套用会得出错误结论。
+> 判据应是：**先确认宿主页在第 0 位放了什么**，再决定 `+1` 是否成立。
+
+**后续处置建议**：单独立项，真机复现步骤 —— 进入楼中楼详情页 → 切到**时间排序**
+→ 持续下滑翻页 → 观察是否出现 `IndexOutOfBoundsException` /
+`Inconsistency detected. Invalid item position` / 新加载页错位或缺失。
+
+### 30.6 真机验证步骤（改动效果的直接判据）
+
+1. **排序往返**（最直接的判据）：进入任一楼中楼详情页 → 点排序按钮切到「热度排序」
+   → **再切回「时间排序」** → 列表应**真正回到时间序**（而非停在热度序）。反复切 3 次，
+   每次都应变。
+2. **根评论恒在最上**：上述任意排序状态下，页面第一条恒为被点开的根评论。
+3. **评论操作入口**：自己发的评论（或管理员）→ 操作按钮**点一下**即应弹出菜单
+   （不再只弹 toast「长按操作」）；菜单中「删除评论」应有 `danger` 高亮；长按同一按钮弹同一菜单。
+4. **非本人评论**：正文**长按应仍是复制**（弹 `CopyTextActivity`），不应弹管理菜单。
+5. **动态侧去重**：动态「管理」按钮**点一下**只弹**一个**菜单；长按也只弹**一个**
+   （原缺陷会弹两个）。正文长按：有可操作项时弹管理菜单，无可操作项时回落到复制。
+
+### 30.7 交叉引用
+
+- `AGENTS.md` 弹窗硬约定：禁止裸写 `AlertDialog.Builder`，统一走 `util/TerminalDialog.kt`。
+- `docs/review/dialog-redesign-progress.md`：弹窗改版专项进度（本次两处新接线点
+  `adapter/ReplyAdapter.kt`、`adapter/dynamic/DynamicHolder.kt` 即该节 17 处调用点中的 2+2 处）。
+- `docs/architecture-map.md` §8.4 的 `TerminalDialog` 四方法表。
+- 真机回归清单：`docs/review/real-device-regression-checklist.md`（本次新增 §30.6 五条可直接并入）。
+
+---
+
+## 三十五、26.10.05：稍后再看「未看完」为空（C18 回归）+ 新增「清除所有已看完」（task-2）
+
+**用户报告（原文）**：稍后再看切到「未看完」是空的，一条都不显示；同时希望有一个
+「清除所有已看完」的入口。
+
+### 35.1 「未看完为空」是**双层根因**，不是单点 bug
+
+> C18（§二十七）当时把筛选判据定为 `progress > 0`，并明确写下「`progress <= 0` 判为『没播过』
+> 而不是『未看完』」。**那个决定本身就是本条 bug 的第一层根因**：用户「从未播放」的稿件
+> 正是他想在「未看完」里看到的东西，而旧实现把它们全部排除在外——若整表都从未播放，
+> 「未看完」档就是**空的**，与用户现象逐字吻合。
+
+**① 表象层（本地实现）**：`api/WatchLaterApi.java` 的 `isUnfinished` 旧实现首行为
+
+```java
+if (progress <= 0) return false;   // ← 「从未播放」被当成「不是未看完」
+```
+
+**② 真根因层（服务端能力从未被使用）**：本工程旧代码**从未给 `history/toview/web` 带过
+`viewed` 参数**，等于永远只拿「全部」，筛选完全靠客户端本地做。
+
+| 依据 | 内容 |
+|---|---|
+| 上游 PiliPlus `lib/models/common/later_view_type.dart` | 定义两个档位：`all(0)` / `unfinished(2)` |
+| 上游 PiliPlus `lib/http/user.dart` 的 `seeYouLater` | 把 `viewed` 作为请求参数发给服务端 |
+| 本工程 HAR 抓包 | 确认在线请求带 `viewed=2` |
+
+⇒ 正确做法是**让服务端过滤**（`viewed` = `0` 全部 / `2` 未看完），本地过滤退化为兜底。
+
+### 35.2 主判据 vs 兜底（**分工是刻意的**）
+
+| 层 | 角色 | 说明 |
+|---|---|---|
+| **主判据** | 服务端 `viewed` 参数 | `0` = 全部、`2` = 未看完，由**服务端**过滤。这是「未看完为空」的真根因层修复 |
+| **兜底** | 本地 `filterUnfinished` | 仅在服务端忽略该参数时**防脏**；同时作为**纯函数**供 JVM 单测直接断言 |
+
+兜底判据（本次收口为一条明确规则）：
+
+- **`duration <= 0` → 一律算「未看完」**（总时长未知时，宁可放进未看完，也不要让用户找不到
+  自己看了一半的稿件——与 C18 的取舍一致并加强）；
+- **只有 `progress >= duration && duration > 0` 才算「已看完」**；
+- 其余（含 `progress = 0`、`progress` 为负数）**全部算「未看完」**。
+
+> 这条规则的关键变化：**「从未播放」从「不算未看完」翻转为「算未看完」**，直接对应用户现象。
+
+### 35.3 新增功能：清除所有已看完
+
+| 项 | 内容 |
+|---|---|
+| 接口 | `POST https://api.bilibili.com/x/v2/history/toview/clear` |
+| 请求体 | multipart，`clean_type=2` + `csrf` |
+| 响应 | `{"code":0,"message":"OK","ttl":1}` |
+| 提取方式 | 本工程 HAR 抓包 |
+| 入口 | `res/layout/activity_simple_refresh.xml` 的 `filterBar` 内**第三个 `TextView`** `clearWatched`，**默认 `android:visibility="gone"`**，仅「稍后再看」页点亮 |
+| 既有 id | **未改任何既有 id**（`filterBar` / `filterAll` / `filterUnfinished` 保持不变） |
+
+### 35.4 新增回归单测（**用户 bug 的直接复现**）
+
+`app/src/test/java/com/RobinNotBad/BiliClient/api/WatchLaterApiTest.kt` 增至 **9 例**
+（C18 原 7 例 + 本次调整/新增）。四条**点名钉住**的用例：
+
+| 用例 | 断言 | 为什么值钱 |
+|---|---|---|
+| `isUnfinished_treatsNeverPlayedAsUnfinished` | `isUnfinished(0, 100) == true`、`isUnfinished(0, 0) == true` | **直接复现用户 bug**：从未播放必须算未看完 |
+| `filterUnfinished_keepsNeverPlayedAndDropsFinished` | `[进度30/100, 进度100/100(已看完), 进度0/100(从未播放), 进度5/时长未知]` → `[1, 3, 4]` | **从未播放的第 3 条必须留下**，只有已看完的第 2 条被剔除 |
+| `filterUnfinished_allNeverPlayedIsNotEmpty` | 全表都是「从未播放」时，未看完档 = **全表** | **旧代码此处返回空 = 用户现象本身** |
+| `isUnfinished_negativeProgressIsStillUnfinished` | 进度为负也算未看完 | 脏数据不应被静默丢弃 |
+
+> **这四条是用户 bug 的护栏**：将来谁把判据改回 `progress > 0`，一跑就知道。
+
+### 35.5 本次改动的文件（4 个）
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/api/WatchLaterApi.java` | 带 `viewed` 参数（`0`/`2`）；`isUnfinished` 判据收口（见 35.2）；`filterUnfinished` 保持纯函数 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/user/WatchLaterActivity.kt` | 档位切换改为**按档发请求**（`viewed` 主判据）+ 本地兜底；接线「清除所有已看完」 |
+| `app/src/main/res/layout/activity_simple_refresh.xml` | `filterBar` 内新增第三个 `TextView` `clearWatched`（默认 `gone`）；**未改既有 id** |
+| `app/src/test/java/com/RobinNotBad/BiliClient/api/WatchLaterApiTest.kt` | 9 例纯函数单测（见 35.4） |
+
+### 35.6 验证状态（**如实记录**）
+
+- **单测**：`WatchLaterApiTest` **9 tests / 0 failures / 0 errors**，取得于一次**隔离运行**
+  （当前版本），可信。
+- **`:app:assembleDebug`**：本批 4 个文件在 `adapter/user/FollowGroupAdapter.kt` 的在途错误落地
+  **之前**，`compileDebugKotlin` 曾完整通过一次；此后干净窗口下的重跑被该错误拦下，
+  **该错误不在本批改动范围内**（见 §30.4 的同一条记录）。
+- **`:app:testDebugUnitTest` 全量**：未取得干净窗口（同上，编译单元被阻断）。
+
+> ### ⚠️ **不得读作「已验证通过」**
+>
+> 本节代码的最终验收（冻结后 `assembleDebug` + 全量 `testDebugUnitTest`）**未由本任务的
+> 执行者取得**，改由 **Lead 在全队冻结后串行重跑**。在那之前，9 例单测的可信度仅来自
+> 上述那一次隔离运行。
+
+### 35.7 真机验收判据（**唯一存疑点，务必按此排查**）
+
+1. 进入「稍后再看」，切到「未看完」档：应能看到**从未播放**的稿件（这正是用户原来的现象）。
+2. **若「未看完」仍为空** → 说明服务端 `viewed=2` 的语义与预期不同，**立刻抓包**：
+   - 抓 `history/toview/web` 请求的 **`viewed` 值**（确认客户端确实发了 `2`）；
+   - 抓**响应体**，确认服务端是否真的按 `2` 过滤（还是忽略该参数、或 `2` 另有语义）。
+3. 「全部」档应仍与升级前一致（条数、顺序、封面）。
+4. 「清除所有已看完」入口只在「稍后再看」页可见（其它 `RefreshListActivity` 子类看不到）。
+5. 点「清除所有已看完」→ 二次确认 → 提示成功 → 「全部」档里已看完的稿件消失、
+   **未看完的必须还在**；网页端核对。
+6. 切档时的网络行为：主判据是服务端参数，切档**会**重新请求（与 C18 的「切档零请求」不同，
+   属本次有意改变）；断网时应给出失败提示而不是白屏。
+
+### 35.8 明确没有碰的东西
+
+- `res/layout/activity_simple_refresh.xml` 中 `filterBar` 的**既有 id 与既有两个 chip 未动**
+  （`filterAll` / `filterUnfinished` 原样），仅**新增** `clearWatched`。
+- 收藏夹（C19/C20）、关注分组（C21）相关文件均未动。
+- `isUnfinished` / `filterUnfinished` 的**签名未变**（仍是纯函数），故 C18 的对调用方式不受影响。
+
+### 35.9 交叉引用
+
+- §二十七（C18 原实现）：本节是对其筛选判据的**方向性更正**——C18 的「`progress <= 0` 不算
+  未看完」即用户 bug 的第一层根因。
+- §30.4：同一时段因 `FollowGroupAdapter.kt` 在途错误**未能取得干净验证窗口**的记录。
+- 接口依据：`bilibili-API/docs/historytoview/toview.md`；上游 PiliPlus
+  `lib/models/common/later_view_type.dart`、`lib/http/user.dart`。
+
+---
+
+## 三十六、26.10.05 Lead 终验：全队冻结后的串行全量验证 + 本轮问题闭环对照
+
+> 本节由 Lead 在全队写入冻结后撰写，**目的是把本轮 6 个并行任务合并成一个可交付的整体结论**，
+> 并明确区分「**已用构建/单测证据关闭**」与「**只能真机验证、至今未复现**」两类状态。
+> 前者已闭环；后者**没有**因为单测变绿而变成已验证——真机上仍可能失败。
+
+### 36.1 用户报告的问题与本轮落点的逐条对照
+
+用户原始报告见本仓库 `docs/review/real-device-regression-checklist.md` 的相关条目。
+「状态」列的含义：**确证修复** = 找到确定性根因且改动已落地并进入本轮全量验证；
+**未复现** = 无真机/无登录态，无法稳定复现，只交付了确定性缺陷修复或可观测性；
+**代码无缺陷** = 逐条排查后未发现可修缺陷，交付结论与诊断埋点。
+
+| # | 用户报告 | 落点章节 | 状态 |
+|---|---|---|---|
+| 1 | 置顶会话反而排到下面 | §二十二（第二处，`MessageActivity`） | **确证修复**：`loadSessions()` 的「未读优先」稳定排序把无未读的置顶会话挤走，已抽 `util/SessionSorter.kt` 并改为「置顶优先 → 未读优先 → 保持服务端原序」 |
+| 2 | 新增通知应有一个「通知设置」大类，默认开启 | §三十三 | **已落地**：新增顶层分组 `GROUP_NOTIFY`，**复用既有两个 SP 键**（本来就默认 true），旧位置已移除，避免两处状态不同步 |
+| 3 | 自己的稿件下长按操作按钮与长按复制冲突 | §30.2 | **确证修复**：操作按钮的点击与长按都弹同一个 `TerminalDialog` 菜单，正文长按让位 |
+| 4a | 楼中楼「时间排序」切换一次后再切不生效 | §30.1 | **确证修复**：`sortReplies` 原来对 `SORT_TIME` 直接 `return`（单向排序），已改为按 `ctime` 的真双向排序 |
+| 4b | 评论带图报错 12066 | §二十九（第二处） | **未复现**：修复了同一条链路上**确定性**的 `img_size` 小数被截断缺陷，**未与 12066 建立因果关系** |
+| 5 | 自己的动态长按会触发长按复制 | §30.2 | **确证修复**：顺手修掉了「长按手势结束补发的 click 再触发一次 `performLongClick` → 弹两个菜单」的真实缺陷，三入口收敛到 `DynamicHolder.showManage()` + 400ms 去重 |
+| 6 | 话题广场加载不出来 + `#A#` 不解析（应蓝色可跳转） | §三十四 | **确证修复**：广场数据源换成 `/x/topic/pub/search`（原 `/x/topic/web/dynamic/rcmd` 已废弃，恒返回 `code=0 + data=null` 造成静默空列表）；`#话题#` 补 `RICH_TEXT_NODE_TYPE_TOPIC` 分支 + 新 `TopicClickableSpan`（主色 + 站内跳转） |
+| 7 | 稍后再看「未看完」为空 | §三十五 | **确证修复（第一层）+ 待真机（第二层）**：本地判据 `progress <= 0` 排除「从未播放」已修；同时改为按服务端 `viewed=2` 过滤（原实现从未带该参数） |
+| 8 | 新功能：清除所有已看完（**仅稍后再看**） | §三十五 | **已落地**：`POST x/v2/history/toview/clear` + `clean_type=2`，入口只在稍后再看页，未扩散到历史记录 |
+| 9 | 收藏夹排序行「没看到」（「我的」入口） | §二十二（第二处） | **代码无缺陷**：两处入口汇合到**同一个** `FavoriteVideoListActivity`，`setupSortBar()` 无条件点亮、资源已进包 |
+| 10 | 收藏夹两处入口（我的 / 用户信息）都要有 | §二十二（第二处） | 同上；`FavoriteFolderListActivity` **有意不放**排序行（排序是视频内容属性），已加临时诊断埋点 |
+| 11 | 不能把已关注的人移动到其他分组 | §二十二（第二处） | **已落地（新功能）**：新增 `FollowApi.moveFollowTagUsers`（`x/relation/tags/moveUsers`）+ 长按成员选目标分组 |
+| 12 | 片头片尾自动跳过默认是关的 | §三十三 | **确证修复**：结论是「**逻辑本来就接好了，只是默认值写死 false**」，四处调用点统一改默认 true，引导判据改为看 `player_skip_op_ed_guided` |
+| 13 | 笔记无法正常加载 | §二十九（第二处） | **根因未确证**：已排除 csrf、`note_id_str` 精度设计、UI 层；本次交付的是**可观测性**（分级错误提示 + `BiliNote` 埋点），**不是「修好了笔记」** |
+
+**⚠️ 请务必按上表最后两列读**：第 4b、7（第二层）、13 三项**没有拿到真机复现**，
+真机上是否真的好了**未知**；第 9/10 项**没有可修缺陷**，交付的是结论与埋点。
+
+### 36.2 本轮新增章节索引（按文件顺序）
+
+| 章节 | 任务 | 负责人 | 主题 |
+|---|---|---|---|
+| §二十二（第二处） | task-5 | w5-sortgroup | 置顶会话排序 + 收藏夹排序行 + 关注分组移动成员 |
+| §三十三 | task-3 | w3-notify | 片头片尾跳过默认开启 + 新增「通知设置」大类 |
+| §三十四 | task-1 | w1-topic | 话题广场加载不出来 + `#话题#` 不解析 |
+| §二十九（第二处） | task-6 | w6-note-replyimg | C27 视频笔记 + C6b 带图评论（12066）复查 |
+| §30. | task-4 | w4-longpress | 长按冲突 + 楼中楼排序二次切换失效 |
+| §三十五 | task-2 | w2-watchlater | 稍后再看「未看完」为空 + 新增「清除所有已看完」 |
+| §三十六 | — | Lead | 本节：终验与闭环对照 |
+
+### 36.3 最终验证（全队写入冻结后，由 Lead 一人串行执行）
+
+**执行环境**：`D:\Users\ASUS\Desktop\DEVELOP\ReBiliClient`，Gradle 8.11.1 / AGP 8.5.2 / Kotlin 2.0.0 / JDK 17。
+**前提**：`.\gradlew.bat --status` 确认**无任何 Gradle daemon 在跑、无 java 进程**，且 6 名队友全部回报「已冻结、无未落地写入、无 gradle」。
+
+| 步骤 | 命令 | 结果 |
+|---|---|---|
+| 清缓存 | `.\gradlew.bat :app:clean` | **FAILED（已知环境噪音，已绕过）**：`app\build\outputs\apk\release` 是**空目录**，却被某个非 java 进程持有句柄（`--stop` 后 java 进程全消失仍锁）。改为**外科式删除**：把 `app/build` 下 `generated` / `intermediates` / `kotlin` / `reports` / `test-results` / `tmp` 全部删除，仅剩 `outputs/apk/release` 空壳与一个 logs 文本文件。**实质目的（打掉 `mergeDebugResources` 的陈旧缓存回放）已达成** |
+| 编译 | `.\gradlew.bat :app:assembleDebug --offline --no-build-cache --no-configuration-cache` | **BUILD SUCCESSFUL** in 1m 30s（92 actionable tasks: 37 executed, 55 up-to-date；`dexBuilderDebug` / `packageDebug` 等真实执行，非缓存回放） |
+| 单测 | `.\gradlew.bat :app:testDebugUnitTest --offline --no-build-cache --no-configuration-cache` | **BUILD SUCCESSFUL** in 9s；`compileDebugKotlin` 为 `UP-TO-DATE`（**无并发噪声、无在途中间态**） |
+
+**单测汇总（直接读 `app/build/test-results/testDebugUnitTest/*.xml`，共 43 个测试类）**：
+
+```
+tests = 400    failures = 0    errors = 0    skipped = 0
+```
+
+**产物**（`app/build/outputs/apk/debug/`，2026-10-05 14:04:48）：
+`app-arm64-v8a-debug.apk` 15.6 MB · `app-armeabi-v7a-debug.apk` 14.17 MB ·
+`app-universal-debug.apk` 28.59 MB · `app-x86-debug.apk` 16.59 MB。
+
+**对照上一轮（修复中、队友仍在写文件时跑的那次）**：398 例 / **3 例失败** ——
+`DynamicApiTest.kt:151` 与 `:203`（`expected:<#A#> but was:<null>`，`android.util.Pair` 在 JVM 单测里是 Android 桩，字段恒 null）、
+`NoteApiTest.kt:198`（`NullPointerException: null cannot be cast to non-null type kotlin.String`）。
+**两处均已修**，但**两处的修法完全不同，请勿混淆**：
+
+- w1 的 `DynamicApiTest` 两例是**产品代码缺陷**：`android.util.Pair` 在 JVM 单测下是 Android 桩，
+  `first`/`second` 恒 null。修法是新建 `model/TopicNode.java` 这个**真实类**取代 `Pair`
+  （`DynamicApi.parseTopicNodes` 返回 `List<TopicNode>`），并加回归守卫 `parseTopicNodes_returnsRealObjectsNotAndroidStubs`。
+- w6 的 `NoteApiTest` 一例是**测试代码缺陷，产品代码当时就是对的**：`:198` 原本写 `as String`（**非空**转型），
+  Kotlin 在**构造器调用当场**就抛 `NullPointerException`，异常**根本没进入 `failureText`**；
+  改成 `as String?` 后 null 才真正传进去，而 `NoteApi.failureText` 的 null 兜底（`NoteApi.java:237`）**在失败时就已存在、一行未改**。
+  w6 加的 `@NonNull` 只是把「绝不返回 null」的契约显式化，**不改变任何行为、也不是该失败消失的原因**。
+  ⇒ **判据**：看异常堆栈里**有没有被测方法的帧**——没有，说明失败发生在**构造参数转型**这一层，不是被测函数返回了坏值。
+  ⚠️ **不要把这条读成「产品代码曾经有个 null 返回缺陷」**，那会凭空造出一个不存在的 bug 记录。
+本轮 400 例全绿。
+
+**AGENTS.md 硬约定自检**：`grep -r "AlertDialog" app/src/main/java` → **9 处命中全部在 `util/TerminalDialog.kt` 自身，业务代码 0 命中** ✅。
+本轮**未新增任何 Activity**（设置页走「本页另一个 `group_type` 分组」形态），故无新增 `android:exported` 项。
+
+### 36.4 本节关闭的历史缺口（措辞更正，结论不变）
+
+以下三处在编写时如实记录了「**当时**没取得干净验证窗口」，**它们记录的是历史事实，不是当前状态**；
+该缺口**已由 36.3 的串行全量关闭**。**保留原文不回退**，因为原文准确描述了当时的阻塞原因（`FollowGroupAdapter.kt` 在途编译错误 + 多 daemon 并发踩踏）： 
+- §29.4 / §29.5（w6）：编写时尚未取得构建窗口 → **现已关闭**。
+- §30.4（w4）：`testDebugUnitTest` 未跑完、编译验证被队友在途源码阻塞 → **现已关闭**。
+- §35.6（w2）：未取得干净窗口 → **现已关闭**。
+
+**注意**：上述「已关闭」**只针对构建与 JVM 单测这一层**。这些章节里同时记录的
+「未复现」清单（如 §29.5 的 79502/79503/12066、§30.2 的评论侧双弹窗）**仍然未复现**，
+不因单测变绿而升级为已验证。
+
+### 36.5 至今仍未验证的部分（必须真机，且**不因本轮全绿而改变**）
+
+1. **评论带图 12066**：`img_size` 小数截断是**确定性缺陷**（依据 `bilibili-API/docs/dynamic/publish.md:40` 与 PiliPlus
+   `lib/models_new/upload_bfs/data.dart:5,19`），但它与 12066 的因果关系**未建立**。若真机仍报 12066，
+   需要在 `sendReply` 失败分支打印**完整响应体**，把服务端 `message` 原文取回来——12066 在本地快照与上游 collector 里都无文档，
+   `message` 是唯一权威线索。
+2. **笔记加载**：根因**未确证**。已排除 csrf、`note_id_str` 精度设计、UI 层；
+   仍存在的假设是「服务端按 `num` 解析 17 位 `note_id` 会丢精度 → 79502」。
+   验证方法：**同一个 id 分别按字符串与按 num 各发一次对比**。`pickNoteId` 的 `note_id_str` 优先设计**保持现状未动**。
+3. **稍后再看「未看完」**：主判据是服务端 `viewed=2`。若真机仍为空，需抓 `history/toview/web` 的请求 `viewed` 值与响应体。
+4. **收藏夹排序行**：代码链路经逐条排查**未发现可修缺陷**（两处入口汇合到同一个 `FavoriteVideoListActivity`）。
+   已加临时诊断埋点 `adb logcat -s "debug-收藏夹排序"`。
+5. **关注分组移动成员**：新实现，**未真机验证**。`getUserOwnerGroup` 的位置算术是静态复核，未运行验证。
+6. **片头片尾**：默认值与引导判据已改；跳过逻辑本身（`ViewPointSkip.kt`）**一行未动**，经核实本来就接好了。
+
+### 36.6 明确没有碰的东西
+
+- `util/SettingsKeys.kt`：**本轮一行未动**（w3 复用既有键，因此老用户升级后设置必然保留）。
+- `docs/review/real-device-regression-checklist.md`：**只由 w3 更新了自己名下的条目**
+  （片头片尾第 2/199/200 条、新增第九节「通知设置」第 202-206 条，总数 201→206）；
+  其它条目一字未改。
+- `activity/video/` 下：**无任何写操作**（笔记入口 `VideoInfoFragment.kt` 只读）。
+- `model/Reply.java`：只改了排序函数与其直接依赖（新增 `ctime` 字段供排序键），`Serializable` 实现与其它字段未动。
+- `ViewPointSkip.kt`（片头片尾跳过逻辑）、`MsgNotifier.kt` 的开关语义、`isUnfinished`/`filterUnfinished` 的函数签名：均未动。
+
+### 36.7 本轮的方法论沉淀（写给后续维护者）
+
+1. **JVM 单测里的 Android 桩陷阱**：`android.util.Pair` 这类**直接 `new` 出来的 Android 框架类**在单测下字段恒 null，
+   而「只断言列表长度」完全测不出来。判据不是「类型名里有没有 `android`」，而是「**这个值是真实实现算出来的，还是桩给的默认值**」——
+   自己实现 Android 接口的 fake（如 `FakeSharedPreferences`）不踩坑，`org.json` 因 `app/build.gradle` 单独补了真实实现也不踩。
+   更进一步：**「测试文件里没有 `import android.*`」不等于「该测试不依赖 Android 桩」**，
+   要看**被测函数的实际执行路径**。
+2. **并发构建必须串行**：`app/build/` 是共享目录，Gradle 对 `tmp/kotlin-classes`、`intermediates/javac` 是「先删再写」，
+   多人同跑必然互踩并产生**假失败**。判据：①复跑同一条命令 ②`git status --short` 前后对比确认工作树静止
+   ③确认报错文件 `git diff` 与 HEAD 有实际差异；三者不全只能报「疑似在途中间态」。
+   **类型不匹配 = 真错误；引用不存在的类 = 多为中间态。**
+3. **队友自跑只用于早发现问题，最终证据必须来自一次干净的串行全量**——各人各跑一遍拼起来不构成证据（环境不同源）。
+4. **正式文档只写正确结论**；唯一例外是「以错误理由做出的正确决定」，
+   要写成「**理由修正、结论不变**」并保留原错误理由，否则后人会重新推演出同一个错误理由
+   （见 §30.1 对「不做本地重排」这一历史设计取舍的推翻记录）。
+5. **用例数一律以机器产出为准**：本次一名队友口述「23 例」，实际是 **25 例**——
+   他是按「覆盖了哪些场景」清点的，把同一个 `@Test` 里的多个断言场景算成了多条用例，
+   **清点口径（场景数）与正式口径（`@Test` / `<testcase>` 数）被混用而不自知**。
+   ⇒ 规则：**汇报与文档里的用例数一律取自 `app/build/test-results/testDebugUnitTest/*.xml` 的 `<testcase>` 计数；
+   口述数字不进入正式文档。** 本节 36.3 的总数 400 即由 43 个 XML 的 `tests` 求和得来。
+   这条与第 1 条同源：**「看起来完成了」和「实际验证到位」是两件事**——前者可以是单测断言无效，
+   也可以是计数口径混用。
+
+---
+
+## 三十七、26.10.05 批次 8：长按操作面板（复制收进弹窗）+ 顶部工具条滚动收回
+
+> 本节的两项来源都是**用户口头新增的需求，不在 26.08.27 那份 286 条清单里**：
+> ①「与复制冲突的几个，复制放入弹出里，并在个性化设置里给个选项启用长按打开管理评论/动态的面板」
+> ②「收藏夹和稍后再看的上面的几个选项做一下滚动自动收回」。
+> 用户口中的「个性化设置」在本工程**不存在同名页面**，落点见 §37.1。
+
+### 37.1 改动 1：复制收进操作面板 +「长按打开操作面板」开关（默认开启）
+
+#### 问题的真正形态
+
+`util/StringUtil.setCopy(TextView, String)` 注册的长按监听，做的事情是**打开复制界面**（`CopyTextActivity`，
+让用户自己选复制哪一段），不是直接写剪贴板。而「自己的稿件 / 自己的动态」出现「置顶 / 删除」之后，
+业务代码又在同一批 View 上挂了管理菜单监听：
+
+- `adapter/ReplyAdapter.kt`：原先「`canManage(reply)` 为真就挂管理菜单，否则交给 `setCopy`」；
+- `adapter/dynamic/DynamicHolder.kt`：原先 `setCopy(content)` 与 `setOnLongClickListener { showManage() }` **同时注册**，
+  后者覆盖前者。
+
+于是**同一个长按手势在不同条目上有两种结果**（有时复制、有时弹菜单），用户无从预期——这就是
+「和长按复制冲突」的实际含义。它不是一个能被复现的崩溃，而是**同一手势的语义二义**。
+
+#### 方案
+
+把复制**收进操作面板**，长按只负责弹一次面板：
+
+| 开关 `long_press_panel_enable` | 长按评论/动态正文的结果 |
+| --- | --- |
+| **开启（默认）** | 弹操作面板；面板第一项是「复制文字」 |
+| 关闭 | 直接打开复制界面（= 改版前的旧行为） |
+
+三条边界（都在代码注释里写明了，此处再记一遍）：
+
+1. **「复制文字」这一项只受 `copy_enable` 与「正文非空」约束，与长按开关无关。**
+   面板是「这条评论/动态能做的操作」的完整列表，`long_press_panel_enable` 管的是「长按走哪条路」，
+   不是「面板里有什么」。正文为空时不列（点了只会进到一个空界面，既不报错也没反馈）；
+   用户把 `copy_enable` 关掉时也不列（否则与设置自相矛盾）。
+2. **评论末列的操作按钮、动态的「管理」按钮不受本开关影响**，点击一律弹面板。
+   本开关只管「长按正文」这一个入口。
+3. **`adapter/ReplyAdapter.kt` 的「删除评论」从无条件改成显式 `canManage(reply)` 判定。**
+   原来它只在 `canManage` 为真的调用点被调用，所以可以不判；现在**别人的评论长按也会进到面板**，
+   漏判就会给出一个必然失败的删除项。
+
+#### 开关落在哪一页
+
+用户说的是「个性化设置」。全工程**没有这个页面名**：`activity/settings/SettingMainActivity.buildGroups()`
+的一级分组是 播放与播放器 / 账号与登录 / 界面与外观 / 内容与浏览 / 通知设置 / 缓存与下载 / 高级与实验 /
+关于与帮助（+ Debug 开发者工具）。语义上最贴近的是 `activity/settings/SettingPrefActivity.kt`
+（`setPageName("偏好设置")`，经「内容与浏览 → 通用偏好」进入，见 `SettingsIndex.kt` 的
+`addLeafItems(list, "通用偏好", SettingPrefActivity::class.java, …)`）。
+
+因此开关落在**该页「功能」组、紧挨「长按复制」**——两者是兄弟项，放一起用户才找得到。
+**这是一处需要用户确认的落点**：如果他心里的「个性化设置」是别的地方，搬走只需改这一行。
+
+#### 默认值只有一个来源
+
+新增 `util/LongPressPrefs.kt`，把默认值 `DEFAULT_ENABLED = true` 与判据收在一处，
+`SettingPrefActivity` 里 `SettingSection` 的默认值**引用该常量而不是再写一遍字面量**——
+两处各写一个 `"true"` 的典型症状是「设置页显示开着、实际却是关的」，这种错不报错、只能人肉比对。
+这与 `player/SkipOpEdPrefs.kt`（§三十三）是同一个模式。
+
+**老用户升级不会被改设置**：`SharedPreferencesUtil.getBoolean(key, def)` 的语义是**键不存在才用 def**，
+所以只改默认值天然满足「新装默认开 + 升级尊重用户显式选择」，**不需要任何迁移/重置代码**。
+单测 `LongPressPrefsTest.老用户显式关过之后仍然是关闭` 就是这条的护栏。
+
+#### 改动文件（6 个）
+
+| 文件 | 改动 |
+| --- | --- |
+| `util/SettingsKeys.kt` | **只新增** `LONG_PRESS_PANEL_ENABLE = "long_press_panel_enable"`，既有常量值一个未改 |
+| `util/LongPressPrefs.kt`（新） | `DEFAULT_ENABLED` / `isEnabled()` / `shouldOfferCopy(copyEnabled, text)` |
+| `util/StringUtil.java` | 抽出 `isCopyEnabled()` 与 `openCopyPage(Context, String)`；`setCopy(TextView, String)` 改为调用两者，**对既有 14 个 `setCopy` 调用点行为零变化** |
+| `adapter/ReplyAdapter.kt` | 长按按开关二选一；`showManageMenu` 增加「复制文字」项；「删除评论」补 `canManage` 门槛 |
+| `adapter/dynamic/DynamicHolder.kt` | `showDynamic` 长按按开关二选一；静态 `showManageMenu` 增加「复制文字」项 |
+| `activity/settings/SettingPrefActivity.kt`、`activity/settings/SettingsIndex.kt`、`res/values/strings.xml` | 新增开关条目与 `desc_long_press_panel_enable`；全局搜索索引加同名叶子 |
+
+> `util/StringUtil.java` 里 `isCopyEnabled()` 内部仍写的是字面量 `"copy_enable"`（未换成
+> `SettingsKeys.COPY_ENABLE`）——与原实现保持一致，避免把一次纯抽取变成涉及常量迁移的改动。
+
+#### 单测
+
+`app/src/test/java/com/RobinNotBad/BiliClient/util/LongPressPrefsTest.kt`，**9 例**
+（`LongPressPrefsTest` 的 `<testcase>` 计数；本次新增用例按 §36.7 第 5 条以机器产出为准）。
+其中三条是「不会崩、只会静默错」的护栏：默认值必须是开启、老用户显式关过必须仍是关、
+**键名必须稳定**（改了键名等于把老用户的设置读成「没设过」，默认值会把他关掉的开关重新打开）。
+
+`shouldOfferCopy` 之所以抽成纯函数也是这个原因——「空正文还列出复制」既不崩也不报错，
+只是点了没反应，编译器和异常都抓不到，只能靠断言钉住。
+
+### 37.2 改动 2：收藏夹排序行 / 稍后再看筛选条的「滚动自动收回」
+
+#### 为什么不能靠 RecyclerView 自己把条带走
+
+`res/layout/activity_simple_refresh.xml` 里 `filterBar` / `sortBar` / `manageBar` / `groupBar`
+都是列表的**兄弟节点**、位于 `SwipeRefreshLayout` 之上，不是列表项
+（布局注释已写明做成列表项会重映射业务 adapter 的 viewType 并改变 `adapterPosition` 语义）。
+它们不会随列表滚动，只能在滚动回调里手动把 `layoutParams.height` 收到 0。手表屏本来就小，
+收起来能多露出一整行视频。
+
+#### 实现位置
+
+能力加在 `activity/base/RefreshListActivity.kt`，**默认不启用**：该布局被大量列表页共用
+（设置页、历史、下载、关注……），默认给所有页面加滚动收起是不合适的。子类显式调用
+`setupAutoHideBars(vararg bars)` 才生效。
+
+- `activity/user/WatchLaterActivity.kt`：`filterBar`（全部 / 未看完 / 清除已看完）
+- `activity/user/favorite/FavoriteVideoListActivity.kt`：`sortBar`（收藏时间 / 播放量 / 投稿时间）
+
+**多选条（`manageBar`）故意没放进去**：用户正勾着视频选删除呢，条自己收走就没法点「删除」了。
+
+#### 行为
+
+| 手势 | 结果 |
+| --- | --- |
+| 向下滚超过阈值 | 收回（高度动画到 0，结束后 `GONE`） |
+| 向上滚超过阈值 | 展开 |
+| 已经收着，且列表停在顶部 | 强制展开 |
+
+收回/展开用**一个** `ValueAnimator` 同时推多条（高度按同一条 0..1 进度算），
+每条各起一个动画会因启动时刻微差而错位，看起来像抽搐。切换筛选/排序后列表回到第一页，
+用户已经滚不回去，靠滚动事件把条带回来是不可靠的，所以 `reloadForFilter()` / `switchSort()`
+里显式调 `expandAutoHideBars()`。
+
+#### 判据抽成纯函数并单测
+
+真正决定观感的是「什么时候收、什么时候展」，而 `View.animate()`、`layoutParams.height`
+在 JVM 单测里全是 Android 桩，断言写了也是假的（比不写更危险，见 §36.7 第 1 条）。
+所以新增 `util/view/ScrollRetractDecider.kt` 承载判据：**阈值 12px 防抖**（直接看 dy 正负会让
+工具条随手指抖动来回抽搐），调用方负责累加同向滚动量。
+
+其中一条返回值看起来反直觉，必须留在文档里：
+
+> **已经收着的时候，继续向下滚仍然返回 `COLLAPSE`。**
+> 它的真正作用是让调用方把累加值清零。若在这里返回 `NONE`，累加值会一直涨；
+> 等用户往上滚时先要抵消掉这些历史正值，阈值早被吃掉，表现为
+> **「条收起来以后怎么滚都不回来」**。
+
+另一条是 `canScrollUp == false` 时强制展开：列表顶部没有更多内容可滚，
+`RecyclerView` 不会再产生负的 `dy`，靠滚动事件永远等不到展开，只能在这里兜住。
+
+`app/src/test/java/com/RobinNotBad/BiliClient/util/view/ScrollRetractDeciderTest.kt`，**8 例**
+（覆盖阈值边界、防抖、正常收展、回到顶部强制展开、到顶但正在向下滚时不展开）。
+
+#### 改动文件（4 个 + 1 个新测试目录）
+
+| 文件 | 改动 |
+| --- | --- |
+| `util/view/ScrollRetractDecider.kt`（新） | 纯判据对象 |
+| `activity/base/RefreshListActivity.kt` | 新增 `setupAutoHideBars` / `expandAutoHideBars` + 私有动画实现；在既有 `onScrolled` 里多调一次 `handleAutoHideScroll(dy)` |
+| `activity/user/WatchLaterActivity.kt` | 点亮 `filterBar` 后 `setupAutoHideBars(...)`；`reloadForFilter()` 里 `expandAutoHideBars()` |
+| `activity/user/favorite/FavoriteVideoListActivity.kt` | `setupSortBar()` 里 `setupAutoHideBars(...)`；`switchSort()` 里 `expandAutoHideBars()` |
+| `app/src/test/java/com/RobinNotBad/BiliClient/util/view/ScrollRetractDeciderTest.kt`（新） | 8 例 |
+
+> 「自然高度」必须缓存：条本来是 `wrap_content`，收回时被压成 0，而 0 高度量不出「原本多高」，
+> 所以第一次量到就存进 `autoHideBarHeight`，否则会**收得回去、展不回来**。
+> 另外「收回」只动当前真正可见的条——不可见的（只读收藏夹的多选条、非稍后再看页的清除按钮）
+> 高度是 0，收它没有意义，还会被算进待展开集合里，让展开时把本该 `GONE` 的条点亮。
+
+#### 真机验收步骤
+
+1. 进「稍后再看」，向下滚一屏 → 顶部「全部 / 未看完 / 清除已看完」这一行收起；
+2. 向上滚 → 该行展开；滚回最顶部（列表已经到顶）→ 该行必须已经展开（不需要再滚一下）；
+3. 在收起状态下点「未看完」→ 列表重拉后该行应立即回到展开状态；
+4. 进自己的收藏夹，同样验证「收藏时间 / 播放量 / 投稿时间」这一行的收放；
+5. 收藏夹里点「多选」进多选模式 → **多选条（多选 / 删除）不应该被收起**，始终可点；
+6. 手指轻点式小幅滑动（不到阈值）→ 条不应该闪烁收放。
+
+### 37.3 本批次的验证状态
+
+- `:app:assembleDebug --offline --no-build-cache --no-configuration-cache`：**BUILD SUCCESSFUL**。
+- `:app:testDebugUnitTest`（同参数）：**BUILD SUCCESSFUL**；读
+  `app/build/test-results/testDebugUnitTest/*.xml`，**45 个测试类 / 417 例 / 0 失败 / 0 错误 / 0 跳过**。
+  对照批次 7 收尾时的 43 类 / 400 例：**+2 类 / +17 例**（`LongPressPrefsTest` 9 + `ScrollRetractDeciderTest` 8），
+  既有用例一条未减少、一条未改判定。
+- 过程中修掉一个真实编译错误：`adapter/ReplyAdapter.kt:536` `Argument type mismatch:
+  actual type is 'kotlin.CharSequence!', but 'kotlin.String!' was expected` ——
+  `Reply.message` 在 Java 侧是 `CharSequence`，而复制界面只收 `String`，统一转一次后通过。
+- `grep -r "AlertDialog" app/src/main/java`：**9 处命中全部在 `util/TerminalDialog.kt` 自身，业务代码 0 命中**。
+- 本节**未新增任何 Activity**（开关走 `SettingPrefActivity` 已有分组），`AndroidManifest.xml` 未动。
+- **滚动收放本身、以及长按面板的真机手感都只有静态与单测级别的验证**：动画与手势走 View 层，
+  JVM 单测覆盖不到（这正是把判据抽成 `ScrollRetractDecider` 的原因）。真机步骤见 §37.2 与清单第十章。
+
+### 37.4 本批次明确没有碰的东西
+
+- `util/StringUtil.java`：`setCopy` 的**既有调用点一处未改**，`copyText()` 与剪贴板路径未动。
+- `player/ViewPointSkip.kt`（片头片尾跳过逻辑）、`util/MsgNotifier.kt`：一行未动。
+- `util/SettingsKeys.kt`：**只新增一个常量，既有键名与值一字未改**。
+- `activity/video/`、`model/Reply.java` 的排序函数、`api/` 下任何接口：未动（批次 7 已冻结）。
+- `res/layout/activity_simple_refresh.xml`：**本批次未改**——滚动收回用的是既有的条，
+  没动布局、没加 view、没改 id（`filterBar` 的 `clearWatched` 是批次 7 / w2 加的）。

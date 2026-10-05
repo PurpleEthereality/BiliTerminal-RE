@@ -378,13 +378,17 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 - `loadViewPoints()` 的三个调用条件从「显示视频分段开启」放宽为 `needViewPoints()`（显示分段 **或** 自动跳过，任一开启）。
 - 换集/换P 时重置 `skipSegments` / `skipHandled` / `lastSkippedSegment`，不带上一集的进度。
 
-**设置项**（默认**关闭**）：
-- `SettingsKeys.PLAYER_SKIP_OP_ED`（`player_skip_op_ed`）——开关本体，在 `activity/settings/SettingTerminalPlayerActivity.kt`；关键词加在 `activity/settings/SettingsIndex.kt`；说明文案 `desc_player_skip_op_ed`。
+**设置项**（默认**开启**，26.10.04 后续由关闭改为开启）：
+- `SettingsKeys.PLAYER_SKIP_OP_ED`（`player_skip_op_ed`）——开关本体。**默认值只有一个来源**：`player/SkipOpEdPrefs.kt` 的 `DEFAULT_ENABLED = true`，四个调用点全部引用它（`PlayerActivity.needViewPoints()` / `skipOpEdEnabled()` / `SettingTerminalPlayerActivity`），别再散落 `true`/`false` 字面量（原先四处各写 `false`，改默认值时漏一处就会「设置页显示开着、播放器却不跳」）。
+- **老用户显式关过的保持关**：`SharedPreferences.getBoolean(key, def)` 的语义就是「键不存在才用 def」，所以只改默认值天然满足「新装默认开、升级后尊重旧选择」，**不需要任何迁移代码**。`SkipOpEdPrefsTest` 用「显式关过→仍为 false」钉死这条。
 - `SettingsKeys.PLAYER_SKIP_OP_ED_GUIDED`（`player_skip_op_ed_guided`）——**只是「引导提示已弹过」的记账位，不出现在设置页**，别当成用户可见开关。
 
-**引导**：视频确实有片头片尾、而用户还没开这个功能时，`maybeShowSkipGuide()` 弹一次带「开启」按钮的 Snackbar；写 `PLAYER_SKIP_OP_ED_GUIDED` 后永不再弹（每集都弹会很烦）。
+**为什么改成默认开启**：PiliPlus（设计参照对象）的同类开关 `pgcSkipType` 默认就是 `SkipType.skipOnce`（`lib/utils/storage_pref.dart:977-979`），B 站官方播放器同样默认跳过；且跳过之后有「撤回」兜底，误跳的代价远小于「用户根本不知道有这功能」——本轮用户反馈「没看到实现了」正是因为默认关+入口深。
 
-**与 PiliPlus 的差异**：PiliPlus 有 5 档 `SkipType`（`alwaysSkip` / `skipOnce` / `skipManually` / `showOnly` / `disable`，**默认 `skipOnce`**），并把片段画到进度条上（`segment_progress_bar.dart`）。本项目只做「开启 = 跳过一次 + 可撤回」这一档（用户要求默认关闭），也没有进度条片段标记。
+**引导**：`SkipOpEdPrefs.shouldShowGuide(hasSegments, alreadyGuided) = hasSegments && !alreadyGuided`。
+判据**只看「引导过没有」，与开关当前值解耦**。原实现是「`skipSegments` 空就 return、开关开着就 return、引导过就 return」，一旦默认改成开启，第二条永远命中，**这条引导就变成死代码**（真机清单第 200 条永远测不到）。文案随开关状态分两套（`guideText` / `guideActionText`）：开关已开 → 「已自动跳过片头/片尾，可在下方撤回」+「知道了」（不再劝用户开启）；未开 → 「这个视频有片头片尾，可以自动跳过」+「开启」。写 `PLAYER_SKIP_OP_ED_GUIDED` 后永不再弹（每集都弹会很烦）。
+
+**与 PiliPlus 的差异**：PiliPlus 有 5 档 `SkipType`（`alwaysSkip` / `skipOnce` / `skipManually` / `showOnly` / `disable`，**默认 `skipOnce`**），并把片段画到进度条上（`segment_progress_bar.dart`）。本项目只做「开启 = 跳过一次 + 可撤回」这一档，也没有进度条片段标记。
 若将来要补 `alwaysSkip`（用户拖回去也继续跳），把 `maybeAutoSkipOpEd` 里的 `handled` 判断去掉即可——落点是右端点，不会自我循环。
 
 ### 7.8 高能进度条 pbp 接口的两代响应结构（26.10.04 修复）
@@ -461,7 +465,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 - **触发点是 `BiliTerminal.onCreate` 里既有的未读检查**（受「消息数量检查」开关注释）：`MessageApi.checkPrivateMsgUnread()` 给 `privateMsgUnread`、`checkMessageUnread()`（at + reply）给 `otherUnread`，**实参顺序别搞反**。项目无 WorkManager / AlarmManager 依赖，也不为此新增，所以没有后台定时提醒。
 - **未读检查失败不再把 `MESSAGE_UPDATE_NUM` 清零**（C14 的行为变更）：清零会让下一次成功检查把"老未读"当成新增未读，网络抖一次就重复弹通知；现在只记 `Logu.w`。改动这里前先想清楚通知会不会重复。
 - Android 13+ 需要运行时 `POST_NOTIFICATIONS`，在 `activity/message/MessageActivity.kt` 的 `requestNotificationPermissionIfNeeded()` 里申请；未授权时 `notifyNewMessages` 因 `areNotificationsEnabled()` 为 false 静默放弃，**不报错**——调试"通知不弹"时先查权限/系统开关，不要只盯代码。
-- 开关键：`SettingsKeys.PRIVATE_MSG_NOTIFY_ENABLE`（`private_msg_notify_enable`，默认开）；设置入口在「更新提醒」分组（`SettingPrefActivity`），可搜索条目在 `SettingsIndex` 通用偏好下（新增设置项的三处都改了）。
+- 开关键：`SettingsKeys.PRIVATE_MSG_NOTIFY_ENABLE`（`private_msg_notify_enable`，默认开）；**设置入口在第一层级的「通知设置」分组**（`GROUP_NOTIFY`，`SettingGroupActivity.buildNotifyGroup()`），可搜索条目在 `SettingsIndex`（`Entry("新消息通知", …) { openGroup(GROUP_NOTIFY, "通知设置", "新消息通知") }`）。**原先埋在「内容与浏览 → 通用偏好 → 更新提醒」里，已从 `SettingPrefActivity` 移除**——同一开关留两个入口会出现「一处改了另一处不刷新」的假故障（用户会以为设置没生效）。
 - **不做 RemoteInput 速回**（用户拍板）：要额外权限 + 跨进程回复广播，手表打字成本高，收益不抵复杂度；点通知 = 打开消息页（`PendingIntent` 用 `NEW_TASK or CLEAR_TOP` + `FLAG_IMMUTABLE`）。
 - 两个 `notify*` 里的建渠道重复代码已抽成私有 `ensureChannel(context, id, name, description)`（Android 8.0+ 必须建渠道，重复创建同名渠道是幂等的）；再往这个文件加通知时复用它，别再抄一遍。
 
@@ -471,7 +475,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 - **判据是同一部番的 `new_ep.id` 变了**（`model/FollowedBangumi.newEpId`），不是总集数、也不是服务端的 `is_new`（后者会被用户在别的客户端看过之后清掉）。纯逻辑 `BangumiUpdateChecker.findUpdated(stored, current)` 只认三种情况：快照里存在、`newEpId` 变了、且当前 `newEpId > 0`。
 - **首次检查只写快照、不提醒**；**这次新追的番不算更新**；**快照只在成功拉到列表后写回**（失败保持旧快照，否则下次把老集当新集重复提醒，与 §7.15 未读检查失败不清零同理）。快照是 `SharedPreferencesUtil.BANGUMI_UPDATE_SNAPSHOT`（`bangumi_update_snapshot`），内容是 `{"media_id": new_ep_id, …}` 整份替换。
 - **拉取上限 10 页 × 30 条 = 300 部**（`FOLLOW_PAGE_SIZE` / `FOLLOW_MAX_PAGES`，`ps` 定义域 1-30）：冷启动不该为一个提醒把流量打满。接口是 `x/space/bangumi/follow/list`（`type=1` 追番、`follow_status=0`），与列表页用的 `getFollowingList(int, List<VideoCard>)` **是两个用途**，别合并。
-- 开关键 `SettingsKeys.BANGUMI_UPDATE_NOTIFY_ENABLE`（`bangumi_update_notify_enable`，默认开），设置三处齐全（「更新提醒」分组 + `SettingsIndex` 通用偏好 + `strings.xml` 的 `desc_bangumi_update_notify_enable`）。
+- 开关键 `SettingsKeys.BANGUMI_UPDATE_NOTIFY_ENABLE`（`bangumi_update_notify_enable`，默认开），设置入口与 §7.15 同在第一层级的「通知设置」分组（同属 `buildNotifyGroup()`）；文案 `desc_bangumi_update_notify_enable`。
 - **不做后台定时**（用户拍板）：项目没有也不引入 WorkManager / AlarmManager；`getFollowedBangumi()` 未登录时返回空表，`checkAndNotify` 遇到空表直接返回且**不覆盖快照**。
 - 单测：`api/BangumiApiTest.kt`（纯解析）、`util/BangumiUpdateCheckerTest.kt`（快照往返 + 更新判定）、`util/MsgNotifierTest.kt` 的 `bangumiSummaryText`、`util/SettingsKeysTest.kt` 的键名钉子。
 
@@ -594,6 +598,15 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 **行为契约不变的部分**：channel id `biliterminal_download`、前台通知 `1027`、`notifyExit` 的 `2`、`notifyCompletion` 的 `id % 100 + 100`、download 表 11 列 / version 4、SP 键（`aria2_enabled` / `aria2_split` / `parallel_download_videos`）。**已知的可见性变化**：`DownloadProgressInfo` 的 FQN 由 `DownloadService$Companion$DownloadProgressInfo` 变为 `com.RobinNotBad.BiliClient.service.download.DownloadProgressInfo`（全仓无显式引用，按旧 FQN 反射的代码会失配）。
 
+### 7.28 顶部工具条滚动自动收回（26.10.05 批次 8 新增）
+
+- **能力在基类 `activity/base/RefreshListActivity.kt`，默认关闭**：子类调 `setupAutoHideBars(vararg bars: View?)` 才生效（不调 = 零影响，所以对其它几十个列表页安全）。`activity_simple_refresh.xml` 里的 `filterBar`/`sortBar`/`manageBar`/`groupBar` 是 `SwipeRefreshLayout` **之上的兄弟节点**，不在 RecyclerView 内，**不会随列表滚走**，只能手动改 `layoutParams.height` 做收放。**没做成 adapter 头部项**：那会重映射所有业务 adapter 的 `viewType`/`adapterPosition`（同 §7.23 的理由）。
+- **判据抽成纯函数 `util/view/ScrollRetractDecider.kt`**：`action(accumulated: Int, collapsed: Boolean, canScrollUp: Boolean): Int` 返回 `NONE`/`COLLAPSE`/`EXPAND`（`THRESHOLD = 12`）。View 层在 JVM 单测里是 Android 桩，断言写了也是假的（见 §36.7 第 1 条），所以判据必须与 Android 解耦才有真单测。
+- **两条反直觉但必须保留的设计**：①**已收回时继续向下滚仍返回 `COLLAPSE`**，作用是让调用方清零累加值——若返回 `NONE`，累加值会一直涨，用户往上滚时先要抵消历史正值，表现为「条收起来以后怎么滚都不回来」；②**`collapsed && !canScrollUp && accumulated <= 0` 强制 `EXPAND`**——已在顶部还收着就必须展开，因为列表到顶后不会再产生负 `dy`，否则永远展不开。
+- **`naturalBarHeight` 必须缓存**：条是 `wrap_content`，收回时高度被压成 0，0 高度量不出「原本多高」，否则**收得回去、展不回来**。
+- **`animateBars` 的三个易错点**：①收回只处理 `visibility == VISIBLE && naturalBarHeight > 0` 的条——**不可见的条不能收**，否则会被记进 `collapsedBars`，展开时把本该 `GONE` 的条点亮；②`barsAnimator?.cancel()` 后**必须立刻置 `null`**（`cancel()` 会同步回调旧动画的 `onAnimationEnd`，那时若还指着旧动画就会把 height 复位成 `WRAP_CONTENT`），并在 `onAnimationEnd` 里用 `if (barsAnimator !== animation) return` 挡下被取消的动画；③**多条共用一个 `ValueAnimator`**（高度按同一条 0..1 进度算），每条各起一个动画会因启动微差错位。
+- **接线点**：`activity/user/WatchLaterActivity.kt` 接 `filterBar`（并在 `reloadForFilter()` 里先 `expandAutoHideBars()`，否则点了「未看完」条还是收着的）；`activity/user/favorite/FavoriteVideoListActivity.kt` 接 `sortBar`（并在 `switchSort()` 里 `expandAutoHideBars()`）。**`manageBar` 故意不接**：多选模式下用户正勾着视频，条收走就没法点删除。（同批次的长按操作面板见 `util/LongPressPrefs.kt` 与 `docs/review/fix-progress.md` §37.1。）
+
 ---
 
 ## 8. UI 基建速查（新增页面临摹用）
@@ -653,6 +666,24 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 - `err(Throwable)` 按异常类型自动分流文案（IOException→网络错误、JSONException→带详情、IndexOutOfBounds→Adapter 错误、SQLException→SQL）。
 - `showText(title, content)` → `ShowTextActivity`；`showDialog(title, content[, wait])` → `DialogActivity`。
 
+弹窗（`util/TerminalDialog.kt`，26.10.05 新增，**唯一入口**）：
+
+四个静态方法，全部返回 `AlertDialog`，调用方自行 `.show()`：
+
+| 方法 | 用途 | 对应旧的裸写法 |
+|---|---|---|
+| `menu(context, title, items, danger, onPick)` | 菜单型，点一下执行一个动作 | `setItems`（原 7 处） |
+| `singleChoice(context, title, items, checked, onPick)` | 单选型，`▸`/`›` 双态引导符 | `setSingleChoiceItems`（原 2 处） |
+| `confirm(context, title, message, confirmText, cancelText, confirmIsDanger, onConfirm)` | 确认型，取消=次级灰 / 确认=危险红 | `setMessage`+`setPositiveButton`（原 8 处） |
+| `alert(context, title, message, buttonText)` | 纯提示，单按钮 | `setMessage`+单按钮 |
+
+行为约定（改之前先读这几条）：
+- `menu` **先 dismiss 再回调**——回调里常会再弹一个框（「删除评论」→ 二次确认），不关会叠在一起。
+- `singleChoice` **不自动关闭**——选季场景要先做越界校验再由调用方 `dialog?.dismiss()`；`checked` 越界会被夹到合法范围。
+- `confirm` **保留按钮行**（菜单/单选刻意去掉了按钮行，手表纵向空间比一个「确定」值钱）；`cancelText` 传空串则不显示取消按钮。
+- 破坏性项（删除/取消收藏）**必须**进 `danger`，别让用户靠文案猜。
+- 颜色只读 `?attr/`，文件内无色值常量；`attrColor` 带兜底默认值。
+
 对话框 Activity（Intent extra 传参 + `registerForActivityResult`）：
 
 | Activity | 入参 | 返回 |
@@ -675,6 +706,7 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 | `BiliTerminal.jumpToUser(context, mid)` | 16 处手抄 Intent | 所有「跳用户主页」；等价于 `Intent().setClass(UserInfoActivity).putExtra("mid", mid)` |
 | `ui/widget/RotaryEncoderSupport` | 3 份表冠滚动 + 1 处开关读取 | 三个 `Rotary*` 控件的公共逻辑；控件各自保留事件接入方式（监听器 vs `dispatchGenericMotionEvent`） |
 | `util/ViewCapabilityProbe` | 2 处直接调 `View.hasOn*ClickListeners()` | 框架方法「本机可能有、也可能被裁掉」时的反射探测 + 降级，见 8.5 第 11 条 |
+| `util/TerminalDialog` | 17 处内联 `AlertDialog.Builder`（7 菜单 + 2 单选 + 8 确认） | 26.10.05 收口；弹窗样式问题在**主题层**不在调用点，根因与迁移清单见 `docs/review/dialog-redesign-progress.md` |
 
 > `Rotary*` 三件套的差异是**刻意保留**的：`RecyclerView`/`ScrollView` 走
 > `setOnGenericMotionListener` 且滚动后抢焦点，`NestedScrollView` 走 `dispatchGenericMotionEvent`
@@ -745,6 +777,41 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
    `CustomFont.applyToContentView` 立即 return，一次视图树遍历都不做。这是绝大多数用户的状态。
    守卫测试：`FontStyleTest.shouldLoad_isFalseWhenNoFontConfigured`。
 2. 圆角**只决定「用哪个主题属性取值」**，不做运行时几何计算，也不在 `RecyclerView` 绑定路径上做额外工作。
+
+### 8.7.0 弹窗的主题属性接入（26.10.05 新增，改弹窗/加主题前必读）
+
+**弹窗样式由主题属性决定，不由调用点决定。** 全工程 17 处裸 `AlertDialog.Builder` 已收口到
+`util/TerminalDialog.kt`（见 §8.4），但真正让弹窗「灰底白字 + 粉按钮 + 方角」的是**主题层缺三个属性**。
+
+**三个此前全工程 0 声明的属性**（grep `app/src/main/res` 全域）：
+
+| 属性 | 谁在用 | 缺了会怎样 |
+|---|---|---|
+| `alertDialogTheme` | AlertDialog 选哪个颜色 overlay | 走 `Theme.MaterialComponents` 自带的 alert overlay，**不读本主题的定制** |
+| `colorOnSurface` | Material 正文/标题文字色 | 回退 Material 默认近白 → 「白字」。**`android:colorForeground` 救不了它**（Material 正文不读 colorForeground） |
+| `colorError` | 破坏性按钮色 | 删除类操作没有危险语义 |
+
+**「粉按钮」的确切来源**：`setPositiveButton`/`setNegativeButton` 的文字色走 `colorAccent`，
+这是 7 族主题里**唯一都设了**的属性，B站粉与经典终端恰好都是 `#FF6699`。
+即：弹窗底色跟随 `colorSurface`（半接入），文字与按钮走 Material 默认 overlay（未接入）。
+
+**修复形态**：`themes.xml` 里 7 份 `ThemeOverlay.<X>.Dialog`（parent 一律
+`ThemeOverlay.MaterialComponents.Dialog.Alert`），各含四项：
+`colorSurface` / `colorOnSurface` / `colorError` / `android:background=@drawable/dialog_background`；
+每族主题加一行 `<item name="alertDialogTheme">@style/ThemeOverlay.<X>.Dialog</item>`。
+`dialog_background.xml` = `solid ?attr/colorSurface` + `stroke 1dp ?attr/colorPrimary` + `corners @dimen/card_round`。
+
+> **`Sheet.init` 里 `dialog.window?.setBackgroundDrawable(ColorDrawable(TRANSPARENT))` 不能删**：
+> 不做的话 AppCompat 会在圆角 drawable 底下垫一层方角底衬，圆角白做——这正是「像安卓原生的一样」的直接原因。
+
+> **教训（判断「某属性全工程缺失」的正确姿势）**：必须**同时 grep 相邻属性做对照组**。
+> 本次最初的错误结论是「弹窗层从未接入主题系统」——被「7 族主题都声明了 `colorSurface`」
+> 与「XML 侧 71 处 `?attr/colorSurface`/`colorPrimary` 引用」直接推翻。真相是**缺其中三个**，
+> 不是整层缺失。只 grep 目标属性会把「半接入」误读成「未接入」，方案方向跟着全偏。
+
+**已知遗留**：`styles.xml` 的 `CardStyle`/`ButtonStyle` 等组件样式内**全是硬编码静态色**
+（`@color/card_dark` / `@color/pink` 等），切主题后不跟随；与 `docs/visual-experience-report.md`
+§2.12「86 处布局引用静态调色板」同源。本次未动。
 
 ### 8.7.1 圆角的生效机制（26.09.11 落地，改圆角前必读）
 
