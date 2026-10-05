@@ -197,6 +197,8 @@
     <string name="hint_copy_empty">啥都木有</string>
 
     <string name="btn_login_confirm">登录</string>
+    <string name="btn_login_paste">粘贴并登录</string>
+    <string name="special_login_paste_desc">粘贴并登录：直接读取剪贴板里的登录信息并登录，不用手动粘贴。会先校验剪贴板内容——不是 JSON、或缺少 cookies / refresh_token 字段时不会登录。</string>
     <string name="btn_login_refuse">但是我拒绝</string>
     <string name="btn_emote">表情</string>
     <string name="btn_image">图片</string>
