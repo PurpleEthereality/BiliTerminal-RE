@@ -28,11 +28,34 @@ public class LinkUrlUtil {
     public static final int TYPE_AVID = 2;
     public static final int TYPE_CVID = 3;
     public static final int TYPE_UID = 4;
+    /** 话题（{@code #话题名#}）。val 形如 {@code https://m.bilibili.com/topic-detail?topic_id=1305890}。 */
+    public static final int TYPE_TOPIC = 5;
     public static final Pattern BV_PATTERN = Pattern.compile("BV[A-Za-z0-9]{10}");
     public static final Pattern AV_PATTERN = Pattern.compile("av\\d{1,10}");
     public static final Pattern CV_PATTERN = Pattern.compile("cv\\d{1,10}");
     public static final Pattern UID_PATTERN = Pattern.compile("^(?i)uid\\d+$");
     public static final Pattern OPUS_PATTERN = Pattern.compile("^/opus/(\\d+)/?$");
+    /** 从话题跳转链接里抠出 topic_id，形如 {@code .../topic-detail?topic_id=1305890&topic_name=xx}。 */
+    public static final Pattern TOPIC_ID_PATTERN = Pattern.compile("[?&]topic_id=(\\d+)");
+
+    /**
+     * 从话题跳转链接里解析 topic_id。
+     *
+     * 话题的 {@code jump_url} 形如
+     * {@code https://m.bilibili.com/topic-detail?topic_id=1305890&topic_name=%E5%A4%A9%E4%BE%9D...}，
+     * 我们只需要 {@code topic_id} 就能进站内话题页（{@code DynamicTopicActivity}）。
+     * 解析不出来返回 0，调用方据此退化处理。
+     */
+    public static long parseTopicId(String jumpUrl) {
+        if (jumpUrl == null) return 0L;
+        Matcher matcher = TOPIC_ID_PATTERN.matcher(jumpUrl);
+        if (!matcher.find()) return 0L;
+        try {
+            return Long.parseLong(matcher.group(1));
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
+    }
 
     public static void handleWebURL(Context context, String text) {
         try {

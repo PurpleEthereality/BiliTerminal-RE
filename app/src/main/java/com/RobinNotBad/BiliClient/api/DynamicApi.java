@@ -13,6 +13,7 @@ import com.RobinNotBad.BiliClient.model.Dynamic;
 import com.RobinNotBad.BiliClient.model.Emote;
 import com.RobinNotBad.BiliClient.model.LiveRoom;
 import com.RobinNotBad.BiliClient.model.Stats;
+import com.RobinNotBad.BiliClient.model.TopicNode;
 import com.RobinNotBad.BiliClient.model.UserInfo;
 import com.RobinNotBad.BiliClient.model.VideoCard;
 import com.RobinNotBad.BiliClient.util.DmImgParamUtil;
@@ -1015,6 +1016,33 @@ public class DynamicApi {
         );
     }
 
+    /**
+     * 从 {@code rich_text_nodes} 里挑出全部话题节点（{@code RICH_TEXT_NODE_TYPE_TOPIC}）。
+     *
+     * 纯函数，不碰 Context/表情，便于 JVM 单测；同时也是「话题解析没漏」的守卫——
+     * 动态正文、动态摘要、Opus 段落三处的 TOPIC 分支都靠它对齐。
+     *
+     * 返回 {@link TopicNode} 而非 {@code android.util.Pair}：后者在 JVM 单测里是 Android 桩，
+     * 构造出的对象字段恒为 null（详见 TopicNode 类注释）。
+     *
+     * @param richTextNodes 服务端下发的富文本节点数组，可为 null
+     * @return 顺序与服务端一致；无话题时返回空列表
+     */
+    public static java.util.List<TopicNode> parseTopicNodes(JSONArray richTextNodes) {
+        java.util.List<TopicNode> topics = new java.util.ArrayList<>();
+        if (richTextNodes == null) return topics;
+        for (int i = 0; i < richTextNodes.length(); i++) {
+            JSONObject node = richTextNodes.optJSONObject(i);
+            if (node == null) continue;
+            if (!"RICH_TEXT_NODE_TYPE_TOPIC".equals(node.optString("type"))) continue;
+            String text = node.optString("text");
+            if (text.isEmpty()) continue;
+            // 没有 jump_url 也照样收集：话题仍要染主色展示，只是不可点。
+            topics.add(new TopicNode(text, node.optString("jump_url")));
+        }
+        return topics;
+    }
+
     private static SpannableStringBuilder analyzeTextContent(JSONArray rich_text_nodes) {
         if (rich_text_nodes == null) return new SpannableStringBuilder("[动态内容解析异常]");
 
@@ -1035,6 +1063,14 @@ public class DynamicApi {
                 case "RICH_TEXT_NODE_TYPE_AT":
                     Pair<Integer, Integer> indexs = StringUtil.appendString(content, rich_text_node.optString("text"));
                     atList.add(new At(rich_text_node.optLong("rid"), indexs.first, indexs.second));
+                    break;
+                case "RICH_TEXT_NODE_TYPE_TOPIC":
+                    // 话题（#话题名#）：上主题主色 + 点击跳转。
+                    // 此前没有本分支，话题落进 default 只被当普通文本 append，
+                    // 于是既不蓝也点不动 —— 用户报告的"#A# 没有正常解析"根因就在这里。
+                    Pair<Integer, Integer> topicIndexs = StringUtil.appendString(content, rich_text_node.optString("text"));
+                    StringUtil.setSingleTopic(content, topicIndexs.first, topicIndexs.second,
+                            rich_text_node.optString("jump_url"));
                     break;
                 case "RICH_TEXT_NODE_TYPE_WEB":
                     content.append(rich_text_node.optString("orig_text"));

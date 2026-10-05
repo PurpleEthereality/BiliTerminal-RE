@@ -212,6 +212,13 @@ public class OpusParagraph {
                         case "RICH_TEXT_NODE_TYPE_RICH":  //TODO:忘记这个叫什么名字了，根据记忆应该是这个，如果不对请调整
                             stringBuilder.setSpan(new StringUtil.LinkClickableSpan(rich.optString("jump_url"), TYPE_WEB_URL, rich.getString("jump_url")), stringBuilder.length() - rich.getString("text").length(), stringBuilder.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                             break;
+                        case "RICH_TEXT_NODE_TYPE_TOPIC":
+                            // 段落内嵌话题（TEXT_NODE_TYPE_RICH 里 type 为 TOPIC 的那种）。
+                            // 原先只处理 EMOJI/RICH，话题在这里退化成普通黑字、点不动，
+                            // 和 analyzeOpus() 里的 TOPIC 表现不一致。
+                            StringUtil.setSingleTopic(stringBuilder, stringBuilder.length() - rich.getString("text").length(),
+                                    stringBuilder.length(), rich.optString("jump_url"));
+                            break;
                     }
                     break;
                 default:
@@ -255,8 +262,11 @@ public class OpusParagraph {
                     StringUtil.setSingleAt(stringBuilder, at);
                     break;
                 case "RICH_TEXT_NODE_TYPE_TOPIC":
+                    // 话题统一走 StringUtil.setSingleTopic：主色 + 可点击。
+                    // 原先这里只挂 LinkClickableSpan 没上色，和动态正文的话题样式对不上。
                     stringBuilder.append(rich.getString("text"));
-                    stringBuilder.setSpan(new StringUtil.LinkClickableSpan(rich.getString("jump_url"), TYPE_WEB_URL, rich.getString("jump_url")), startLength, stringBuilder.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    StringUtil.setSingleTopic(stringBuilder, startLength, stringBuilder.length(),
+                            rich.optString("jump_url"));
                     break;
                 case "RICH_TEXT_NODE_TYPE_EMOJI":
                     stringBuilder.append(rich.optString("text"));

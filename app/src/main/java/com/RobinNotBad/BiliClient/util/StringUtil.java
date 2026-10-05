@@ -40,6 +40,7 @@ import androidx.core.content.res.ResourcesCompat;
 import com.RobinNotBad.BiliClient.BiliTerminal;
 import com.RobinNotBad.BiliClient.R;
 import com.RobinNotBad.BiliClient.activity.CopyTextActivity;
+import com.RobinNotBad.BiliClient.activity.dynamic.DynamicTopicActivity;
 import com.RobinNotBad.BiliClient.api.ReplyApi;
 import com.RobinNotBad.BiliClient.model.At;
 import com.RobinNotBad.BiliClient.model.UserInfo;
@@ -167,12 +168,35 @@ public class StringUtil {
         return ESCAPE_PATTERN.matcher(str).replaceAll("$1");
     }
 
+    /**
+     * 「长按复制」这个功能当前开着没有。
+     *
+     * <p>原先只在 {@link #setCopy} 内部读一次，现在「操作面板」里要不要列出「复制」这一项
+     * 也要问同一件事，所以单独暴露出来——两处各写一遍 {@code getBoolean("copy_enable", true)}
+     * 的话，将来改键名或改默认值必然漏掉一处。
+     */
+    public static boolean isCopyEnabled() {
+        return SharedPreferencesUtil.getBoolean("copy_enable", true);
+    }
+
+    /**
+     * 打开复制界面（让用户自己选要复制哪一段）。
+     *
+     * <p>长按复制与「操作面板里的复制」共用这条路径；面板项点下去时弹窗已经 dismiss，
+     * 这里再 startActivity 不会出现两个界面叠着。
+     */
+    public static void openCopyPage(Context context, String content) {
+        Intent intent = new Intent(context, CopyTextActivity.class);
+        intent.putExtra("content", content == null ? "" : content);
+        context.startActivity(intent);
+    }
+
     public static void setCopy(TextView textView, String customText) {
-        if (SharedPreferencesUtil.getBoolean("copy_enable", true)) {
+        if (isCopyEnabled()) {
             textView.setOnLongClickListener(view1 -> {
-                Intent intent = new Intent(textView.getContext(), CopyTextActivity.class);
-                intent.putExtra("content", customText == null ? textView.getText().toString() : customText);
-                textView.getContext().startActivity(intent);
+                //直接传getText()会导致文本变化后点击不了，所以在长按发生时才取
+                openCopyPage(textView.getContext(),
+                        customText == null ? textView.getText().toString() : customText);
                 return true;
             });
         }
@@ -260,6 +284,65 @@ public class StringUtil {
         spannableString.setSpan(new LinkClickableSpan(spannableString.subSequence(at.start, at.end).toString(),
                         TYPE_USER, String.valueOf(at.id)),
                 at.start, at.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    }
+
+    /**
+     * 给 [start, end) 区间内的话题文本（形如 {@code #话题名#}）上主色 + 可点击跳转。
+     *
+     * 动态正文里话题节点（{@code RICH_TEXT_NODE_TYPE_TOPIC}）与 Opus 段落都用这一个入口，
+     * 避免"两处真相"——此前 DynamicApi 完全没有 TOPIC 分支（话题退化成普通黑字、点不动），
+     * 而 OpusParagraph 有分支但只是当普通外链处理。
+     *
+     * 颜色走 [ColorScheme.PRIMARY]（主题主色），**不硬编码色值**，与 {@link #setTopSpan} 同一约定。
+     * 注意：[LinkClickableSpan.updateDrawState] 会把颜色写死成青色并覆盖 ForegroundColorSpan，
+     * 所以这里不用它，改用 [TopicClickableSpan]（继承主色、点击进站内话题页）。
+     *
+     * @param stringBuilder 目标富文本
+     * @param start         话题文本起始下标
+     * @param end           话题文本结束下标（不含）
+     * @param jumpUrl       话题跳转链接，形如 {@code .../topic-detail?topic_id=1305890}；
+     *                      为空或解析不出 topic_id 时不给点击 span（只上色，至少不会点不动又没反应）
+     */
+    public static void setSingleTopic(SpannableStringBuilder stringBuilder, int start, int end, String jumpUrl) {
+        if (stringBuilder == null || start < 0 || end > stringBuilder.length() || start >= end) return;
+        long topicId = LinkUrlUtil.parseTopicId(jumpUrl);
+        if (topicId <= 0) {
+            // 拿不到 topic_id 就只上色：宁可"有色不可点"，也不要把 "#话题#" 当网址去请求
+            stringBuilder.setSpan(new ForegroundColorSpan(ColorScheme.INSTANCE.getPRIMARY()),
+                    start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            return;
+        }
+        stringBuilder.setSpan(new TopicClickableSpan(topicId), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    }
+
+    /**
+     * 话题专用点击 span：有主色下划线、点击进站内话题动态页。
+     *
+     * 不复用 [LinkClickableSpan] 的原因见 {@link #setSingleTopic}：它的
+     * {@code updateDrawState} 硬编码青色，且 {@code TYPE_WEB_URL} 分支取的是 span 的
+     * **显示文本**（即 {@code #话题#}）当网址，传 jump_url 进去根本不会被用到。
+     */
+    public static class TopicClickableSpan extends ClickableSpan {
+        private final long topicId;
+
+        public TopicClickableSpan(long topicId) {
+            this.topicId = topicId;
+        }
+
+        @Override
+        public void onClick(@NonNull View widget) {
+            Context context = widget.getContext();
+            context.startActivity(new Intent(context, DynamicTopicActivity.class)
+                    .putExtra("topic_id", topicId));
+        }
+
+        @Override
+        public void updateDrawState(@NonNull TextPaint ds) {
+            super.updateDrawState(ds);
+            ds.setUnderlineText(false);
+            // 主题主色，不硬编码（用户要求"解析应该是蓝色的"，而蓝色正是默认主题的主色）
+            ds.setColor(ColorScheme.INSTANCE.getPRIMARY());
+        }
     }
 
     public static void setAtLink(List<At> ats, TextView... textViews) {
