@@ -12,7 +12,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
 import androidx.recyclerview.widget.RecyclerView
 import com.RobinNotBad.BiliClient.BiliTerminal
 import com.RobinNotBad.BiliClient.R
@@ -26,6 +25,7 @@ import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.GlideUtil
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
+import com.RobinNotBad.BiliClient.util.TerminalDialog
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.request.RequestOptions
@@ -132,26 +132,29 @@ class PrivateMsgSessionsAdapter(
             "删除会话",
             "查看用户主页"
         )
-        AlertDialog.Builder(context)
-            .setTitle("会话操作")
-            .setItems(actions) { _, which ->
-                when (which) {
-                    0 -> setSessionTop(session, !session.isTop())
-                    1 -> confirmRemoveSession(session)
-                    else -> BiliTerminal.jumpToUser(context, session.talkerUid)
-                }
+        // 第 1 项（删除会话）是破坏性操作，用危险色标出来
+        TerminalDialog.menu(
+            context = context,
+            title = "会话操作",
+            items = actions.toList(),
+            danger = setOf(1)
+        ) { which ->
+            when (which) {
+                0 -> setSessionTop(session, !session.isTop())
+                1 -> confirmRemoveSession(session)
+                else -> BiliTerminal.jumpToUser(context, session.talkerUid)
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }.show()
     }
 
     private fun confirmRemoveSession(session: PrivateMsgSession) {
-        AlertDialog.Builder(context)
-            .setTitle("删除会话")
-            .setMessage("只会把会话从列表里移除，不会删除聊天记录。")
-            .setPositiveButton("删除") { _, _ -> removeSession(session) }
-            .setNegativeButton("取消", null)
-            .show()
+        TerminalDialog.confirm(
+            context = context,
+            title = "删除会话",
+            message = "只会把会话从列表里移除，不会删除聊天记录。",
+            confirmText = "删除",
+            onConfirm = { removeSession(session) }
+        ).show()
     }
 
     private fun setSessionTop(session: PrivateMsgSession, top: Boolean) {

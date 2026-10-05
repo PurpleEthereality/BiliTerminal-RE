@@ -1,6 +1,5 @@
 package com.RobinNotBad.BiliClient.activity.vote
 
-import android.app.AlertDialog
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Bundle
@@ -23,6 +22,7 @@ import com.RobinNotBad.BiliClient.model.VoteOption
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
+import com.RobinNotBad.BiliClient.util.TerminalDialog
 
 import org.json.JSONException
 
@@ -329,36 +329,36 @@ class VoteInfoActivity : BaseActivity() {
      * 删除投票（仅投票发布者）
      */
     private fun confirmDeleteVote() {
-        AlertDialog.Builder(this)
-            .setTitle("删除投票")
-            .setMessage("确定删除这个投票吗？删除后不可恢复。")
-            .setPositiveButton("确定") { _, _ ->
-                isVoting = true
-                CenterThreadPool.run {
-                    try {
-                        val result = VoteApi.deleteVote(voteId)
-                        if (!isDestroyed) {
-                            runOnUiThread {
-                                if (result == 0) {
-                                    MsgUtil.showMsg("删除成功")
-                                    finish()
-                                } else {
-                                    MsgUtil.showMsg("删除失败：$result")
-                                }
-                                isVoting = false
+        TerminalDialog.confirm(
+            context = this,
+            title = "删除投票",
+            message = "确定删除这个投票吗？删除后不可恢复。",
+            confirmText = "删除"
+        ) {
+            isVoting = true
+            CenterThreadPool.run {
+                try {
+                    val result = VoteApi.deleteVote(voteId)
+                    if (!isDestroyed) {
+                        runOnUiThread {
+                            if (result == 0) {
+                                MsgUtil.showMsg("删除成功")
+                                finish()
+                            } else {
+                                MsgUtil.showMsg("删除失败：$result")
                             }
+                            isVoting = false
                         }
-                    } catch (e: Exception) {
-                        if (!isDestroyed) {
-                            runOnUiThread {
-                                MsgUtil.err(e)
-                                isVoting = false
-                            }
+                    }
+                } catch (e: Exception) {
+                    if (!isDestroyed) {
+                        runOnUiThread {
+                            MsgUtil.err(e)
+                            isVoting = false
                         }
                     }
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }.show()
     }
 }

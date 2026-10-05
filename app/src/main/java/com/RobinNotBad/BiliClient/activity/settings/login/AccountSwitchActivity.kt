@@ -19,6 +19,7 @@ import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.GlideUtil
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
+import com.RobinNotBad.BiliClient.util.TerminalDialog
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 import com.bumptech.glide.request.RequestOptions
@@ -155,16 +156,16 @@ class AccountSwitchActivity : BaseActivity() {
         card.setOnLongClickListener {
             if (accountsCanBeRemoved()) {
                 val displayName = if (savedName != null && savedName.isNotEmpty()) savedName else "UID:" + account.mid
-                androidx.appcompat.app.AlertDialog.Builder(this)
-                    .setTitle("删除账号")
-                    .setMessage("确定要删除账号 $displayName 吗？\n删除后需重新登录才能恢复。")
-                    .setPositiveButton("删除") { _, _ ->
-                        AccountManager.removeAccount(account.mid)
-                        MsgUtil.showMsg("已删除账号")
-                        refreshAccountList()
-                    }
-                    .setNegativeButton("取消", null)
-                    .show()
+                TerminalDialog.confirm(
+                    context = this,
+                    title = "删除账号",
+                    message = "确定要删除账号 $displayName 吗？\n删除后需重新登录才能恢复。",
+                    confirmText = "删除"
+                ) {
+                    AccountManager.removeAccount(account.mid)
+                    MsgUtil.showMsg("已删除账号")
+                    refreshAccountList()
+                }.show()
             }
             true
         }

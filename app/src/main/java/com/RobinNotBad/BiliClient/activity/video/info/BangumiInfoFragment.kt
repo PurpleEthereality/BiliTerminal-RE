@@ -11,7 +11,6 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -26,6 +25,7 @@ import com.RobinNotBad.BiliClient.ui.widget.recycler.CustomLinearManager
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.GlideUtil
 import com.RobinNotBad.BiliClient.util.MsgUtil
+import com.RobinNotBad.BiliClient.util.TerminalDialog
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
 
@@ -361,15 +361,19 @@ class BangumiInfoFragment : Fragment() {
 
     @SuppressLint("SetTextI18n")
     private fun getSectionChooseDialog(): Dialog {
-        val choices = Array(bangumi!!.sectionList.size) { i -> bangumi!!.sectionList[i].title }
+        val choices = bangumi!!.sectionList.map { it.title }
 
-        val builder = AlertDialog.Builder(requireContext())
-        builder.setSingleChoiceItems(choices, selectedSection) { dialog, which ->
+        // 终端列表方案：选中态由条目左侧的引导符 + 主色文字表示，不自动关闭
+        dialog = TerminalDialog.singleChoice(
+            context = requireContext(),
+            title = "选择季度",
+            items = choices,
+            checked = selectedSection
+        ) { _, which ->
             // 允许切到空季会让选集区/playButton 随后在空列表上取下标而崩溃，这里直接拒绝切换并提示
             if (bangumi!!.sectionList[which].episodeList.isNullOrEmpty()) {
                 MsgUtil.showMsg("该季暂无剧集")
-                dialog.dismiss()
-                return@setSingleChoiceItems
+                return@singleChoice
             }
             selectedSection = which
             selectedEpisode = 0
@@ -381,9 +385,8 @@ class BangumiInfoFragment : Fragment() {
             adapter.setData(bangumi!!.sectionList[which].episodeList)
             episodeRecyclerView!!.scrollToPosition(0)
             episodeChoose!!.setOnClickListener { getEposideChooseDialog().show() }
-            dialog.dismiss()
+            dialog?.dismiss()
         }
-        dialog = builder.create()
 
         return dialog!!
     }
@@ -394,27 +397,27 @@ class BangumiInfoFragment : Fragment() {
         // 双保险：数据刷新后仍可能落到空季上，空列表既不能建下标也不能建选择项
         if (episodeList.isNullOrEmpty()) {
             MsgUtil.showMsg("该季暂无剧集")
-            dialog = AlertDialog.Builder(requireContext()).setMessage("该季暂无剧集").create()
+            dialog = TerminalDialog.alert(requireContext(), message = "该季暂无剧集")
             return dialog!!
         }
 
-        val choices = Array(episodeList.size) { i ->
-            val episode = episodeList[i]
-            episode.title + "." + episode.title_long
-        }
+        val choices = episodeList.map { episode -> episode.title + "." + episode.title_long }
 
-        val builder = AlertDialog.Builder(requireContext())
         // 选中下标必须夹到合法范围，否则数据刷新导致列表变短时会指向不存在的项
-        builder.setSingleChoiceItems(choices, selectedEpisode.coerceIn(0, episodeList.size - 1)) { dialog, which ->
+        dialog = TerminalDialog.singleChoice(
+            context = requireContext(),
+            title = "选择剧集",
+            items = choices,
+            checked = selectedEpisode.coerceIn(0, episodeList.size - 1)
+        ) { _, which ->
             selectedEpisode = which
             refreshReplies()
 
             val adapter = episodeRecyclerView!!.adapter as MediaEpisodeAdapter
             adapter.selectedItemIndex = which
             episodeRecyclerView!!.scrollToPosition(which)
-            dialog.dismiss()
+            dialog?.dismiss()
         }
-        dialog = builder.create()
 
         return dialog!!
     }

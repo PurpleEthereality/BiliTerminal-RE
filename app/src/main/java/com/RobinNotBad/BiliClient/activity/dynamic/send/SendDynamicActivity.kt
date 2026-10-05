@@ -13,7 +13,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.EmoteActivity
 import com.RobinNotBad.BiliClient.activity.base.BaseActivity
@@ -29,6 +28,7 @@ import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.RobinNotBad.BiliClient.util.TerminalContext
+import com.RobinNotBad.BiliClient.util.TerminalDialog
 import com.RobinNotBad.BiliClient.util.TimeUtil
 import com.bumptech.glide.Glide
 import com.google.android.material.button.MaterialButton
@@ -290,20 +290,20 @@ class SendDynamicActivity : BaseActivity() {
     private fun showTimerPicker() {
         val now = System.currentTimeMillis() / 1000
         val items = arrayOf("10 分钟后", "30 分钟后", "1 小时后", "2 小时后", "明天 12:00", "不定时")
-        AlertDialog.Builder(this)
-            .setTitle("定时发布")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> applyTimer(DynamicApi.timerSecondsAt(now, 10))
-                    1 -> applyTimer(DynamicApi.timerSecondsAt(now, 30))
-                    2 -> applyTimer(DynamicApi.timerSecondsAt(now, 60))
-                    3 -> applyTimer(DynamicApi.timerSecondsAt(now, 120))
-                    4 -> applyTimer(tomorrowNoonSeconds())
-                    else -> applyTimer(0L)
-                }
+        TerminalDialog.menu(
+            context = this,
+            title = "定时发布",
+            items = items.toList()
+        ) { which ->
+            when (which) {
+                0 -> applyTimer(DynamicApi.timerSecondsAt(now, 10))
+                1 -> applyTimer(DynamicApi.timerSecondsAt(now, 30))
+                2 -> applyTimer(DynamicApi.timerSecondsAt(now, 60))
+                3 -> applyTimer(DynamicApi.timerSecondsAt(now, 120))
+                4 -> applyTimer(tomorrowNoonSeconds())
+                else -> applyTimer(0L)
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }.show()
     }
 
     /** 明天 12:00 的秒级时间戳。 */
