@@ -72,19 +72,20 @@ class DynamicInfoFragment : BaseFragment() {
         val dynamicView = View.inflate(requireContext(), R.layout.cell_dynamic, scrollView)
         val holder = DynamicHolder(dynamicView, (activity as BaseActivity?)!!, false)
         holder.showDynamic(requireContext(), dynamic!!, false)
-        val onManageClick = DynamicHolder.getManageListener(
-            requireActivity() as BaseActivity, dynamic!!,
-            onEdited = { newText ->
-                // 详情页只有这一条动态，改完直接把这一张卡片重画一遍
-                dynamic!!.content = newText
-                holder.showDynamic(requireContext(), dynamic!!, false)
-            },
-            onChanged = {
-                // 置顶状态变了：重画这张卡片，让「置顶」标记跟上
-                holder.showDynamic(requireContext(), dynamic!!, false)
-            }
+        holder.setManageAction(
+            DynamicHolder.getManageAction(
+                requireActivity() as BaseActivity, dynamic!!,
+                onEdited = { newText ->
+                    // 详情页只有这一条动态，改完直接把这一张卡片重画一遍
+                    dynamic!!.content = newText
+                    holder.showDynamic(requireContext(), dynamic!!, false)
+                },
+                onChanged = {
+                    // 置顶状态变了：重画这张卡片，让「置顶」标记跟上
+                    holder.showDynamic(requireContext(), dynamic!!, false)
+                }
+            )
         )
-        holder.item_dynamic_delete?.setOnLongClickListener(onManageClick)
         if (dynamic!!.canDelete || dynamic!!.canEdit) holder.item_dynamic_delete?.visibility = View.VISIBLE
 
         if (dynamic!!.dynamic_forward != null) {

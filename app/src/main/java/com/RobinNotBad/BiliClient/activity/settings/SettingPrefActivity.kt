@@ -7,6 +7,7 @@ import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.base.RefreshListActivity
 import com.RobinNotBad.BiliClient.adapter.SettingsAdapter
 import com.RobinNotBad.BiliClient.model.SettingSection
+import com.RobinNotBad.BiliClient.util.LongPressPrefs
 import com.RobinNotBad.BiliClient.util.SettingsKeys
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 
@@ -21,6 +22,10 @@ class SettingPrefActivity : RefreshListActivity() {
         val sectionList: List<SettingSection> = ArrayList<SettingSection>().apply {
             add(SettingSection("title", "功能", "", "", ""))
             add(SettingSection("switch", "长按复制", SettingsKeys.COPY_ENABLE, getString(R.string.desc_copy_enable), "true"))
+            // 默认值引用 LongPressPrefs.DEFAULT_ENABLED，别再写死字面量：这个默认值一旦
+            // 与适配器里读的默认值不一致，症状是「设置页显示开着、长按却不是面板」。
+            add(SettingSection("switch", "长按打开操作面板", SettingsKeys.LONG_PRESS_PANEL_ENABLE,
+                getString(R.string.desc_long_press_panel_enable), LongPressPrefs.DEFAULT_ENABLED.toString()))
             add(SettingSection("switch", "创作中心", SettingsKeys.CREATIVE_ENABLE, getString(R.string.desc_creative_enable), "true"))
             add(SettingSection("switch", "搜索建议", SettingsKeys.SEARCH_SUGGESTIONS_ENABLE,
                 getString(R.string.desc_search_suggestions_enable), "true"))
@@ -35,10 +40,9 @@ class SettingPrefActivity : RefreshListActivity() {
                 getString(R.string.desc_dynamic_update_check_enable), "true"))
             add(SettingSection("switch", "消息数量检查", SharedPreferencesUtil.MESSAGE_UPDATE_CHECK_ENABLE,
                 getString(R.string.desc_message_update_check_enable), "true"))
-            add(SettingSection("switch", "新消息通知", SettingsKeys.PRIVATE_MSG_NOTIFY_ENABLE,
-                getString(R.string.desc_private_msg_notify_enable), "true"))
-            add(SettingSection("switch", "追番更新提醒", SettingsKeys.BANGUMI_UPDATE_NOTIFY_ENABLE,
-                getString(R.string.desc_bangumi_update_notify_enable), "true"))
+            // 注意：「新消息通知」「追番更新提醒」两项已移到第一层级的「通知设置」分组
+            // （`SettingGroupActivity.buildNotifyGroup()`）。别在这里加回来——两个入口指向
+            // 同一个键，用户在一处改了、另一处不会刷新，看起来就像设置没生效。
             add(SettingSection("switch", "最近更新的UP主", SharedPreferencesUtil.RECENT_UP_DISPLAY_ENABLE,
                 getString(R.string.desc_recent_up_display_enable), "true"))
             add(SettingSection("switch", "私信自动已读", SharedPreferencesUtil.PRIVATE_MSG_AUTO_READ_ENABLE,

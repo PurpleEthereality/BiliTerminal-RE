@@ -21,6 +21,7 @@ import org.json.JSONObject;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -30,10 +31,13 @@ import java.util.regex.Pattern;
 public class Reply implements Serializable {
 
     /**
-     * 评论排序方式：按时间。
+     * 评论排序方式：按时间（发布时间升序，早的在前）。
      *
-     * <p>楼中楼接口（{@code /x/v2/reply/reply}）本身就是「按照回复顺序排序」，
-     * 所以「按时间」= 保持服务端返回的顺序，不做任何本地重排。
+     * <p>楼中楼接口（{@code /x/v2/reply/reply}）本身就是「按照回复顺序排序」，正常情况下
+     * 服务端返回的就是时间序。但客户端**不能**因此跳过排序：一旦用户切到「热度排序」，
+     * 列表就被本地打乱了，再切回「时间排序」时若只返回、不重排，顺序就再也回不来
+     * （这正是「切换一次后可以再次切换，但评论顺序不会再次变化」的根因）。
+     * 所以按时间也必须是一个**真正执行**的排序分支，靠 {@link #ctime} 显式重排。
      */
     public static final int SORT_TIME = 0;
 
@@ -48,6 +52,17 @@ public class Reply implements Serializable {
     public long parent;
     public boolean forceDelete;
     public String ofBvid = "";
+    /**
+     * 发布时间戳（**秒**，即服务端 {@code ctime} 原值）。
+     *
+     * <p>只为「按时间排序」提供一个可比大小的键。{@link #pubTime} 是给人看的展示文案
+     * （「3小时前」「2026-10-04 12:00 | IP:上海」），**不能拿来做排序键**——它不是单调的。
+     *
+     * <p>默认 0，表示「没有时间信息」；排序时这类评论会退回到它们在列表里的原有相对位置
+     * （{@link Collections#sort(List)} 是稳定排序，键相等即保持输入顺序），所以即使接口
+     * 不返回 {@code ctime} 也不会把顺序排乱。
+     */
+    public long ctime;
     public String pubTime;
     public UserInfo sender;
     public CharSequence message;
@@ -83,6 +98,11 @@ public class Reply implements Serializable {
 
         JSONObject replyCtrl = replyJson.getJSONObject("reply_control");
         long ctime = replyJson.getLong("ctime") * 1000;
+
+        // 排序键单独存一份「秒」级的原始时间戳：上面的 ctime 被乘了 1000 且后面还会被
+        // 拼成展示文案，复用它会引入单位/精度歧义。接口缺 ctime 时保持 0，
+        // 排序会因为键相等而稳定地保留原有相对顺序，不会排乱。
+        this.ctime = replyJson.optLong("ctime", 0L);
 
         String time;
         if (System.currentTimeMillis() - ctime < 3 * 24 * 60 * 60 * 1000 && replyCtrl.has("time_desc")) {
@@ -267,11 +287,24 @@ public class Reply implements Serializable {
      * <p>主评论列表不归这里管：{@code /x/v2/reply} 与 {@code /x/v2/reply/wbi/main} 支持
      * 服务端排序（{@code sort}/{@code mode}），服务端排得更准（它能看到全部页）。
      *
-     * <p>「按时间」直接返回、不动列表——接口返回的就是回复顺序（时间序），
-     * 用 {@code floor} 排反而不稳（该字段在部分评论区不存在，见
-     * bilibili-API/docs/comment/readme.md 的 floor 字段说明）。
+     * <h3>为什么「按时间」也要真的排</h3>
+     * 旧实现里 {@code SORT_TIME} 是「直接 return，什么都不做」，理由是接口返回的就是时间序。
+     * 单看第一次是对的，但排序是**用户可反复切换**的：一旦切到热度序，列表就被本地打乱了，
+     * 再切回时间序时那个 {@code return} 不会还原任何东西，顺序就永久停在上一次的热度序上。
+     * 所以这里把两个分支都做成真正的排序：
+     * <ul>
+     *   <li>{@link #SORT_TIME} 按 {@link #ctime} 升序（早的在前）</li>
+     *   <li>{@link #SORT_LIKE} 按 {@link #likeCount} 降序（赞多的在前）</li>
+     * </ul>
+     * 两个分支都是幂等的纯函数：对同一个列表反复调用同一档不会改变结果，
+     * 所以「时间→热度→时间」三轮往返之后一定能回到最初的时间序。
      *
-     * <p>{@link Collections#sort(List)} 是稳定排序，点赞数相同的评论会保持原本的时间顺序。
+     * <p>{@link Collections#sort(List)} 是稳定排序，因此：
+     * 点赞数相同的评论保持原本的时间顺序；{@link #ctime} 为 0（接口没给时间）的评论
+     * 也保持输入顺序，不会因为缺字段被排乱。
+     *
+     * <p>传进来的 {@code sort} 只认这两档，其它值一律按 {@link #SORT_TIME} 处理，
+     * 避免把「未知排序」当成「不打乱」而在下一次切换时留下脏顺序。
      *
      * @param replies   要排序的列表，允许为 null
      * @param sort      {@link #SORT_TIME} / {@link #SORT_LIKE}
@@ -279,10 +312,29 @@ public class Reply implements Serializable {
      *                  评论详情页第 0 位是根评论，必须传 1，否则根评论会被排进子评论里。
      */
     public static void sortReplies(List<Reply> replies, int sort, int fromIndex) {
-        if (replies == null || sort != SORT_LIKE) return;
+        if (replies == null) return;
         if (fromIndex < 0) fromIndex = 0;
         if (replies.size() - fromIndex < 2) return;
         Collections.sort(replies.subList(fromIndex, replies.size()),
-                (a, b) -> Integer.compare(b.likeCount, a.likeCount));
+                sort == SORT_LIKE ? LIKE_ORDER : TIME_ORDER);
     }
+
+    /** 热度序：点赞数降序。点赞数相同时由稳定排序保住原有（时间）顺序。null 项排到最后。 */
+    private static final Comparator<Reply> LIKE_ORDER =
+            (a, b) -> {
+                if (a == null || b == null) return (a == null ? 1 : 0) - (b == null ? 1 : 0);
+                return Integer.compare(b.likeCount, a.likeCount);
+            };
+
+    /**
+     * 时间序：{@link #ctime} 升序（早的在前）。null 项排到最后。
+     *
+     * <p>键相等（含两边都没有 ctime）时返回 0，交给稳定排序保住输入的相对顺序——
+     * 楼中楼接口返回的本来就是回复顺序，拿它当兜底比乱排好。
+     */
+    private static final Comparator<Reply> TIME_ORDER =
+            (a, b) -> {
+                if (a == null || b == null) return (a == null ? 1 : 0) - (b == null ? 1 : 0);
+                return Long.compare(a.ctime, b.ctime);
+            };
 }

@@ -28,6 +28,7 @@ object SettingsIndex {
         list += Entry("账号与登录", "登录、切换账号与查看登录信息") { a -> openGroup(a, "account", "账号与登录") }
         list += Entry("界面与外观", "界面大小、主题与动画效果") { a -> openGroup(a, "ui", "界面与外观") }
         list += Entry("内容与浏览", "菜单、搜索、详情页、评论区与偏好") { a -> openGroup(a, "content", "内容与浏览") }
+        list += Entry("通知设置", "新消息、追番更新等通知栏提醒的开关") { a -> openGroup(a, GROUP_NOTIFY, "通知设置") }
         list += Entry("缓存与下载", "下载引擎、缓存选项与存储路径") { a -> openGroup(a, "download", "缓存与下载") }
         list += Entry("高级与实验", "性能、推荐与实验功能") { a -> openGroup(a, "lab", "高级与实验") }
         list += Entry("关于与帮助", "版本信息、更新、公告与教程") { a -> openGroup(a, "about", "关于与帮助") }
@@ -125,12 +126,18 @@ object SettingsIndex {
             "众生平等", "粉丝铭牌消失术", "昵称不换行显示"
         ))
         addLeafItems(list, "通用偏好", SettingPrefActivity::class.java, listOf(
-            "长按复制", "创作中心", "搜索建议", "默认搜索内容", "识别链接", "隐私模式",
-            "新动态数量检查", "消息数量检查", "新消息通知", "追番更新提醒", "最近更新的UP主", "私信自动已读", "夜深了", "后台自动检查更新",
+            "长按复制", "长按打开操作面板", "创作中心", "搜索建议", "默认搜索内容", "识别链接", "隐私模式",
+            "新动态数量检查", "消息数量检查", "最近更新的UP主", "私信自动已读", "夜深了", "后台自动检查更新",
             "禁用返回键", "禁止视频在相册中显示", "请求JPG格式图片", "翻动时不加载图片",
             "异步加载布局", "新提示信息显示方式", "我的关注列表分组",
             "启用表冠适配", "表冠适配灵敏度（Recycler）", "表冠适配灵敏度（Scroll）"
         ))
+        // 「通知设置」分组的叶子项：全局搜索要能找到这两个开关。
+        // 跳转目标是 SettingGroupActivity（分组页），靠 highlight 按项名滚动定位——
+        // 所以这里的名字必须与 buildNotifyGroup() 里的 SettingSection.name 严格一致。
+        list += Entry("新消息通知", "发现新消息时在通知栏提醒") { a -> openGroup(a, GROUP_NOTIFY, "通知设置", "新消息通知") }
+        list += Entry("追番更新提醒", "追的番剧有新一集时在通知栏提醒") { a -> openGroup(a, GROUP_NOTIFY, "通知设置", "追番更新提醒") }
+
         addLeafItems(list, "内置播放器设置", SettingTerminalPlayerActivity::class.java, listOf(
             "长按倍速", "双击快进快退", "双击优先还原屏幕", "快进快退秒数",
             "后台/熄屏继续播放",

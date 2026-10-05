@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Build
+import android.os.SystemClock
 import android.text.TextUtils
 import android.view.LayoutInflater
 import android.view.View
@@ -13,7 +14,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.ActivityResultLauncher
-import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.RobinNotBad.BiliClient.BiliTerminal
@@ -34,10 +34,12 @@ import com.RobinNotBad.BiliClient.api.VoteApi
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.GlideUtil
 import com.RobinNotBad.BiliClient.util.Logu
+import com.RobinNotBad.BiliClient.util.LongPressPrefs
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.StringUtil
 import com.RobinNotBad.BiliClient.util.TerminalContext
+import com.RobinNotBad.BiliClient.util.TerminalDialog
 import com.RobinNotBad.BiliClient.ui.appearance.ColorScheme
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.DecodeFormat
@@ -54,6 +56,14 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
 
     companion object {
         const val GO_TO_INFO_REQUEST = 71
+
+        /**
+         * 同一次手势内 click/longClick 去重窗口（毫秒）。
+         *
+         * 见 [lastManageAt]：400ms 足够覆盖「长按抬起后补发 click」，
+         * 又明显短于用户有意连点两次的间隔，不会误吞正常操作。
+         */
+        private const val MANAGE_DEDUP_MS = 400L
 
         // 动态点赞去重：记录正在请求中的 dynamicId。
         // 放在 companion 里而不是实例字段，是因为 ViewHolder 会被回收复用，
@@ -80,21 +90,27 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
             adapter.notifyItemRangeChanged(finalPosition + offset, dynamicList.size - finalPosition)
         }
 
+        /**
+         * 列表版「管理」动作（**首选**入口）。
+         *
+         * <p>返回一个普通 lambda 而不是 `View.OnLongClickListener`，是为了让调用方用
+         * [setManageAction] 把它挂给 holder，从而「点击」和「长按」共用同一条路径。
+         * 直接用 `setOnLongClickListener` 覆盖 holder 内部入口的话，点击那条路会指向别处，
+         * 两套行为就会分叉。
+         */
         @JvmStatic
-        fun getManageListener(
+        fun getManageAction(
             activity: BaseActivity, dynamicList: List<Dynamic>,
             finalPosition: Int, adapter: RecyclerView.Adapter<RecyclerView.ViewHolder>
-        ): View.OnLongClickListener {
-            return getManageListener(activity, dynamicList, finalPosition, adapter, false)
-        }
+        ): () -> Unit = getManageAction(activity, dynamicList, finalPosition, adapter, false)
 
         @JvmStatic
-        fun getManageListener(
+        fun getManageAction(
             activity: BaseActivity, dynamicList: List<Dynamic>,
             finalPosition: Int, adapter: RecyclerView.Adapter<RecyclerView.ViewHolder>, showRecentUp: Boolean
-        ): View.OnLongClickListener {
+        ): () -> Unit {
             val offset = if (showRecentUp) 2 else 1
-            return View.OnLongClickListener {
+            return {
                 showManageMenu(
                     activity, dynamicList[finalPosition],
                     onEdited = { newText ->
@@ -107,15 +123,72 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
                     onChanged = { adapter.notifyItemChanged(finalPosition + offset) },
                     onDeleted = { removeDynamicFromList(dynamicList, finalPosition, adapter, showRecentUp) }
                 )
+            }
+        }
+
+        /** 详情页版「管理」动作（**首选**入口），见 [getManageAction] 的说明。 */
+        @JvmStatic
+        fun getManageAction(
+            activity: BaseActivity, dynamic: Dynamic,
+            onEdited: ((String) -> Unit)?, onChanged: (() -> Unit)?
+        ): () -> Unit = {
+            showManageMenu(
+                activity, dynamic, onEdited, onChanged,
+                onDeleted = {
+                    // 详情页沿用「改动完就带着结果退出去」的既有约定
+                    activity.setResult(
+                        Activity.RESULT_OK,
+                        if (activity.intent.extras != null) Intent().putExtras(activity.intent.extras!!)
+                        else Intent()
+                    )
+                    activity.finish()
+                }
+            )
+        }
+
+        @JvmStatic
+        fun getManageAction(activity: BaseActivity, dynamic: Dynamic): () -> Unit =
+            getManageAction(activity, dynamic, null, null)
+
+        @JvmStatic
+        fun getManageAction(
+            activity: BaseActivity, dynamic: Dynamic, onEdited: ((String) -> Unit)?
+        ): () -> Unit = getManageAction(activity, dynamic, onEdited, null)
+
+        /**
+         * 兼容入口：返回 `View.OnLongClickListener`。
+         *
+         * <p>保留是因为 `TopicDynamicAdapter`（不属于本次修改范围）仍在用它。
+         * 新代码请用 [getManageAction] + [setManageAction]，这样点击和长按才同源。
+         */
+        @JvmStatic
+        fun getManageListener(
+            activity: BaseActivity, dynamicList: List<Dynamic>,
+            finalPosition: Int, adapter: RecyclerView.Adapter<RecyclerView.ViewHolder>
+        ): View.OnLongClickListener {
+            return getManageListener(activity, dynamicList, finalPosition, adapter, false)
+        }
+
+        /** 兼容入口，见 [getManageListener] 的说明。 */
+        @JvmStatic
+        fun getManageListener(
+            activity: BaseActivity, dynamicList: List<Dynamic>,
+            finalPosition: Int, adapter: RecyclerView.Adapter<RecyclerView.ViewHolder>, showRecentUp: Boolean
+        ): View.OnLongClickListener {
+            val action = getManageAction(activity, dynamicList, finalPosition, adapter, showRecentUp)
+            return View.OnLongClickListener {
+                action()
                 true
             }
         }
 
+        /** 兼容入口，见 [getManageListener] 的说明。 */
         @JvmStatic
         fun getManageListener(activity: BaseActivity, dynamic: Dynamic): View.OnLongClickListener {
             return getManageListener(activity, dynamic, null)
         }
 
+        /** 兼容入口，见 [getManageListener] 的说明。 */
         @JvmStatic
         fun getManageListener(
             activity: BaseActivity, dynamic: Dynamic, onEdited: ((String) -> Unit)?
@@ -123,32 +196,27 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
             return getManageListener(activity, dynamic, onEdited, null)
         }
 
+        /** 兼容入口，见 [getManageListener] 的说明。 */
         @JvmStatic
         fun getManageListener(
             activity: BaseActivity, dynamic: Dynamic,
             onEdited: ((String) -> Unit)?, onChanged: (() -> Unit)?
         ): View.OnLongClickListener {
+            val action = getManageAction(activity, dynamic, onEdited, onChanged)
             return View.OnLongClickListener {
-                showManageMenu(
-                    activity, dynamic, onEdited, onChanged,
-                    onDeleted = {
-                        // 详情页沿用「改动完就带着结果退出去」的既有约定
-                        activity.setResult(
-                            Activity.RESULT_OK,
-                            if (activity.intent.extras != null) Intent().putExtras(activity.intent.extras!!)
-                            else Intent()
-                        )
-                        activity.finish()
-                    }
-                )
+                action()
                 true
             }
         }
 
         /**
-         * 动态的「管理」菜单，替代原先的「两次长按删除」。
+         * 动态的操作面板（「管理」按钮点击/长按、长按正文，都走这里）。
          *
-         * <p>只在服务端下发的三点菜单允许时才给出对应项：`canEdit` 对应 THREE_POINT_EDIT、
+         * <p>「复制」也是面板里的一项：长按正文不再直接把用户送进复制界面，而是先让他看见
+         * 这一条动态能做哪些事。复制项只受 `copy_enable` 约束，与
+         * `long_press_panel_enable`（决定长按走面板还是走复制）无关。
+         *
+         * <p>其余项只在服务端下发的三点菜单允许时才给出：`canEdit` 对应 THREE_POINT_EDIT、
          * `canDelete` 对应 THREE_POINT_DELETE，两个开关是独立的，不能互相顶替。
          * 「置顶 / 取消置顶」只对自己的动态有意义，而「自己的动态」在客户端能拿到的唯一可靠信号
          * 就是 `canDelete`（别人的动态不会下发 THREE_POINT_DELETE），所以用它当门槛。
@@ -163,6 +231,13 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
             onEdited: ((String) -> Unit)?, onChanged: (() -> Unit)?, onDeleted: () -> Unit
         ) {
             val actions = ArrayList<Pair<String, () -> Unit>>()
+            // 「复制」收进面板：长按正文时用户先看见有哪些操作，而不是被直接送进复制界面。
+            // 受 copy_enable 约束，正文为空时也不列（点了只会看到一个空界面）。
+            // 注意本方法同时服务「管理」按钮和长按正文两个入口，所以复制项只按 copy_enable
+            // 决定——`long_press_panel_enable` 管的是「长按走哪条路」，不是「面板里有什么」。
+            val content = dynamic.content?.toString().orEmpty()
+            if (LongPressPrefs.shouldOfferCopy(StringUtil.isCopyEnabled(), content))
+                actions.add("复制文字" to { StringUtil.openCopyPage(activity, content) })
             if (dynamic.canEdit) actions.add("编辑动态" to { launchEdit(activity, dynamic, onEdited) })
             if (dynamic.canDelete) {
                 actions.add((if (dynamic.isTop) "取消置顶" else "置顶动态") to {
@@ -174,9 +249,13 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
                 MsgUtil.showMsg("没有可操作的项")
                 return
             }
-            AlertDialog.Builder(activity)
-                .setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
-                .show()
+            // 「删除动态」是破坏性操作，用危险色标出来
+            val dangerIndex = actions.indexOfFirst { it.first.startsWith("删除") }
+            TerminalDialog.menu(
+                context = activity,
+                items = actions.map { it.first },
+                danger = if (dangerIndex >= 0) setOf(dangerIndex) else emptySet()
+            ) { which -> actions[which].second() }.show()
         }
 
         private fun launchEdit(activity: BaseActivity, dynamic: Dynamic, onEdited: ((String) -> Unit)?) {
@@ -222,34 +301,34 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
         }
 
         private fun confirmDelete(activity: BaseActivity, dynamic: Dynamic, onDeleted: () -> Unit) {
-            AlertDialog.Builder(activity)
-                .setTitle("删除动态")
-                .setMessage("删除后无法恢复，确定删除这条动态吗？")
-                .setPositiveButton("删除") { _, _ ->
-                    CenterThreadPool.run {
-                        try {
-                            val result = DynamicApi.deleteDynamic(dynamic.dynamicId)
-                            if (result == 0) {
-                                activity.runOnUiThread {
-                                    onDeleted()
-                                    MsgUtil.showMsg("删除成功~")
-                                }
-                            } else {
-                                var msg = "操作失败：" + result
-                                when (result) {
-                                    500404 -> msg = "已经删除过了哦~"
-                                    500406 -> msg = "不是自己的动态！"
-                                }
-                                val finalMsg = msg
-                                activity.runOnUiThread { MsgUtil.showMsg(finalMsg) }
+            TerminalDialog.confirm(
+                context = activity,
+                title = "删除动态",
+                message = "删除后无法恢复，确定删除这条动态吗？",
+                confirmText = "删除"
+            ) {
+                CenterThreadPool.run {
+                    try {
+                        val result = DynamicApi.deleteDynamic(dynamic.dynamicId)
+                        if (result == 0) {
+                            activity.runOnUiThread {
+                                onDeleted()
+                                MsgUtil.showMsg("删除成功~")
                             }
-                        } catch (e: IOException) {
-                            activity.runOnUiThread { MsgUtil.err(e) }
+                        } else {
+                            var msg = "操作失败：" + result
+                            when (result) {
+                                500404 -> msg = "已经删除过了哦~"
+                                500406 -> msg = "不是自己的动态！"
+                            }
+                            val finalMsg = msg
+                            activity.runOnUiThread { MsgUtil.showMsg(finalMsg) }
                         }
+                    } catch (e: IOException) {
+                        activity.runOnUiThread { MsgUtil.err(e) }
                     }
                 }
-                .setNegativeButton("取消", null)
-                .show()
+            }.show()
         }
     }
 
@@ -268,6 +347,27 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
     lateinit var cell_dynamic_child: View
     var relayDynamicLauncher: ActivityResultLauncher<Intent>? = null
     var childDynamicHolder: DynamicHolder? = null
+
+    /**
+     * 「管理」这一条动作的**唯一实现**，由适配器/详情页在绑定时挂上来。
+     *
+     * <p>之所以存成一个回调而不是直接存 `View.OnLongClickListener`：点一下和长按要走到
+     * **完全相同**的一段代码，且必须能被"去重"（见 [lastManageAt]）。如果把
+     * `OnLongClickListener` 存下来、点击时用 `performLongClick()` 转发，长按手势在结束时
+     * 常会再补一次 click，于是会弹出**两个**菜单。这里存成普通 lambda，再用时间戳守卫拦掉
+     * 紧邻的第二次触发。
+     */
+    private var manageAction: (() -> Unit)? = null
+
+    /**
+     * 上一次弹管理菜单的时间戳，用来拦掉同一次手势里的重复触发。
+     *
+     * <p>场景：长按按钮时 Android 会先派发 longClick，手势抬起后部分机型/父容器
+     * 还会再补一个 click；「点一下」和「长按」既然都绑在同一个动作上，就必须保证
+     * 这一对事件只弹一次菜单。[MANAGE_DEDUP_MS] 是同一个手势内两次事件的最大间隔，
+     * 取 400ms：足够覆盖 click 紧随 longClick 的补发，又远小于用户有意连点两次的间隔。
+     */
+    private var lastManageAt = 0L
     private var videoCardHolder: VideoCardHolder? = null
     private var articleCardHolder: ArticleCardHolder? = null
     private var lastAvatarUrl: String? = null
@@ -290,6 +390,36 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
     fun clearImageCache() {
         lastAvatarUrl = null
         lastImageUrl = null
+    }
+
+    /**
+     * 挂上「管理」动作，并保证它的入口只有这一个。
+     *
+     * <p>由适配器/详情页在绑定时调用（替代过去直接 `item_dynamic_delete.setOnLongClickListener`）。
+     * 挂上之后 [itemView] 上的「管理」按钮与动态正文的长按都走这里，**点击与长按同一条路径**。
+     */
+    fun setManageAction(action: (() -> Unit)?) {
+        manageAction = action
+        // 复用时旧的时间戳要清掉，否则连续复用同一个 holder 绑定两条动态时，
+        // 第二条动态的第一次点击可能被上一条留下的时间戳误判成重复触发而吞掉。
+        lastManageAt = 0L
+    }
+
+    /**
+     * 触发管理菜单（点击 / 长按共用入口）。
+     *
+     * <p>带手势去重：同一次长按手势里 longClick 与随后的 click 只会真正执行一次。
+     * 有意连点两次（间隔 > [MANAGE_DEDUP_MS]）不受影响。
+     *
+     * @return 是否真的执行了（供 OnLongClickListener 判断要不要消费事件）
+     */
+    fun showManage(): Boolean {
+        val action = manageAction ?: return false
+        val now = SystemClock.uptimeMillis()
+        if (now - lastManageAt < MANAGE_DEDUP_MS) return true
+        lastManageAt = now
+        action()
+        return true
     }
 
     init {
@@ -560,7 +690,15 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
         if (dynamic.content != null && !TextUtils.isEmpty(dynamic.content)) {
             content.visibility = View.VISIBLE
             content.text = dynamic.content
-            StringUtil.setCopy(content)
+            // 长按正文：开关打开时弹操作面板，「复制」就在面板里（见 [showManageMenu]）；
+            // 开关关闭时才退回旧行为——直接打开复制界面。
+            // 之前是「可管理就 showManage、不可管理交给 setCopy」，同一个手势两种结果，
+            // 用户在自己动态上长按时根本猜不到会发生哪一件。
+            if (LongPressPrefs.isEnabled()) {
+                content.setOnLongClickListener { showManage() }
+            } else {
+                StringUtil.setCopy(content)
+            }
             content.setOnTouchListener(StringUtil.ClickableSpanTouchListener.getInstance())
         } else
             content.visibility = View.GONE
@@ -736,13 +874,14 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
         if (item_dynamic_share != null && clickable)
             item_dynamic_share!!.setOnClickListener(onRelayClick)
 
-        // 「管理」入口：点一下或长按都弹同一个菜单。
-        // 菜单要的回调（怎么刷新列表、怎么退出页面）只有适配器/详情页知道，
-        // 它们通过 setOnLongClickListener 把监听器挂上来；这里只把点击转给同一个监听器，
-        // 不另维护一份回调，免得点一下和长按弹出两套行为。
+        // 「管理」入口：点一下或长按都弹同一个菜单，最终都进 [showManage]。
+        // 动作本身由适配器/详情页通过 [setManageAction] 挂上来——菜单要的回调
+        // （怎么刷新列表、怎么退出页面）只有它们知道。这里不另存一份 OnLongClickListener，
+        // 免得点一下和长按弹出两套行为；[showManage] 内部会拦掉同一次手势的重复触发。
         if (item_dynamic_delete != null) {
             item_dynamic_delete!!.visibility = View.GONE
-            item_dynamic_delete!!.setOnClickListener { item_dynamic_delete!!.performLongClick() }
+            item_dynamic_delete!!.setOnClickListener { showManage() }
+            item_dynamic_delete!!.setOnLongClickListener { showManage() }
         }
 
         if (likeCount != null) {

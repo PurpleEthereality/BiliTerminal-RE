@@ -133,6 +133,7 @@
     <string name="desc_creative_enable">打开此选项，在“我的”页面会显示创作中心（可查看投稿视频的数据变化情况）</string>
     <string name="desc_ban_gallery">打开此选项，缓存的视频将不会出现在系统相册中</string>
     <string name="desc_copy_enable">打开此选项，长按一些文字（如视频描述或评论）可以打开复制界面以复制这些文本</string>
+    <string name="desc_long_press_panel_enable">打开此选项，长按评论或动态的正文会弹出操作面板，复制和置顶/删除等都在面板里；关闭则长按直接打开复制界面</string>
     <string name="tutorial_cover_play_enabled">从现版本开始，默认状态下，点击封面将会播放视频，长按封面查看大图。\n播放按钮仍可使用，长按播放按钮可切换播放器。\n\n如果不习惯，你可以在 设置-详情页设置 中关闭“点击封面播放”的开关，换回老版本里点击封面查看大图的操作逻辑。</string>
     <string name="tutorial_cover_play_disabled">提示：如果你想要点击封面播放视频，请在 设置-详情页设置 中打开“点击封面播放”的开关。\n\n现版本对于新用户已将此开关默认开启，老用户仍保持原来的偏好设定。</string>
     <string name="desc_img_no_load_onscroll">打开此选项，翻动列表时将不会加载图片，松手后再加载，观感可能有影响，可能增加流畅度。</string>

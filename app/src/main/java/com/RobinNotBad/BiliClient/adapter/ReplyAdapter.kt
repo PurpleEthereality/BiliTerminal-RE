@@ -16,7 +16,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.annotation.NonNull
-import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
@@ -37,9 +36,11 @@ import com.RobinNotBad.BiliClient.model.Reply
 import com.RobinNotBad.BiliClient.model.UserInfo
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.GlideUtil
+import com.RobinNotBad.BiliClient.util.LongPressPrefs
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.RobinNotBad.BiliClient.util.StringUtil
+import com.RobinNotBad.BiliClient.util.TerminalDialog
 import com.RobinNotBad.BiliClient.ui.widget.RadiusBackgroundSpan
 import com.RobinNotBad.BiliClient.ui.appearance.ColorScheme
 import com.RobinNotBad.BiliClient.listener.OnItemClickListener
@@ -231,7 +232,18 @@ class ReplyAdapter(
             }
 
             replyHolder.message.text = reply.message
-            StringUtil.setCopy(replyHolder.message)
+            // 长按正文：开关打开时弹「操作面板」，「复制」就在面板里（见 [showManageMenu]），
+            // 长按不再直接把用户丢进复制界面；开关关闭时才退回旧行为。
+            // 之前这里是「可管理才挂监听、不可管理交给 setCopy」——两条路各弹各的，
+            // 所以在自己的评论上长按，用户分不清到底会复制还是弹菜单。
+            if (LongPressPrefs.isEnabled()) {
+                replyHolder.message.setOnLongClickListener {
+                    showManageMenu(reply)
+                    true
+                }
+            } else {
+                StringUtil.setCopy(replyHolder.message)
+            }
             replyHolder.message.setOnTouchListener(StringUtil.ClickableSpanTouchListener.getInstance())
 
             replyHolder.likeCount.text = StringUtil.toWan(reply.likeCount.toLong())
@@ -466,9 +478,10 @@ class ReplyAdapter(
                 }
             }
 
-            if (isManager || reply.sender!!.mid == SharedPreferencesUtil.getLong("mid", 0)) {
+            if (canManage(reply)) {
                 replyHolder.item_reply_delete.visibility = View.VISIBLE
-                replyHolder.item_reply_delete.setOnClickListener { MsgUtil.showMsg("长按操作") }
+                // 点一下、长按，都弹同一个操作菜单（弹窗在 300x300 表盘上也能点得到）。
+                replyHolder.item_reply_delete.setOnClickListener { showManageMenu(reply) }
                 replyHolder.item_reply_delete.setOnLongClickListener {
                     showManageMenu(reply)
                     true
@@ -495,10 +508,21 @@ class ReplyAdapter(
     }
 
     /**
-     * 评论管理菜单（长按最后一列的操作按钮弹出）。
+     * 这条评论当前用户能不能操作（置顶 / 删除）。
      *
-     * <p>取代原来「连点两次长按才删除」的交互：删除、置顶、取消置顶都收进一个弹窗，
-     * 用户看得见每条操作是干什么的，也不必再记「再长按一次」。
+     * <p>评论区的管理员（视频 UP 主 / 合作稿 staff）能管所有评论；普通用户只能管自己发的。
+     * 集中成一个判断，是因为「操作按钮要不要显示」和「长按正文弹不弹菜单」必须用同一套标准，
+     * 否则会出现「按钮看得见但长按没反应」这种自相矛盾的状态。
+     */
+    private fun canManage(reply: Reply): Boolean {
+        return isManager || reply.sender?.mid == SharedPreferencesUtil.getLong(SharedPreferencesUtil.mid, 0)
+    }
+
+    /**
+     * 评论操作面板（长按正文、点击/长按末列操作按钮，都走这里）。
+     *
+     * <p>「复制」从「注册一个长按监听」改成面板里的一项：长按正文时用户先看到有哪些操作，
+     * 而不是被直接送进复制界面——那正是「和长按复制冲突」的观感来源。
      *
      * <p>置顶项只在 [isManager] 为 true（视频 UP 主 / 合作稿 staff）时出现。
      * 服务端对置顶的硬性要求是「本评论区的一级评论」（错误码 12030）且一个区只有一个
@@ -507,16 +531,31 @@ class ReplyAdapter(
      */
     private fun showManageMenu(reply: Reply) {
         val actions = ArrayList<Pair<String, () -> Unit>>()
+        // 复制项受 copy_enable 约束，正文为空时也不列（点了只会看到一个空界面）。
+        // reply.message 在 Java 侧是 CharSequence，复制界面只收 String，这里统一转一次。
+        val content = reply.message?.toString().orEmpty()
+        if (LongPressPrefs.shouldOfferCopy(StringUtil.isCopyEnabled(), content))
+            actions.add("复制文字" to { StringUtil.openCopyPage(context, content) })
         if (isManager) {
             actions.add((if (reply.isTop) "取消置顶" else "置顶评论") to
                     { setReplyTop(reply, !reply.isTop) })
         }
-        actions.add("删除评论" to { confirmDeleteReply(reply) })
-        AlertDialog.Builder(context)
-            .setItems(actions.map { it.first }.toTypedArray()) { _, which ->
-                actions[which].second()
-            }
-            .show()
+        // 「删除评论」的门槛必须在这里再判一次：本方法原来只被管理按钮调用（按钮本身就
+        // 只在 canManage 时可见），现在别人的评论长按也会进来，漏判就会给出一个必然失败的删除项。
+        if (canManage(reply)) actions.add("删除评论" to { confirmDeleteReply(reply) })
+
+        if (actions.isEmpty()) {
+            MsgUtil.showMsg("没有可操作的项")
+            return
+        }
+
+        // 「删除评论」是破坏性操作，用危险色标出来（原实现里它和「置顶评论」同色）
+        val dangerIndex = actions.indexOfFirst { it.first.startsWith("删除") }
+        TerminalDialog.menu(
+            context = context,
+            items = actions.map { it.first },
+            danger = if (dangerIndex >= 0) setOf(dangerIndex) else emptySet()
+        ) { which -> actions[which].second() }.show()
     }
 
     /**
@@ -549,12 +588,13 @@ class ReplyAdapter(
     }
 
     private fun confirmDeleteReply(reply: Reply) {
-        AlertDialog.Builder(context)
-                .setTitle("删除评论")
-                .setMessage("删除后无法恢复，确定删除这条评论吗？")
-                .setPositiveButton("删除") { _, _ -> deleteReply(reply) }
-                .setNegativeButton("取消", null)
-                .show()
+        TerminalDialog.confirm(
+            context = context,
+            title = "删除评论",
+            message = "删除后无法恢复，确定删除这条评论吗？",
+            confirmText = "删除",
+            onConfirm = { deleteReply(reply) }
+        ).show()
     }
 
     private fun deleteReply(reply: Reply) {

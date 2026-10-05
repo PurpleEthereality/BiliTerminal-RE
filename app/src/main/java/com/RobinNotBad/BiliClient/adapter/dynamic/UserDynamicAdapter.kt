@@ -88,11 +88,14 @@ class UserDynamicAdapter(
                 dynamicHolder.cell_dynamic_child.visibility = View.GONE
             }
 
-            val onManageClick = DynamicHolder.getManageListener(
-                context as BaseActivity,
-                dynamicList, realPosition, this
+            // 用 setManageAction 注入动作而非覆盖 setOnLongClickListener，
+            // 否则「点击」那条路仍指向 DynamicHolder 内部，会出现两套行为。
+            dynamicHolder.setManageAction(
+                DynamicHolder.getManageAction(
+                    context as BaseActivity,
+                    dynamicList, realPosition, this
+                )
             )
-            dynamicHolder.item_dynamic_delete!!.setOnLongClickListener(onManageClick)
             if (dynamic.canDelete || dynamic.canEdit)
                 dynamicHolder.item_dynamic_delete!!.visibility = View.VISIBLE
         }

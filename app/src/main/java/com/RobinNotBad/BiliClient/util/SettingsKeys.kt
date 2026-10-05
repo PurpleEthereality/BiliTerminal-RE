@@ -41,6 +41,12 @@ object SettingsKeys {
 
     // ==================== 偏好设置 ====================
     const val COPY_ENABLE = "copy_enable"
+    /**
+     * 长按评论/动态正文时弹「操作面板」而不是直接进复制界面。
+     *
+     * 默认值与判据见 `util/LongPressPrefs`，不要在别处写死字面量。
+     */
+    const val LONG_PRESS_PANEL_ENABLE = "long_press_panel_enable"
     const val CREATIVE_ENABLE = "creative_enable"
     const val SEARCH_SUGGESTIONS_ENABLE = "search_suggestions_enable"
     const val BACK_DISABLE = "back_disable"
