@@ -1,11 +1,11 @@
 # ReBiliClient 修复进度报告
 
-> 更新日期：2026-10-05（含批次 8）
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八/§二十九/§三十/§三十一/§三十二/§三十三/§三十四/§三十五/§三十六/§三十七
+> 更新日期：2026-10-05（含批次 8 + 线上崩溃修复）
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八/§二十九/§三十/§三十一/§三十二/§三十三/§三十四/§三十五/§三十六/§三十七/§三十八
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
-> 真机回归：本文各节「真机验证清单」已按操作顺序合并成 `docs/review/real-device-regression-checklist.md`（209 条，发版前逐条勾；批次 8 的两条口头需求见该文件第十章第 207-209 条）
+> 真机回归：本文各节「真机验证清单」已按操作顺序合并成 `docs/review/real-device-regression-checklist.md`（211 条，发版前逐条勾；批次 8 的两条口头需求见该文件第十章第 207-209 条，线上崩溃回归见第十一章第 210-211 条）
 >
-> ⚠️ **章节编号有两处历史重号**：`## 二十二` 与 `## 二十九` 各出现两次（不同轮次独立编号所致），`## 30.` 为另一轮次遗留的阿拉伯数字写法。**为避免打断既有交叉引用（§二十二/§二十九/§30.x 被多处正文引用），已保持原编号不动**；本轮新增章节统一编号为 **§三十三～§三十七**。索引见 §三十六.2。
+> ⚠️ **章节编号有两处历史重号**：`## 二十二` 与 `## 二十九` 各出现两次（不同轮次独立编号所致），`## 30.` 为另一轮次遗留的阿拉伯数字写法。**为避免打断既有交叉引用（§二十二/§二十九/§30.x 被多处正文引用），已保持原编号不动**；本轮新增章节统一编号为 **§三十三～§三十八**。索引见 §三十六.2。
 
 ---
 
@@ -4067,3 +4067,140 @@ tests = 400    failures = 0    errors = 0    skipped = 0
 - `activity/video/`、`model/Reply.java` 的排序函数、`api/` 下任何接口：未动（批次 7 已冻结）。
 - `res/layout/activity_simple_refresh.xml`：**本批次未改**——滚动收回用的是既有的条，
   没动布局、没加 view、没改 id（`filterBar` 的 `clearWatched` 是批次 7 / w2 加的）。
+
+---
+
+## 三十八、26.10.05 线上 release 崩溃：动态详情页 NPE（用户提供混淆栈）
+
+用户粘贴了一份 release 包的 `java.lang.NullPointerException` 栈（无文字说明，**没有告知触发页面和操作**）。
+本节记录从这份栈反推出根因、修复与验证的完整过程。
+
+### 38.1 怎么把混淆栈还原成人话
+
+1. 栈里只有 `SourceFile:323` 这类合成行号，先确认 release 的 mapping 还在：
+   `app/build/outputs/mapping/release/mapping.txt`（用户自己打的包，时间戳 2026-10-05 14:49）。
+   `docs/review/` 以外的 `app/build/` 不进版本库，**换台机器或跑过 `clean` 就没有了**，所以这类栈要趁 mapping 还在时先反混淆。
+2. 用 SDK 自带的 retrace：
+
+```bash
+java -jar "D:\Program Files\android-sdk\tools\proguard\lib\retrace.jar" -verbose \
+     "app/build/outputs/mapping/release/mapping.txt" "D:\tmp\crash.txt"
+```
+
+   ProGuard 的 retrace 能读 R8 写进 mapping 的 `# {"id":"sourceFile"}` 与 `residualsignature` 注释，**不需要额外装 R8 retrace**。
+
+3. 还原结果（关键三帧）：
+
+```
+java.lang.NullPointerException
+ at com.RobinNotBad.BiliClient.activity.dynamic.DynamicInfoActivity$$ExternalSyntheticLambda1
+    .void DynamicInfoActivity.onCreate$lambda$3$lambda$1(long, DynamicInfoActivity, Dynamic)(SourceFile:323)
+ at com.RobinNotBad.BiliClient.util.Result.onSuccess(androidx.core.util.Consumer)
+ at com.RobinNotBad.BiliClient.activity.dynamic.DynamicInfoActivity$$ExternalSyntheticLambda0
+    .kotlin.Unit DynamicInfoActivity.onCreate$lambda$3(long, …, Result)(SourceFile:194)
+ at com.RobinNotBad.BiliClient.activity.article.OpusInfoActivity$sam$androidx_lifecycle_Observer$0
+    .void DynamicInfoActivity$sam$androidx_lifecycle_Observer$0.onChanged(java.lang.Object)
+ at androidx.lifecycle.LiveData.considerNotify …
+ at androidx.lifecycle.ReportFragment$LifecycleCallbacks.onActivityPostStarted
+```
+
+   ⇒ 崩在 **`DynamicInfoActivity.onCreate` 里 `getDynamicById(id).observe{}` → `onSuccess { dynamic -> … }` 这个 lambda 体内**，
+   由 Activity 走到 `STARTED` 时 LiveData 派发触发。
+
+> **⚠️ R8 合并类的陷阱（本次差点看走眼）**：mapping 里 `E0.j` / `C0.c` 这类名字**不是一对一**的。
+> `E0.j`「表头」写的是 `DynamicInfoActivity$$ExternalSyntheticLambda1`，但它同时还有
+> `(CollectionInfoActivity, long)` 的构造来源；`C0.c` 更夸张，`OpusInfoActivity$sam$…Observer$0` 底下合并了
+> `VideoRcmdFragment` / `VideoInfoFragment` / `VideoInfoActivity` / `BangumiInfoFragment` 等一串同类 SAM 包装。
+> **单看表头类名定归属会错**，必须结合 `residualsignature` 注释和实际方法签名（本例是靠签名里的
+> `(long, DynamicInfoActivity, Dynamic)` 才锁定）。另一条更快、更不容易错的路径是
+> `Result.java` 的 `t1.z`：它的映射行号 `42:42 / 43:43 / 45:45` 直接把人引到 `Result.onSuccess`，
+> 而 `onSuccess` 自己已经判空（`if (isSuccess()) { T value = getOrNull(); if (value != null) accept(value); }`），
+> 所以 **NPE 只可能在消费者 lambda 体内**，不在 `Result` 里。
+
+### 38.2 根因
+
+`DynamicInfoActivity` 这个 `onSuccess` lambda 里，**能被解引用成 null 的只有两处**：`dynamic.stats.reply` 与
+`dynamic.userInfo.mid`（另一处 `diFragment.view!!` 见 38.5 次要防御）。
+
+`userInfo` 可以先排除：
+
+- `app/src/main/java/com/RobinNotBad/BiliClient/api/DynamicApi.java:808` 是 `dynamic.userInfo = userInfo;`，
+  **无条件执行，且位于唯一的提前 return 之前** ⇒ 正常解析路径上 `userInfo` 恒非 null。
+
+`stats` 则是**确证可空**：
+
+- `app/src/main/java/com/RobinNotBad/BiliClient/api/DynamicApi.java:810-813`：
+
+```java
+if (dynamic.type.equals("DYNAMIC_TYPE_NONE")) {
+    dynamic.content = "[动态不存在]";
+    return dynamic;          // ← 在这里就返回了
+}
+```
+
+- 而 `dynamic.stats` 的赋值在 **`:950-962`**，即 `if (modules.has("module_stat") && !modules.isNull("module_stat"))` 分支内。
+  ⇒ **动态类型是 `DYNAMIC_TYPE_NONE`（动态已被删除 / 被屏蔽）时，永远不会走到 `stats` 赋值**；另外部分动态类型本身就没有 `module_stat`。
+- **工程内既有两个地方都防了这一点，只有详情页漏了**：
+  - `app/src/main/java/com/RobinNotBad/BiliClient/adapter/dynamic/DynamicHolder.kt:888` —— 渲染卡片时 `if (dynamic.stats != null)`；
+  - `app/src/main/java/com/RobinNotBad/BiliClient/activity/article/OpusInfoActivity.kt:58-60` —— 注释原文就是
+    `// 防御：抓取/解析失败时 opus.stats / opus.upInfo 可能为 null，避免 NPE 崩溃` + `if (opus.stats == null) opus.stats = Stats()`。
+
+**结论：`DynamicInfoActivity.kt` 用 `dynamic.stats.reply` 违反了工程既有的「`stats` 可空，用前判空」契约。**
+这条崩在「旧版动态（`Opus.TYPE_DYNAMIC_OLD_STYLE`）详情页」上：`OpusInfoActivity.kt:48-56` 判断是旧版动态后会
+`startActivity(Intent(this, DynamicInfoActivity::class.java))` 再 `finish()`，所以正常操作也能走到这个页面。
+
+### 38.3 改动（3 个文件）
+
+| 文件 | 改动 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/model/Dynamic.java` | 新增 `public void ensureDetailFields()`：`stats == null` 时补 `new Stats()`，`userInfo == null` 时补 `new UserInfo()`；**已有值不覆盖**，可重复调用；KDoc 记了这次崩溃的来龙去脉 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/dynamic/DynamicInfoActivity.kt` | `onSuccess` lambda 开头调 `dynamic.ensureDetailFields()`；把 `diFragment.view!!.post { … diFragment.view!!.findViewById … }` 改成 `view?.let { diView -> diView.post { … diView.findViewById<View>(…) ?: return@post … } }` |
+| `app/src/test/java/com/RobinNotBad/BiliClient/model/DynamicEnsureDetailFieldsTest.kt` | **新增**，6 例（见 38.4） |
+
+为什么把判据抽到 `model/Dynamic` 而不是像 `OpusInfoActivity` 那样内联两行 `if (x == null)`：
+详情页的这条路径在 JVM 单测里**跑不到**（`analyzeDynamic` 会先撞 `android.text.TextUtils`，而本工程
+`app/build.gradle` 没开 `returnDefaultValues`，桩方法直接抛 `Method … not mocked`）。抽成 POJO 上的纯方法之后，
+崩溃现场就是可断言的：`Dynamic()` 手工置 `stats = null` 正是线上那份数据形态。
+
+### 38.4 验证
+
+- `.\gradlew.bat :app:assembleDebug --offline --no-build-cache --no-configuration-cache` → **BUILD SUCCESSFUL**（30s）。
+- `.\gradlew.bat :app:assembleRelease --offline --no-build-cache --no-configuration-cache` → **BUILD SUCCESSFUL**（33s，含 `minifyReleaseWithR8`）。
+  **崩的是 release 包，所以 release 链路必须单独验一次**，不能只跑 debug。
+- `.\gradlew.bat :app:testDebugUnitTest`（同参数）→ **46 个测试类 / 423 例 / 0 失败 / 0 错误 / 0 跳过**
+  （上一轮 45 类 / 417 例，本次 **+1 类 / +6 例**，既有用例一条未减）。
+- 新增 6 例：`stats 为 null 时补成空对象`（并断言 `reply`/`like` 可读为 0，即崩溃现场那三个值）、
+  `userInfo 为 null 时补成空对象`、`已有的 stats 不会被覆盖`（`assertSame` + 计数原样保留）、
+  `已有的 userInfo 不会被覆盖`、`重复调用是幂等的`、`两个字段同时为 null 时一次补全`。
+
+### 38.5 诚实边界（重要）
+
+- **没有在真机上复现过这次崩溃**。用户只给了栈、没给触发场景，团队也没有设备。上面的根因是
+  **「反混淆精确到 lambda + 源码遍历该 lambda 的每一个解引用」**得出的，属于静态确证，不是运行时确证。
+- **R8 会把小方法内联进调用方**，所以严格说这一帧里也可能包含被内联进来的代码。我按「该 lambda **自己写的**解引用」
+  排查，找出 `stats` 这一处确定可空；`diFragment.view!!` 作为次要防御一并去掉，但没有把它当成主因写。
+- 如果打上补丁后**同一个栈还在**，那说明真凶是被内联进来的别处，需要新 mapping 重新 retrace —— 那时请把
+  **触发页面 + 操作步骤**一起发过来（这次没有）。
+- 次要防御的取舍：`diFragment.view` 在 `viewPager.adapter = vpfAdapter` 之后由
+  `FragmentPagerAdapter` 的 `commitNow` 同步创建，**正常情况下取得到**；改掉 `!!` 是因为同一段代码上面
+  （第 63-64 行）作者自己已经写了 `if (view != null)`，前后不一致才是问题。取不到时只是静默跳过「滚动到
+  指定评论」的聚焦动作，不会崩、也不会影响别的功能。
+
+### 38.6 真机验证步骤
+
+1. 触发原场景：在动态里遇到一条**已被删除 / 被屏蔽**的动态（`DYNAMIC_TYPE_NONE`），从
+   **动态 → 旧版动态详情页**进入（即 `OpusInfoActivity` 判定为 `TYPE_DYNAMIC_OLD_STYLE` 后跳的那个页面）。
+2. 期望：页面正常打开，显示「[动态不存在]」，**不崩溃**；`logcat` 无 `NullPointerException`。
+3. 顺带回归正常动态详情页：随便点一条普通动态进详情，评论区能正常加载（确认补默认值没有把真实统计信息吃掉）。
+4. 若仍有同一栈：连同**触发页面与操作步骤**、以及新产生的 `app/build/outputs/mapping/release/mapping.txt` 一起反馈。
+
+### 38.7 本次明确没有碰的东西
+
+- `api/DynamicApi.java` **一行未改**：它有 `analyzeDynamic` 对 `DYNAMIC_TYPE_NONE` 提前 return 的行为，
+  但**没有**在 API 层给 `stats` 补默认值 —— 因为 `DynamicHolder.kt:888` 是**依赖 `stats == null` 来隐藏点赞区的**，
+  在 API 层统一补上空 `Stats` 会让这类动态的点赞按钮变成可点的「0」，属于改变渲染行为。**这是刻意的**：
+  契约保持「`stats` 可空，用者判空」，只在真正需要的消费点补。
+- `adapter/dynamic/DynamicHolder.kt`、`activity/article/OpusInfoActivity.kt`：本来就有防御，**未动**。
+- `model/Stats.java` / `model/UserInfo.java`：未加任何字段或构造器（用的就是既有的默认构造）。
+- `util/Result.java`、`util/TerminalContext.kt` 的 LiveData 链路：未动。
+- `AndroidManifest.xml`：未动（未新增 Activity）。
