@@ -3,6 +3,10 @@ name: 构建发行版并创建 Release
 # 触发方式：
 # 1) 手工触发（workflow_dispatch）：填 tag 就会建 Release 并上传 APK；不填则只构建并上传 artifact。
 # 2) 推送 tag 自动触发：用该 tag 创建 Release 并上传 APK。
+#
+# 两种方式产出的 Release 说明都含**完整更新日志**：手工触发用输入的 release_body，
+# 推 tag（inputs.* 恒空）则由 .github/scripts/extract_update_log.py 从 strings.xml 的
+# update_log_current 自动抽取；抽不到就发版失败。详见 AGENTS.md 与发版技能 §4。
 on:
   workflow_dispatch:
     inputs:
@@ -196,11 +200,27 @@ jobs:
           # 否则收尾的 ``` 会粘到最后一行校验值后面。
           md5_section=$(printf '### APK 校验值（MD5）\n\n```\n%s\n```\n' "$MD5_SUMS")
 
-          if [ -n "$INPUT_BODY" ]; then
-            final_body=$(printf '%s\n\n%s' "$INPUT_BODY" "$md5_section")
-          else
-            final_body="$md5_section"
+          # ---- 本次更新说明 ----
+          # 手工触发时用输入的 release_body；**推 tag 时 inputs.* 恒为空**，改为从
+          # strings.xml 的 update_log_current 自动抽（`.github/scripts/extract_update_log.py`）。
+          # 两条路都必须给出完整更新日志：只留 MD5 表 + 机器元数据不算合格的发布说明，
+          # 拿 GitHub 自动生成的 commits 摘要顶替也不算（见 AGENTS.md 与发版技能 §4 的硬要求）。
+          # 抽不到就**直接失败**——宁可让发版红掉，也不要发出一个没有更新说明的 Release。
+          log_body="$INPUT_BODY"
+          if [ -z "$log_body" ]; then
+            # 用 `if !` 包住，避免 `set -e` 在命令替换失败时直接中断、来不及打印原因
+            if ! log_body=$(python3 .github/scripts/extract_update_log.py app/src/main/res/values/strings.xml); then
+              echo "::error::推 tag 时自动抽取更新日志失败（见上面的 ::error::），拒绝发出没有更新说明的 Release"
+              exit 1
+            fi
+            if [ -z "$log_body" ]; then
+              echo "::error::strings.xml 的 update_log_current 抽出来是空的，拒绝发出没有更新说明的 Release"
+              exit 1
+            fi
+            echo "已从 strings.xml 自动抽取本次更新日志：$(printf '%s\n' "$log_body" | wc -l) 条"
           fi
+
+          final_body=$(printf '%s\n\n%s' "$log_body" "$md5_section")
 
           # ---- 机器可读元数据 ----
           # App 的更新检查（UpdateManager）从 Release 说明里读这一段拿 versionCode / versionName /
@@ -229,9 +249,9 @@ jobs:
 
           # 单独给出 has_body 供下游判断，不再用 "inputs.release_body == ''" 表达分支
           # —— push 事件下 inputs.* 恒为空，那种写法只是碰巧算出期望结果。
-          # 这里 has_body 现在表示"body 是否由用户提供"，用于决定要不要让 GitHub 自动补 commits 摘要；
-          # 自动补时 GitHub 会把我们给的 body 前置到自动生成的说明前面。
-          if [ -n "$INPUT_BODY" ]; then
+          # 现在 log_body 要么来自输入、要么来自 strings.xml，所以实际上恒为 true：
+          # GitHub 不再自动补 commits 摘要，发布说明就是完整的更新日志 + MD5 表 + 元数据。
+          if [ -n "$log_body" ]; then
             echo "has_body=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_body=false" >> "$GITHUB_OUTPUT"
@@ -313,9 +333,10 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.name }}
-          # 版本说明支持 Markdown：提供了 release_body 则按内容渲染（GitHub 默认 Markdown）；
-          # 未提供时用 generate_release_notes 自动生成 commits 摘要（同样是 Markdown）。
-          # 末尾附带的 `<!-- update: ... -->` 是给客户端更新检查读的机器可读元数据。
+          # 版本说明支持 Markdown：release_body 或从 strings.xml 抽出的更新日志在前，
+          # MD5 校验值表在后，末尾附 `<!-- update: ... -->` 机器可读元数据（给客户端更新检查读）。
+          # has_body 现在实际恒为 true，所以不再让 GitHub 自动补 commits 摘要——
+          # 发布说明以「完整更新日志」为准，commits 摘要不是替代品。
           body: ${{ steps.tag.outputs.body }}
           generate_release_notes: ${{ steps.tag.outputs.has_body != 'true' }}
           files: |

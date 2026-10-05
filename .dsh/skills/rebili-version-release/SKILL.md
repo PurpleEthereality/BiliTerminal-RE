@@ -58,12 +58,36 @@ description: >-
 - `app/build.gradle` 里 `copyApkToDesktop`（含 `adb install`）已注释，**不会**随 assembleRelease 自动复制/安装；需要时单独跑 `./gradlew.bat copyApkToDesktop`。
 
 ### 4. 发版（GitHub Release + 通知中转同步 Gitee）
+
+> **⚠️ 硬要求：Release 说明里必须有完整的本次更新说明，不许省略。**
+> 发布说明要包含 `strings.xml` 中 `update_log_current` 的**全部条目**（去掉 `<item>` 标签，
+> 保留「【YY.MM.DD 本次更新】」标题与编号）。**只留 `### APK 校验值（MD5）` 与
+> `<!-- update: … -->` 机器元数据不算合格**；拿 GitHub 自动生成的「Full Changelog」commits
+> 摘要顶替也不算——用户点进 Release 是要看这版改了什么。
+>
+> **成因**：`push` tag 这条路径下 `inputs.*` 恒为空，`release_body` 是空的。
+> （26.10.05 就是这么漏掉的。）
+>
+> **已由工作流保证（26.10.05 后）**：`build-release.yml` 的「计算发行 tag 与发布说明」步骤里，
+> 手工触发用输入的 `release_body`；**推 tag 时由 `.github/scripts/extract_update_log.py`
+> 自动从 `update_log_current` 抽取**（每行一条、反转义 XML 实体、跳过空条目，并强制 UTF-8 输出）。
+> 抽不到任何条目就打印 `::error::` 并以退出码 1 结束——**宁可让发版红掉，也不发出没有更新说明的
+> Release**。抽到时 `has_body=true`，GitHub 不再自动补 commits 摘要。
+>
+> ⚠️ **别把这段逻辑改回「body 只取 `inputs.release_body`」**：那样推 tag 又会退化成只有 MD5 表。
+> 手工触发想覆盖文案时，填 `release_body` 即可（它优先于自动抽取）。
+>
+> 无论走哪条路，发布完都要回读 Release 正文确认（见 §5）。
+
 **优先走 CI**：推一个 tag（或手工触发 `构建发行版并创建 Release` 工作流并填 tag）即可，
 工作流会依次完成：
 
 1. 跑单测 → `:app:assembleRelease` → 生成各 APK 的 MD5；
-2. 从 `app/build.gradle` 读出 `versionCode`/`versionName`，连同「是否强制更新」一起写进
-   Release 说明末尾的机器可读元数据 `<!-- update: versionCode=… versionName=… forceUpdate=… -->`
+2. 组装 **Release 说明正文**：更新日志在前（手工触发取 `release_body`，推 tag 由
+   `.github/scripts/extract_update_log.py` 从 `strings.xml` 的 `update_log_current` 自动抽，
+   见上方硬要求），接着是 MD5 表，末尾是从 `app/build.gradle` 读出的
+   `versionCode`/`versionName` 与「是否强制更新」构成的机器可读元数据
+   `<!-- update: versionCode=… versionName=… forceUpdate=… -->`
    （手工触发时用 `force_update` 输入控制，默认 `false`）——**客户端更新检查就靠这段**；
 3. 生成 `release-links.txt`（Gitee 与 GitHub 两侧直链）与（按需）老客户端用的 `config.json`，
    随 APK 一起上传到 **GitHub Release**；
@@ -85,7 +109,8 @@ description: >-
 ### 5. 校验
 - strings.xml 保持 XML 合法（本次只改数组文本）。
 - 版本号改过就必须让 `:app:verifyVersionConsistency` 通过（校验 build.gradle 与 strings.xml 更新日志锚点）。
-- 向用户汇报：改了哪些文件、发行 APK 的路径/大小、CI 里 Gitee 同步是否成功、`release-links.txt` 里的直链。
+- **Release 建好后必须回读它的说明正文**（`https://api.github.com/repos/zisekongling/BiliTerminal-RE/releases/latest` 的 `body`），确认 `update_log_current` 的全部条目都在里面。若正文只有 `### APK 校验值（MD5）` + `<!-- update: … -->` + `**Full Changelog**`，就是省略了更新说明 —— 见 §4 的硬要求，必须补上。**别只看 `conclusion=success` 就收工**：工作流全绿也不代表说明写了。
+- 向用户汇报：改了哪些文件、发行 APK 的路径/大小、**Release 说明是否含完整更新日志**、CI 里 Gitee 同步是否成功、`release-links.txt` 里的直链。
 
 ## 约定与坑
 - 一律**中文**文案与注释；遗留页文案硬编码、不改 `strings.xml`（设置页为字符串驱动例外，用 `desc_*`）。
