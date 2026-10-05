@@ -51,6 +51,9 @@ object TerminalDialog {
     /** 选中项的引导符。与未选中项区分，让「当前选的是哪个」一眼可见。 */
     const val GLYPH_ACTIVE = "▸"
 
+    /** 单选型右侧的选中标记。与左侧引导符构成双重指示。 */
+    const val GLYPH_CHECK = "✓"
+
     /**
      * 菜单型：一串「点一下执行一个动作」的条目。
      *
@@ -189,22 +192,28 @@ object TerminalDialog {
         private val container: LinearLayout = content.findViewById(R.id.terminal_dialog_list)
         private val scroll: ScrollView = content.findViewById(R.id.terminal_dialog_scroll)
         private val titleView: TextView = content.findViewById(R.id.terminal_dialog_title)
+        private val divider: View = content.findViewById(R.id.terminal_dialog_divider)
         private val hintView: TextView = content.findViewById(R.id.terminal_dialog_hint)
 
         init {
-            // 背景走 overlay 的 android:background（@drawable/dialog_background：圆角 + 描边）。
-            // 同时必须清掉 window 自己的背景，否则 AppCompat 会垫一层方角底衬，圆角就白做了 ——
+            // 只让**窗口背景**承担圆角描边（来自 overlay 的 android:background =
+            // @drawable/dialog_background），这里必须把窗口自带的那层底衬清成透明 ——
+            // 否则 AppCompat 会垫一层方角底衬，把圆角整个盖住，
             // 这正是用户说的「像安卓原生的一样」的直接原因。
+            //
+            // 注意：**不要再给 content 设一次 dialog_background**。窗口背景与 content 背景
+            // 各画一次描边，两层之间还隔着 dialog 默认 padding，看上去就是弹窗外面又套了一圈线。
             dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            content.setBackgroundResource(R.drawable.dialog_background)
-            dialog.setView(content)
+            dialog.setView(content, 0, 0, 0, 0)
             capScrollHeight()
 
             if (title.isNullOrEmpty()) {
                 titleView.visibility = View.GONE
+                divider.visibility = View.GONE
             } else {
                 titleView.text = "$GLYPH_IDLE $title"
                 titleView.visibility = View.VISIBLE
+                divider.visibility = View.VISIBLE
             }
         }
 
@@ -233,7 +242,8 @@ object TerminalDialog {
             val row = Row(
                 root,
                 root.findViewById(R.id.terminal_item_glyph),
-                root.findViewById(R.id.terminal_item_text)
+                root.findViewById(R.id.terminal_item_text),
+                root.findViewById(R.id.terminal_item_state)
             )
             row.text.text = text
             if (danger) {
@@ -301,7 +311,7 @@ object TerminalDialog {
             hintView.visibility = View.VISIBLE
         }
 
-        /** 重绘单选态：选中项 `▸` + 主色，未选中 `›` + 正文色。 */
+        /** 重绘单选态：选中项 `▸` + 主色 + 右侧 ✓，未选中 `›` + 次级灰。 */
         fun paintSelection(selected: Int) {
             rows.forEachIndexed { index, row ->
                 val on = index == selected
@@ -313,6 +323,8 @@ object TerminalDialog {
                     row.glyph.setTextColor(secondaryColor())
                     row.text.setTextColor(onSurfaceColor())
                 }
+                // 右侧 ✓：双重指示，扫一眼就知道选的是哪个（设计稿方案 B 改法）
+                row.state.text = if (on) GLYPH_CHECK else ""
             }
         }
 
@@ -364,6 +376,7 @@ object TerminalDialog {
     class Row internal constructor(
         val root: View,
         val glyph: TextView,
-        val text: TextView
+        val text: TextView,
+        val state: TextView
     )
 }

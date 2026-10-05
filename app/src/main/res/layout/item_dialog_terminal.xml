@@ -20,12 +20,15 @@
     android:paddingHorizontal="@dimen/dialog_item_padding_h"
     android:paddingVertical="@dimen/dialog_item_padding_v">
 
+    <!-- 引导符颜色不在这里钉死：菜单型一律走「未选中态」（次级灰），
+         单选型由 Sheet.paintSelection() 在运行时改色。
+         占位值用 colorOnSurface，真值总会被 Kotlin 侧覆盖。 -->
     <TextView
         android:id="@+id/terminal_item_glyph"
         android:layout_width="@dimen/dialog_glyph_width"
         android:layout_height="wrap_content"
         android:text="›"
-        android:textColor="?attr/colorPrimary"
+        android:textColor="?attr/colorOnSurface"
         android:textSize="14sp" />
 
     <TextView

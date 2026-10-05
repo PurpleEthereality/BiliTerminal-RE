@@ -249,6 +249,13 @@ class DynamicHolder(itemView: View, val mActivity: BaseActivity, val isChild: Bo
                 MsgUtil.showMsg("没有可操作的项")
                 return
             }
+            // 只剩「复制文字」一项时，不必弹一个只有单选项的菜单——直接进复制界面。
+            // 别人的动态（都是 canEdit=false / canDelete=false）就是这种情况：以前长按会弹一个
+            // 孤零零的「复制文字」，多一次点击才拿到本来就该直接给的东西。
+            if (actions.size == 1 && actions[0].first == "复制文字") {
+                actions[0].second()
+                return
+            }
             // 「删除动态」是破坏性操作，用危险色标出来
             val dangerIndex = actions.indexOfFirst { it.first.startsWith("删除") }
             TerminalDialog.menu(

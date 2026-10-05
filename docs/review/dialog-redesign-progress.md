@@ -92,14 +92,58 @@
 
 **自检命令**：`grep -r "AlertDialog" app/src/main/java` —— 除 `util/TerminalDialog.kt` 自身外应 0 命中。
 
+### 四、与设计稿逐值对齐（后续修正轮）
+
+首版实现交付后用户反馈「你这做出来和前端完全不一样啊」。逐条比对了设计稿 `.d2` 的 CSS 与
+`TerminalDialog.kt` + 两个 layout，修掉 4 处偏差：
+
+| 项 | 设计稿 | 首版实现 | 处理 |
+|---|---|---|---|
+| 外圈描边 | 单层 `rgba(254,254,254,.32)` | **两层**，且描边色是 `colorPrimary`（终端下 `#FF6699` 荧光粉） | 去掉 content 那层，只留窗口背景；描边改 `colorOnSurface @32%` |
+| 标题分割线 | `border-bottom` | 没有 | 新增 `terminal_dialog_divider`（`colorOnSurface @18%`） |
+| 单选右侧 ✓ | 有 `.ck` | 控件在但从未赋值 | `paintSelection` 填 `GLYPH_CHECK` |
+| 等宽字体 | `var(--mono)` | 系统默认字体 | 按用户决定**不做** |
+
+**外圈描边的成因**（用户直接指出）—— 主题 overlay 的 `android:background=@drawable/dialog_background`
+给窗口画一层，`Sheet.init` 又给 content 画一层，两层之间隔着 dialog 默认 padding，
+看起来就是「弹窗外面又套一圈线」。`Sheet.init` 现只保留
+`dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))` +
+`dialog.setView(content, 0, 0, 0, 0)`，**不要再给 content 设 background**。
+
+**圆角 6dp vs 设计稿 12dp 未改**：`card_round`(6dp) 是「方角」档、`card_round_large`(12dp) 是
+「圆角」档，即用户在「外观设置」里切换的那一项。弹窗若钉死 12dp，用户选「方角」仍会看到
+圆角弹窗，与设置项语义打架。故跟随 `card_round`。对比图见 `docs/design/dialog-implemented-v3.html` §6。
+
+### 五、「只剩复制」时不弹面板
+
+别人的评论/动态只有「复制文字」一个可操作项，此前长按会弹一个只有单选项的菜单。
+现 `ReplyAdapter.showManageMenu` 与 `DynamicHolder.showManageMenu` 在列出 actions 后判一次：
+
+```kotlin
+if (actions.size == 1 && actions[0].first == "复制文字") {
+    actions[0].second()
+    return
+}
+```
+
+位置在 `actions.isEmpty()` 守卫**之后**（否则 `actions[0]` 会越界）。语义说明写进
+`util/LongPressPrefs.kt` 的文件头注释。
+
 ## 未完成 / 待验证
 
-- **没有编译验证**：本次环境下 `pwsh` 工具完全不可用（任何命令都返回空输出 + `[exit code: 3221225794]`，
-  即 `0xC0000142 STATUS_DLL_INIT_FAILED`，进程根本起不来），`./gradlew.bat :app:assembleDebug` 与
-  `:app:testDebugUnitTest` 均**未执行**。所有改动仅经静态审查（逐文件回读 + 全仓 grep）。
-  **恢复环境后第一件事就是跑一次 `:app:clean` + `assembleDebug`**（本次新增了 3 个 `res/` 文件，
-  按 `AGENTS.md` 的已知坑，改 `res/` 文件集合极易触发 build cache 回放陈旧资源）。
-- 未做真机/模拟器目视确认。设计稿 `docs/design/dialog-redesign-v2.html` 是预期效果的参照。
+- **编译与单测已通过**：`:app:assembleDebug` → `BUILD SUCCESSFUL`；
+  `:app:testDebugUnitTest --rerun-tasks` → 46 个 suite / **422 项全过**（failures=0 errors=0）。
+  过程中修掉 3 个真实编译错误：`R.attr.colorPrimary` / `colorOnSurface` / `colorError` 在
+  `app/src/main/res/values/` 里**从未声明过**（它们来自依赖库），必须写全限定库 R ——
+  `androidx.appcompat.R.attr.colorPrimary`（appcompat 声明了 `colorPrimary`/`colorError`，
+  但**没有** `colorOnSurface`）与 `com.google.android.material.R.attr.colorOnSurface`/`colorError`。
+- **真机目视确认未完成**：`adb install` 到已连接的 `V2229A` 始终被拒
+  （`INSTALL_FAILED_ABORTED: User rejected permissions`，关闭安装校验与唤醒屏幕后仍被拒），
+  疑为 vivo 系统侧限制。`docs/design/dialog-implemented-v3.html` 是按代码取值在 HTML 里
+  等价还原的预览，不是真机截图。
+- `:app:clean` 在本机**永久失败**：`app/build/outputs/apk/release` 空目录被某进程占着句柄，
+  `rmdir` / `Remove-Item -Force` / `Rename-Item` 全失败，`--stop` 停 daemon 后仍锁。
+  绕过方式：跳过 clean 直接 `assembleDebug --no-build-cache --no-configuration-cache`。
 - `docs/visual-experience-report.md` §2.25 记录的对比度问题（`#EBE0E2` 叠 `#FF6699` 约 2.1:1，
   AA 要求 4.5:1）—— 本次新增的 `colorError` 语义色（如 `#FF6A6A`）**没有**重新做对比度测量。
 

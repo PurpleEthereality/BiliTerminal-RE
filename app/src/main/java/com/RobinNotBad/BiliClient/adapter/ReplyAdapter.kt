@@ -549,6 +549,14 @@ class ReplyAdapter(
             return
         }
 
+        // 只剩「复制文字」一项时，不必弹一个只有单选项的菜单——直接进复制界面。
+        // 别人的评论（非管理员、也不是自己发的）就是这种情况：以前长按会弹一个孤零零的
+        // 「复制文字」，多一次点击才拿到本来就该直接给的东西。
+        if (actions.size == 1 && actions[0].first == "复制文字") {
+            actions[0].second()
+            return
+        }
+
         // 「删除评论」是破坏性操作，用危险色标出来（原实现里它和「置顶评论」同色）
         val dangerIndex = actions.indexOfFirst { it.first.startsWith("删除") }
         TerminalDialog.menu(

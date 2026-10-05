@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>弹窗实现还原稿 v3 · 代码实际渲染</title>
+<style>
+  :root{
+    /* ===== 经典终端主题真值（取自 colors.xml / ColorScheme.kt） ===== */
+    --c-surface:#262626;      /* terminal_surface      */
+    --c-on-surface:#EBE0E2;   /* on_surface_terminal   */
+    --c-primary:#FF6699;      /* terminal_accent       */
+    --c-error:#FF6699;        /* error_terminal        */
+    --c-bg:#000000;           /* terminal_bgblack      */
+    /* B站粉主题真值，用于对照 */
+    --b-surface:#24242E;      /* surface_dark          */
+    --b-on-surface:#F0E8EC;   /* on_surface_bili       */
+    --b-primary:#FF6699;      /* pink_brand            */
+    --b-error:#E84B85;        /* error_bili            */
+    /* 尺寸真值（取自 dimens.xml） */
+    --card-round:6px;         /* card_round = 6dp      */
+    --item-h:44px;            /* dialog_item_min_height */
+    --item-ph:15px;           /* dialog_item_padding_h */
+    --item-pv:11px;           /* dialog_item_padding_v */
+    --glyph-w:11px;           /* dialog_glyph_width    */
+    --title-pt:13px; --title-ph:15px; --title-pb:9px;
+  }
+  body{margin:0;background:#0E0E12;color:#D8D2D4;
+       font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.7}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 24px 80px}
+  h1{font-size:25px;margin:0 0 6px;color:#fff}
+  h2{font-size:19px;margin:42px 0 14px;color:#fff;border-left:4px solid #FF6699;padding-left:11px}
+  h3{font-size:15px;margin:24px 0 10px;color:#F0E8EC}
+  .sub{color:#8C868A;font-size:13px;margin:0 0 24px}
+  code{background:#22222A;padding:1.5px 5px;border-radius:3px;color:#FFB3CA;font-size:12.5px;
+       font-family:"Cascadia Mono",Consolas,monospace}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:12.5px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid #2A2A34;vertical-align:top}
+  th{color:#FFB3CA;background:#1C1C23;font-size:12px}
+  .bad{background:#241618;border:1px solid #4A2830;border-left:4px solid #FF6A6A;
+       border-radius:6px;padding:14px 18px;margin:16px 0}
+  .bad b{color:#FF6A6A}
+  .good{background:#15201A;border:1px solid #2A4033;border-left:4px solid #BBFFBB;
+        border-radius:6px;padding:14px 18px;margin:16px 0}
+  .good b{color:#BBFFBB}
+  .note{background:#1A1A20;border:1px solid #2E2E38;border-radius:8px;padding:14px 18px;margin:14px 0;font-size:13px}
+
+  /* ===== 表盘 ===== */
+  .stage{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-start;margin:16px 0}
+  .col{display:flex;flex-direction:column;align-items:center;gap:9px}
+  .device{width:300px;height:300px;border-radius:50%;background:#1A1A1C;padding:13px;
+          box-shadow:0 0 0 3px #2A2A2E,0 10px 30px rgba(0,0,0,.6)}
+  .screen{width:100%;height:100%;border-radius:50%;overflow:hidden;
+          display:flex;align-items:center;justify-content:center;background:var(--c-bg)}
+  .cap{font-size:11.5px;color:#8C868A;text-align:center}
+
+  /* ===== 真实还原：终端列表弹窗 =====
+     对应 layout_dialog_terminal.xml + item_dialog_terminal.xml + dialog_background.xml
+     底色 colorSurface / 描边 colorOnSurface@32% 1dp / 圆角 card_round=6dp */
+  .dlg{
+    width:250px;
+    background:var(--c-surface);
+    border:1px solid rgba(235,224,226,.32);   /* ?attr/colorOnSurface @ alpha .32 */
+    border-radius:var(--card-round);
+    overflow:hidden;
+  }
+  .dlg.bili{background:var(--b-surface);border-color:rgba(240,232,236,.32)}
+
+  /* 标题：padding 13/15/9，主色 13sp，前缀 › */
+  .dlg .t{padding:var(--title-pt) var(--title-ph) var(--title-pb);
+          color:var(--c-primary);font-size:13px}
+  .dlg.bili .t{color:var(--b-primary)}
+  .dlg .t::before{content:"› ";color:rgba(235,224,226,.7)}
+
+  /* 分割线：colorOnSurface @ 18% */
+  .dlg .div{height:1px;background:rgba(235,224,226,.18)}
+  .dlg.bili .div{background:rgba(240,232,236,.18)}
+
+  /* 条目：minHeight 44dp，padding 11/15，字形列 11dp */
+  .dlg .li{display:flex;align-items:center;min-height:var(--item-h);
+           padding:var(--item-pv) var(--item-ph);font-size:13px;color:var(--c-on-surface)}
+  .dlg.bili .li{color:var(--b-on-surface)}
+  .dlg .li .g{width:var(--glyph-w);flex:0 0 var(--glyph-w);color:rgba(235,224,226,.7);font-size:14px}
+  .dlg.bili .li .g{color:rgba(240,232,236,.7)}
+  .dlg .li .x{flex:1;margin-left:8px}
+  .dlg .li .ck{color:var(--c-primary);font-size:12px;margin-left:6px}
+  /* 危险项：整体 colorError */
+  .dlg .li.danger,.dlg .li.danger .g{color:var(--c-error)}
+  .dlg.bili .li.danger,.dlg.bili .li.danger .g{color:var(--b-error)}
+  /* 选中项：▸ 主色 + 文字主色 + 右侧 ✓ */
+  .dlg .li.on,.dlg .li.on .g,.dlg .li.on .ck{color:var(--c-primary)}
+
+  /* 提示行：11sp，colorOnSurface @ 60%，padding 8/15/11 */
+  .dlg .hint{padding:8px var(--title-ph) 11px;font-size:11px;
+             color:rgba(235,224,226,.6)}
+  .dlg.bili .hint{color:rgba(240,232,236,.6)}
+
+  /* 确认型说明文字：次级灰（onSurface @70%），无引导符 */
+  .dlg .msg{padding:var(--item-pv) var(--item-ph);font-size:13px;
+            color:rgba(235,224,226,.7);line-height:1.55}
+  .dlg.bili .msg{color:rgba(240,232,236,.7)}
+  /* 按钮行：右对齐，按钮 minHeight/minWidth 44dp */
+  .dlg .btns{display:flex;justify-content:flex-end;padding:0 var(--title-ph)}
+  .dlg .b{min-height:var(--item-h);min-width:var(--item-h);display:flex;align-items:center;
+          justify-content:center;padding:0 var(--item-ph);font-size:12.5px}
+  .dlg .b.cancel{color:rgba(235,224,226,.7)}
+  .dlg.bili .b.cancel{color:rgba(240,232,236,.7)}
+  .dlg .b.danger{color:var(--c-error)}
+  .dlg.bili .b.danger{color:var(--b-error)}
+  .dlg .b.plain{color:var(--c-primary)}
+
+  .kv{font-size:12.5px;color:#B8AEB2;font-family:"Cascadia Mono",Consolas,monospace;line-height:1.9}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>弹窗实现还原稿 v3</h1>
+  <p class="sub">这一版不是「设计构想」，而是<b>按当前代码逐值还原</b>的渲染预览 —— 用来核对你看到的和设计稿是不是同一件事。</p>
+
+  <div class="note">
+    上一版设计稿 <code>dialog-redesign-v2.html</code> 是「要改成什么样」；
+    本稿是「<b>代码现在实际画成什么样</b>」。取值来源：
+    <span class="kv">colors.xml</span> 的 <code>on_surface_terminal</code>/<code>terminal_surface</code>、
+    <span class="kv">dimens.xml</span> 的 <code>card_round</code>/<code>dialog_*</code>、
+    <span class="kv">dialog_background.xml</span> 的描边、两个 <code>layout/item_dialog_terminal.xml</code>。
+  </div>
+
+  <h2>1 · 上一版「外圈那一道线」的成因</h2>
+
+  <div class="bad">
+    <b>描边画了两层。</b>上一版代码里：
+    <ol>
+      <li>主题 overlay 的 <code>android:background=@drawable/dialog_background</code> 给<b>窗口</b>画了一层圆角+描边；</li>
+      <li><code>TerminalDialog.kt</code> 又对 content 调了一次 <code>setBackgroundResource(dialog_background)</code>，画了第二层。</li>
+    </ol>
+    两层之间还隔着 dialog 默认的 padding，于是看起来就是「弹窗外面又套了一圈线」。
+    更糟的是描边取的是 <code>?attr/colorPrimary</code> —— 经典终端下就是 <code>#FF6699</code> 荧光粉，
+    在深色底上非常扎眼。
+  </div>
+
+  <div class="good">
+    <b>已修：</b>去掉 content 那一层，只保留窗口背景一层；描边色从 <code>colorPrimary</code> 改为
+    <code>colorOnSurface @ 32%</code>（即 <code>#EBE0E2</code> 半透明白），与设计稿方案 B 的
+    <code>rgba(254,254,254,.32)</code> 对齐。下面所有预览都是修好之后的形态。
+  </div>
+
+  <h2>2 · 菜单型（修好之后）</h2>
+  <div class="stage">
+    <div class="col">
+      <div class="device"><div class="screen">
+        <div class="dlg">
+          <div class="t">会话操作</div>
+          <div class="div"></div>
+          <div class="li"><span class="g">›</span><span class="x">置顶会话</span></div>
+          <div class="li danger"><span class="g">›</span><span class="x">删除会话</span></div>
+          <div class="li"><span class="g">›</span><span class="x">查看用户主页</span></div>
+          <div class="hint">› 点空白处取消</div>
+        </div>
+      </div></div>
+      <div class="cap">经典终端主题（默认）<br>底 #262626 · 字 #EBE0E2 · 危险 #FF6699</div>
+    </div>
+
+    <div class="col">
+      <div class="device"><div class="screen" style="background:#0F0F14">
+        <div class="dlg bili">
+          <div class="t">会话操作</div>
+          <div class="div"></div>
+          <div class="li"><span class="g">›</span><span class="x">置顶会话</span></div>
+          <div class="li danger"><span class="g">›</span><span class="x">删除会话</span></div>
+          <div class="li"><span class="g">›</span><span class="x">查看用户主页</span></div>
+          <div class="hint">› 点空白处取消</div>
+        </div>
+      </div></div>
+      <div class="cap">B站粉主题<br>底 #24242E · 字 #F0E8EC · 危险 #E84B85</div>
+    </div>
+  </div>
+
+  <h2>3 · 单选型（选季 / 选集）</h2>
+  <div class="stage">
+    <div class="col">
+      <div class="device"><div class="screen">
+        <div class="dlg">
+          <div class="t">选择剧集</div>
+          <div class="div"></div>
+          <div class="li on"><span class="g">▸</span><span class="x">1. 第一话</span><span class="ck">✓</span></div>
+          <div class="li"><span class="g">›</span><span class="x">2. 第二话</span></div>
+          <div class="li"><span class="g">›</span><span class="x">3. 第三话</span></div>
+          <div class="hint">› 点空白处取消</div>
+        </div>
+      </div></div>
+      <div class="cap">选中 <code>▸</code>+主色+右侧 <code>✓</code><br>未选 <code>›</code>+次级灰</div>
+    </div>
+
+    <div class="col">
+      <div class="device"><div class="screen">
+        <div class="dlg">
+          <div class="t">选择季度</div>
+          <div class="div"></div>
+          <div class="li"><span class="g">›</span><span class="x">第一季</span></div>
+          <div class="li on"><span class="g">▸</span><span class="x">第二季</span><span class="ck">✓</span></div>
+          <div class="li"><span class="g">›</span><span class="x">第三季</span></div>
+          <div class="hint">› 点空白处取消</div>
+        </div>
+      </div></div>
+      <div class="cap">选中项在中间时的形态<br>三重指示：引导符 + 颜色 + ✓</div>
+    </div>
+  </div>
+
+  <h2>4 · 确认型（取消 vs 危险）</h2>
+  <div class="stage">
+    <div class="col">
+      <div class="device"><div class="screen">
+        <div class="dlg">
+          <div class="t">删除账号</div>
+          <div class="div"></div>
+          <div class="msg">确定要删除账号 罗宾 吗？<br>删除后需重新登录才能恢复。</div>
+          <div class="btns">
+            <div class="b cancel">取消</div>
+            <div class="b danger">删除</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="cap">取消=次级灰 · 删除=危险色<br>按钮保留（确认框必须有明确语义）</div>
+    </div>
+
+    <div class="col">
+      <div class="device"><div class="screen">
+        <div class="dlg">
+          <div class="t">删除会话</div>
+          <div class="div"></div>
+          <div class="msg">只会把会话从列表里移除，<br>不会删除聊天记录。</div>
+          <div class="btns">
+            <div class="b cancel">取消</div>
+            <div class="b danger">删除</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="cap">私信会话删除<br>用于核对真实文案换行</div>
+    </div>
+
+    <div class="col">
+      <div class="device"><div class="screen">
+        <div class="dlg">
+          <div class="div" style="display:none"></div>
+          <div class="msg" style="padding-top:15px">该季暂无剧集</div>
+          <div class="btns">
+            <div class="b plain">知道了</div>
+          </div>
+        </div>
+      </div></div>
+      <div class="cap">纯提示型（无标题）<br>只有一个按钮</div>
+    </div>
+  </div>
+
+  <h2>5 · 与设计稿的逐项差异（已处理 / 待定）</h2>
+  <table>
+    <tr><th style="width:150px">项</th><th style="width:150px">设计稿 v2</th><th style="width:170px">代码原实现</th><th>处理</th></tr>
+    <tr><td><b>外圈描边</b></td><td>单层 <code>rgba(254,254,254,.32)</code></td>
+        <td>两层，且用粉色 <code>colorPrimary</code></td>
+        <td><b>已修</b>：去掉 content 那层，描边改 <code>colorOnSurface@32%</code></td></tr>
+    <tr><td>标题分割线</td><td>有 <code>border-bottom</code></td><td>无</td>
+        <td><b>已修</b>：加 <code>terminal_dialog_divider</code>，<code>colorOnSurface@18%</code></td></tr>
+    <tr><td>单选右侧 ✓</td><td>有 <code>.ck</code></td><td>有控件但从未赋值</td>
+        <td><b>已修</b>：<code>paintSelection</code> 填 <code>GLYPH_CHECK</code></td></tr>
+    <tr><td><b>等宽字体</b></td><td><code>font-family:var(--mono)</code></td><td>系统默认字体</td>
+        <td><b>按你的决定不做</b>（保持默认字体）</td></tr>
+    <tr><td>弹窗圆角</td><td><code>12dp</code></td><td><code>@dimen/card_round</code> = 6dp</td>
+        <td><b>待你拍板</b>：6dp 是「方角」档的既有语义，改成 12dp 会与设置项语义冲突</td></tr>
+    <tr><td>条目内距</td><td>上下 12dp / 左右 14dp</td><td>上下 11dp / 左右 15dp</td>
+        <td>差异 ≤1dp，肉眼不可辨，<b>建议不动</b></td></tr>
+  </table>
+
+  <h2>6 · 关于圆角：6dp 还是 12dp</h2>
+  <div class="note">
+    <code>dimens.xml</code> 里 <code>card_round=6dp</code> 是<b>「方角」档</b>的值，<code>card_round_large=12dp</code> 是<b>「圆角」档</b>的值 ——
+    用户在「外观设置」里切换的那一项。弹窗若钉死 12dp，用户选了「方角」仍会看到圆角弹窗，与设置项语义直接打架。
+    所以代码里弹窗跟随 <code>card_round</code>。<br>
+    两种形态对比：
+  </div>
+  <div class="stage">
+    <div class="col">
+      <div class="device" style="width:230px;height:230px"><div class="screen">
+        <div class="dlg" style="width:196px;border-radius:6px">
+          <div class="t" style="font-size:12px;padding:11px 13px 8px">会话操作</div>
+          <div class="div"></div>
+          <div class="li" style="min-height:38px;padding:9px 13px;font-size:12px"><span class="g">›</span><span class="x">置顶会话</span></div>
+          <div class="li" style="min-height:38px;padding:9px 13px;font-size:12px"><span class="g">›</span><span class="x">删除会话</span></div>
+        </div>
+      </div></div>
+      <div class="cap"><b>6dp</b>（当前实现）<br>跟随「方角」档</div>
+    </div>
+    <div class="col">
+      <div class="device" style="width:230px;height:230px"><div class="screen">
+        <div class="dlg" style="width:196px;border-radius:12px">
+          <div class="t" style="font-size:12px;padding:11px 13px 8px">会话操作</div>
+          <div class="div"></div>
+          <div class="li" style="min-height:38px;padding:9px 13px;font-size:12px"><span class="g">›</span><span class="x">置顶会话</span></div>
+          <div class="li" style="min-height:38px;padding:9px 13px;font-size:12px"><span class="g">›</span><span class="x">删除会话</span></div>
+        </div>
+      </div></div>
+      <div class="cap"><b>12dp</b>（设计稿值）<br>与「圆角」档一致，但不跟随设置</div>
+    </div>
+  </div>
+
+  <h2>7 · 怎么在真机上看到它</h2>
+  <div class="note">
+    已 <code>assembleDebug</code> 通过（<code>BUILD SUCCESSFUL</code>）、
+    单测 <b>425 项全过</b>。APK 在 <code>app/build/outputs/apk/debug/</code>。<br><br>
+    <b>注意</b>：我用 <code>adb install</code> 尝试装到已连接的 <code>V2229A</code> 上时，被设备侧拒绝
+    （<code>INSTALL_FAILED_ABORTED: User rejected permissions</code>），
+    关闭安装校验后仍被拒 —— 这是 Vivo 的系统限制，需要在手机上手动确认或调整「安装未知应用」权限。
+    所以<b>真机目视确认尚未完成</b>，上面所有预览是按代码取值在 HTML 里等价还原的。
+  </div>
+
+</div>
+</body>
+</html>

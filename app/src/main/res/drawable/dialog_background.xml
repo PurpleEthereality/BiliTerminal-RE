@@ -9,6 +9,9 @@
   AlertDialog 的 window 背景就吃这个 drawable，套 CardView 会多一层裁剪与测量；
   且 setBackgroundDrawable 对 dialog window 是最省事的做法。
 
+  这个 drawable **只由主题 overlay 的 android:background 使用一次**，
+  TerminalDialog 的 Sheet 不要再给 content 设一遍，否则两层描边会露出来。
+
   颜色一律走 ?attr/（由各主题的 alertDialogTheme overlay 提供），
   所以 7 套主题各有各的底色/描边，不需要为每套主题抄一个布局。
 -->
@@ -17,9 +20,13 @@
 
     <solid android:color="?attr/colorSurface" />
 
+    <!-- 描边取正文色的低透明度版本，而不是 colorPrimary：
+         主色描边在深色底上非常抢眼，一圈荧光粉边正是「很奇怪」的来源。
+         比照设计稿方案 B 的 rgba(254,254,254,.32)。 -->
     <stroke
         android:width="1dp"
-        android:color="?attr/colorPrimary" />
+        android:color="?attr/colorOnSurface"
+        android:alpha="0.32" />
 
     <corners android:radius="@dimen/card_round" />
 

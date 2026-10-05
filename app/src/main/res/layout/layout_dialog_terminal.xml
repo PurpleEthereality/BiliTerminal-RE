@@ -29,6 +29,16 @@
         android:textSize="13sp"
         android:visibility="gone" />
 
+    <!-- 标题与条目之间的分割线。仿设计稿方案 B 的 .d2 .hd{border-bottom}。
+         颜色走 colorOnSurface 低透明度，不写死色值（跟随 7 套主题）。 -->
+    <View
+        android:id="@+id/terminal_dialog_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="?attr/colorOnSurface"
+        android:alpha="0.18"
+        android:visibility="gone" />
+
     <ScrollView
         android:id="@+id/terminal_dialog_scroll"
         android:layout_width="match_parent"
