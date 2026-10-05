@@ -41,6 +41,12 @@ class DynamicInfoActivity : BaseActivity() {
         TerminalContext.getInstance().getDynamicById(id)
             .observe(this) { dynamicResult ->
                 dynamicResult.onSuccess { dynamic ->
+                    // 防御：动态不存在（DYNAMIC_TYPE_NONE）时 DynamicApi.analyzeDynamic 会在填充
+                    // 统计信息之前提前返回，stats 保持 null；部分动态类型本身也没有 module_stat。
+                    // DynamicHolder 渲染卡片时对 dynamic.stats 判空（约 :888），这里少了一处，
+                    // 直接取 dynamic.stats.reply 会 NPE（26.10.05 线上崩溃）。判据有 JVM 单测。
+                    dynamic.ensureDetailFields()
+
                     val fragmentList = ArrayList<androidx.fragment.app.Fragment>()
                     val diFragment = DynamicInfoFragment.newInstance(id)
                     fragmentList.add(diFragment)
@@ -56,11 +62,15 @@ class DynamicInfoActivity : BaseActivity() {
                     if (seek_reply != -1L) viewPager.currentItem = 1
 
                     AnimationUtils.crossFade(findViewById(R.id.loading), diFragment.view)
-                    diFragment.view!!.post {
-                        val scrollView = diFragment.view!!.findViewById<View>(R.id.scrollView)
-                        scrollView.isFocusable = true
-                        scrollView.isFocusableInTouchMode = true
-                        scrollView.requestFocus()
+                    // 防御：Fragment 的视图由 FragmentPagerAdapter 的 commitNow 同步创建，正常都取得到，
+                    // 但上面 :63 已经按可空处理过，这里不该反手用 !!（取不到时静默跳过聚焦即可）。
+                    view?.let { diView ->
+                        diView.post {
+                            val scrollView = diView.findViewById<View>(R.id.scrollView) ?: return@post
+                            scrollView.isFocusable = true
+                            scrollView.isFocusableInTouchMode = true
+                            scrollView.requestFocus()
+                        }
                     }
                     TutorialHelper.showPagerTutorial(this, 2)
                 }.onFailure { e ->
