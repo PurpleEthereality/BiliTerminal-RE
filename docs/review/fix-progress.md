@@ -1,11 +1,11 @@
 # ReBiliClient 修复进度报告
 
-> 更新日期：2026-10-05（含批次 8 + 线上崩溃修复）
-> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八/§二十九/§三十/§三十一/§三十二/§三十三/§三十四/§三十五/§三十六/§三十七/§三十八
+> 更新日期：2026-10-05（含批次 8 + 线上崩溃修复 + 第三批真机反馈）
+> 基线：26.08.27 快照的 286 条问题清单（原 `docs/review/00-summary.md` 已删除）；后续轮次见 §七/§八/§九/§十/§十一/§十二/§十三/§十四/§十五/§十六/§十七/§十八/§十九/§二十/§二十一/§二十二/§二十三/§二十四/§二十五/§二十六/§二十七/§二十八/§二十九/§三十/§三十一/§三十二/§三十三/§三十四/§三十五/§三十六/§三十七/§三十八/§三十九
 > 状态：Critical 抽查项已全部确认/修复，High/Medium 待继续
-> 真机回归：本文各节「真机验证清单」已按操作顺序合并成 `docs/review/real-device-regression-checklist.md`（211 条，发版前逐条勾；批次 8 的两条口头需求见该文件第十章第 207-209 条，线上崩溃回归见第十一章第 210-211 条）
+> 真机回归：本文各节「真机验证清单」已按操作顺序合并成 `docs/review/real-device-regression-checklist.md`（214 条，发版前逐条勾；批次 8 的两条口头需求见该文件第十章第 207-209 条，线上崩溃回归见第十一章第 210-211 条，第三批真机反馈见第十一章第 212-214 条）
 >
-> ⚠️ **章节编号有两处历史重号**：`## 二十二` 与 `## 二十九` 各出现两次（不同轮次独立编号所致），`## 30.` 为另一轮次遗留的阿拉伯数字写法。**为避免打断既有交叉引用（§二十二/§二十九/§30.x 被多处正文引用），已保持原编号不动**；本轮新增章节统一编号为 **§三十三～§三十八**。索引见 §三十六.2。
+> ⚠️ **章节编号有两处历史重号**：`## 二十二` 与 `## 二十九` 各出现两次（不同轮次独立编号所致），`## 30.` 为另一轮次遗留的阿拉伯数字写法。**为避免打断既有交叉引用（§二十二/§二十九/§30.x 被多处正文引用），已保持原编号不动**；本轮新增章节统一编号为 **§三十三～§三十九**。索引见 §三十六.2。
 
 ---
 
@@ -4204,3 +4204,144 @@ if (dynamic.type.equals("DYNAMIC_TYPE_NONE")) {
 - `model/Stats.java` / `model/UserInfo.java`：未加任何字段或构造器（用的就是既有的默认构造）。
 - `util/Result.java`、`util/TerminalContext.kt` 的 LiveData 链路：未动。
 - `AndroidManifest.xml`：未动（未新增 Activity）。
+
+---
+
+## 三十九、26.10.05 第三批真机反馈：收藏夹顶部工具条三处
+
+> 用户原话（逐字，三条一起报的）：
+> 「收藏夹多选选择后取消选择不会让图标再次暗下」
+> 「不进行多选时请将多选那一行删除」
+> 「在列表中间时，上划会展开上面的按钮，但是按钮会导致下面列表位移和滑动手势冲突，请修复」
+
+三条都落在**收藏夹内容页**（`FavoriteVideoListActivity`）顶部那两条工具条上（`sortBar` 排序行、
+`manageBar` 多选行）。三条的成因互不相同，分别是**动画层、可见性层、判据层**。
+
+### 39.1 三条的根因
+
+#### (1) 取消勾选后条目不再变暗 —— item animator 把 alpha 吃了
+
+多选态的暗/亮是 `VideoCardHolder.applySelection()` 直接写 `itemView.alpha`（选中 `1f`、
+未选中 `0.45f`），而勾选/取消勾选走的是 `videoCardAdapter.notifyItemChanged(position)`。
+
+`RecyclerView` 默认挂 `DefaultItemAnimator`，它处理 `notifyItemChanged` 的方式是**另建一个
+ViewHolder 做交叉淡入**（`SimpleItemAnimator.canReuseUpdatedViewHolder()` 在
+`supportsChangeAnimations = true` 时返回 `false`），并在动画收尾把新布局的 alpha 设成 `1f`。
+于是：
+
+- **勾选**（目标本来就是 `1f`）看不出问题；
+- **取消勾选**（目标是 `0.45f`）被动画静默改回 `1f` → 正是用户说的「不会再次暗下去」。
+
+这就是为什么「选中看起来正常、取消选中不正常」——不是勾选逻辑写错，是**动画的收尾状态覆盖了我们的状态**。
+
+修法：`VideoCardAdapter.onAttachedToRecyclerView()` 里
+`(recyclerView.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false`。
+只关「同一项内容变化」这一类动画，增删/移动动画不受影响。
+
+#### (2) 不进入多选时也该把多选那一行收起来
+
+`setupManageBar()` 原本无条件 `findViewById<View>(R.id.manageBar).visibility = View.VISIBLE`，
+只要这个收藏夹能写，一整行就一直挂在列表上方占竖向空间——手表屏幕本来就不高。
+
+修法：可见性改由多选态驱动（`updateManageBar()` 里
+`visibility = if (selectionMode) VISIBLE else GONE`），入口改成长按条目 → 菜单里的新项「多选」。
+
+**顺带修掉一处隐患**：`danger` 原本写死 `setOf(2)`（对应「取消收藏」）。菜单里一插新项，
+下标就会漂移、危险色会标到别的操作上。已改成
+`setOf(actions.indexOfFirst { it.first == "取消收藏" })`，加项不再需要人肉同步下标。
+
+#### (3) 列表中间展开工具条和滑动手势打架 —— 展开的时机判据不完整
+
+`ScrollRetractDecider.action()` 原判据是「向上累计滚过阈值就 `EXPAND`」。而展开 = 把条的高度从 0
+动画回自然高度，这些条是**列表的兄弟节点**、位于列表上方，高度一变列表可见区域跟着变、
+**列表内容整体位移**。用户正在列表中间按住屏幕拖，手指底下的条目被凭空推走 ——
+就是「按钮导致下面列表位移和滑动手势冲突」。
+
+这不是动画时长问题，是**时机**问题：收回随时可以做（内容朝手指方向让位，方向一致不打架），
+但**展开必须在列表已经不会再产生位移冲突的时候**去做，也就是停在顶部（`!canScrollUp`）时。
+
+修法：`action()` 收缩成两条路——
+
+```kotlin
+if (collapsed) {
+    if (!canScrollUp && accumulated <= 0) return EXPAND   // 回到顶部才展开
+    if (accumulated > THRESHOLD) return COLLAPSE           // 继续往下滚 → 顺带清零累加值
+    return NONE
+}
+if (accumulated > THRESHOLD) return COLLAPSE
+return NONE
+```
+
+**注意这里有意保留了一个反直觉分支**：已经收着时继续向下滚**仍然返回 `COLLAPSE`**（即使无动画可做），
+唯一作用是让调用方把累加值清零。若返回 `NONE`，累加值会一直涨，等用户回头往上滚时先要抵消掉这些
+历史正值、阈值早被吃掉，表现为「条收起来以后怎么滚都不回来」。
+
+### 39.2 顺带修掉的一个潜在缺陷：长按抬手时补发的点击
+
+`VideoCardHolder.bindClick()` 里的长按是 `setOnTouchListener` + `postDelayed(200)` 实现的，
+`ACTION_DOWN` 返回 `false`（不吞事件，好让列表自己处理滚动）。代价是 `View.onTouchEvent` 照样会在
+`ACTION_UP` 上补发一次 `performClick()`。于是**同一次长按走两条路**：
+
+- 多选态下两条路都是 `toggleSelected(position)` → 长按先选上、抬手立刻取消，**净效果是长按什么也选不中**；
+- 非多选态下则是「长按弹了菜单、抬手又跳进视频详情页」。
+
+已加 `suppressClickAfterLongPress` 标记：长按回调一旦真的执行就立起标记，让紧随其后的那次点击自己吞掉。
+`bindClick()` 里随新绑定清零，避免复用 ViewHolder 时误吞。
+
+### 39.3 改动文件
+
+| 文件 | 改了什么 |
+|---|---|
+| `app/src/main/java/com/RobinNotBad/BiliClient/util/view/ScrollRetractDecider.kt` | `action()` 展开条件收紧为「仅 `!canScrollUp` 时」；补三处注释说明为什么 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/video/VideoCardAdapter.kt` | 新增 `onAttachedToRecyclerView()`：`supportsChangeAnimations = false` |
+| `app/src/main/java/com/RobinNotBad/BiliClient/adapter/video/VideoCardHolder.kt` | 新增 `suppressClickAfterLongPress`（长按后吞掉补发的点击）；`applySelection()` 前缀解析提前到所有分支之前 |
+| `app/src/main/java/com/RobinNotBad/BiliClient/activity/user/favorite/FavoriteVideoListActivity.kt` | `manageBar` 改为只在多选态可见；`showManageMenu` 增加「多选」入口、`danger` 改动态定位 |
+| `app/src/test/java/com/RobinNotBad/BiliClient/util/view/ScrollRetractDeciderTest.kt` | `向上滚超过阈值就展开` 断言改为 `NONE`（口径变更）；新增 `回顶前一路向上滚都不展开回到顶部才展开`、`没收回时向上滚也不动作` |
+
+**`app/src/main/res/layout/activity_simple_refresh.xml` 未改**：`manageBar` 在 layout 里本来就是
+`visibility="gone"`，之前是代码把它点亮的，所以收起来不需要动布局。
+
+### 39.4 验证
+
+- `.\gradlew.bat :app:assembleDebug --offline --no-build-cache --no-configuration-cache` → **BUILD SUCCESSFUL**（43s）。
+- `.\gradlew.bat :app:assembleRelease --offline --no-build-cache --no-configuration-cache` → **BUILD SUCCESSFUL**（1m 3s，含 `minifyReleaseWithR8`）。
+  用户装的是 release 包，所以两条链路都跑了。
+- `.\gradlew.bat :app:testDebugUnitTest`（同参数）→ **46 个测试类 / 425 例 / 0 失败 / 0 错误 / 0 跳过**
+  （上一轮 46 类 / 423 例，本次 **+2 例**）。
+- 编译期仅剩一条既有告警：`VideoCardAdapter.kt` 的 `Condition is always 'true'`（`videoCardList != null`，
+  `videoCardList` 是非空类型）—— 历史遗留，未动。
+
+### 39.5 诚实边界
+
+- 三处修法都是**读代码得出的成因**，**没有真机复现**（团队没有设备）。
+- (1) 我确认了「`applySelection` 写下的 alpha 没有任何别处覆盖」（全工程 grep
+  `selectionMode|selectedAids|applySelection` 只有 3 个文件命中，`itemView.alpha` 只由
+  `applySelection` 写），所以「取消后不暗」只能来自 RecyclerView 的动画收尾；这是**排除法**结论，
+  静态成立、但没有在设备上抓过帧。
+- (3) 是三条里最容易在真机上确认的一条：改前在列表中间上滑，条会边展开边把内容顶下去；
+  改后应该**只在滚到顶时**才展开。若真机仍在中途展开，说明 `recyclerView.canScrollVertically(-1)`
+  在这个页面上不可靠，需要改成用 `computeVerticalScrollOffset() == 0` 判断，并把观察到的现象发回来。
+- (2) 与「顺带修掉的潜在缺陷」都以真机手测为准；长按 200ms 的阈值与抬手补发点击的行为
+  在 JVM 单测里跑不到（`MotionEvent`/`View` 全是 Android 桩，项目也没开 `returnDefaultValues`）。
+
+### 39.6 真机验证步骤
+
+1. 进自己的收藏夹（点进**具体某个收藏夹**，不是收藏夹列表页）→ 顶部应**只有排序行，没有「多选」那一行**。
+2. 长按任意条目 → 菜单里有「复制到…/移动到…/多选/取消收藏」，且**「取消收藏」是危险色**；
+   选「多选」→ 顶部出现多选行。
+3. 点若干条目：选中的条目保持原色、标题前有 `✓ `；**再点一次取消选中：该条目应重新压暗（0.45）**，
+   且「删除(N)」的计数同步减少。
+4. 在多选行点「退出多选」→ 多选行消失、所有条目的 `✓ ` 前缀与压暗全部复原。
+5. 滚动冲突：**在列表中间**向上滑 → 排序行**不应**展开；一路滑到顶 → 排序行展开；
+   展开时列表内容不应被顶得跳一下。
+6. 长按返回：长按条目弹出菜单后**抬手，不应跳进视频详情页**；多选态下长按某条目应**稳定地勾选它**（不闪一下又取消）。
+
+### 39.7 本次明确没有碰的东西
+
+- `app/src/main/res/layout/activity_simple_refresh.xml`：未动（见 39.3 说明）。
+- `RefreshListActivity` 的自动收回机制（`setupAutoHideBars`/`animateBars`/`naturalBarHeight` 缓存）：未动，
+  只改了判据对象 `ScrollRetractDecider` 的返回值定义。
+- `manageBar` **仍然不进** `setupAutoHideBars`：多选时条被自动收走就点不到「删除」了，这是刻意的。
+- `FavoriteApi`、`VideoCardAdapter` 的勾选数据流（`selectedAids`/`selectionMode` 仍在页面侧持有）：未动。
+- 布局里 `manageToggle`/`manageDelete` 由 `Activity` 持有的引用与点击回调：未动（只是可见性跟着多选态走）。
+

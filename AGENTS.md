@@ -26,7 +26,7 @@
 
 - 网络请求包在 `CenterThreadPool.run { }` 里。
 - 列表页继承 `RefreshMainActivity`（菜单入口页）或 `RefreshListActivity`（返回式）；加载完必须 `setRefreshing(false)`，否则翻页永久卡死。`onLoad(page)` 的 page 已自增。
-- `activity_simple_refresh.xml` 里的 `filterBar`/`sortBar`/`manageBar`/`groupBar` 都是列表的**兄弟节点**（不是列表项），不会随列表滚走。想让某条**滚动时自动收回**，在子类里调 `setupAutoHideBars(条…)`（`RefreshListActivity`，**默认不启用**）；**别把「可见性在运行时才变化」的条放进去**（如收藏夹的多选条 `manageBar`）——展开时会把它强行点亮。判据抽在 `util/view/ScrollRetractDecider.kt`（纯函数，有单测）。
+- `activity_simple_refresh.xml` 里的 `filterBar`/`sortBar`/`manageBar`/`groupBar` 都是列表的**兄弟节点**（不是列表项），不会随列表滚走。想让某条**滚动时自动收回**，在子类里调 `setupAutoHideBars(条…)`（`RefreshListActivity`，**默认不启用**）；**别把「可见性在运行时才变化」的条放进去**（如收藏夹的多选条 `manageBar`）——展开时会把它强行点亮。判据抽在 `util/view/ScrollRetractDecider.kt`（纯函数，有单测）：**收回随时可以，展开只允许在列表到顶（`!canScrollUp`）时**——条的高度动画会顶动列表内容，中途展开会和滑动手势打架（真机反馈过，别把「向上滚就展开」的旧口径改回去）。
 - 新增菜单页改三处：`MenuActivity.btnNames`、`MenuConfig.ALL_ITEMS`、`AndroidManifest.xml`。**但新菜单 key 对老用户不会自动出现**——`MenuConfig.loadEnabled` 对已存的 `menu_enabled` 直接返回，只能靠「菜单设置」手动开。想让所有人都能立刻用到入口，别加菜单项，挂到既有页面（如动态页动作卡片）。
 - 新增设置项改三处：`util/SettingsKeys.kt`、设置页 `SettingSection`、`activity/settings/SettingsIndex.kt`。
 - 外观设置（配色 / 卡片圆角 / 字体）走 `ui/appearance/` 三模块：**模块只放候选值与纯函数，写入一律走 `AppearanceManager`**（它负责递增外观版本号）；模块里别做几何计算，也别在热路径上缓存。细则见 `docs/architecture-map.md` §8.7。
