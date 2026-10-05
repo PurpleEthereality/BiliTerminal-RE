@@ -31,6 +31,9 @@ import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 /** 「外观设置」分组的 group_type 取值。`SettingsIndex` 里跳转该分组时也用这个常量。 */
 const val GROUP_APPEARANCE = "appearance"
 
+/** 「通知设置」分组的 group_type 取值。`SettingsIndex` 里跳转该分组时也用这个常量。 */
+const val GROUP_NOTIFY = "notify"
+
 /**
  * 分组设置页：统一使用声明式 SettingSection 列表 + SettingsAdapter 渲染。
  * 各分组的设置项全部以数据驱动，与详情页/评论区/偏好等设置页共用同一套渲染体系。
@@ -102,6 +105,7 @@ class SettingGroupActivity : RefreshListActivity() {
             "account" -> buildAccountGroup()
             "ui" -> buildUIGroup()
             GROUP_APPEARANCE -> buildAppearanceGroup()
+            GROUP_NOTIFY -> buildNotifyGroup()
             "content" -> buildContentGroup()
             "download" -> buildDownloadGroup()
             "lab" -> buildLabGroup()
@@ -392,6 +396,28 @@ class SettingGroupActivity : RefreshListActivity() {
         nav(R.drawable.icon_creative_center, "通用偏好", "一些特殊适配和特殊需求选项") {
             startActivity(Intent(this, SettingPrefActivity::class.java))
         }
+    }
+
+    /**
+     * 通知设置。
+     *
+     * 用户反馈「各种新加的通知应该在设置里新增一个大类-通知设置来关闭他」——原先这两项埋在
+     * 「内容与浏览 → 通用偏好 → 更新提醒」里，用户根本找不到，于是以为「新加的通知没法关」。
+     *
+     * **两个开关的键是既有的，没有新增 SP 键**（`private_msg_notify_enable` /
+     * `bangumi_update_notify_enable`，两者默认值本来就是 `true`），所以老用户升级后不需要任何迁移：
+     * 既不会丢设置，也不会被重新打开。旧位置（`SettingPrefActivity` 的「更新提醒」段）
+     * 已同步移除，避免两个入口指向同一开关、状态还不同步。
+     *
+     * 这里只放「会让通知栏响」的开关；「新动态数量检查」「消息数量检查」等只影响应用内红点、
+     * 不产生系统通知的项仍留在通用偏好，不搬过来——搬了会让用户以为关掉它们就不会有通知了。
+     */
+    private fun buildNotifyGroup() {
+        title("通知开关")
+        switch("新消息通知", getString(R.string.desc_private_msg_notify_enable),
+            SettingsKeys.PRIVATE_MSG_NOTIFY_ENABLE, true)
+        switch("追番更新提醒", getString(R.string.desc_bangumi_update_notify_enable),
+            SettingsKeys.BANGUMI_UPDATE_NOTIFY_ENABLE, true)
     }
 
     private fun buildDownloadGroup() {

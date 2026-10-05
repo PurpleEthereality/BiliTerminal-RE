@@ -71,6 +71,7 @@ class SettingMainActivity : InstanceActivity() {
         buildAccountGroup()
         buildUIGroup()
         buildContentGroup()
+        buildNotifyGroup()
         buildDownloadGroup()
         buildLabGroup()
         buildAboutGroup()
@@ -146,6 +147,21 @@ class SettingMainActivity : InstanceActivity() {
             "内容与浏览",
             "菜单、搜索、详情页、评论区与偏好",
             "content"
+        )
+    }
+
+    /**
+     * 「通知设置」分组。
+     *
+     * 用户反馈「各种新加的通知应该在设置里新增一个大类-通知设置来关闭他」。原先这些开关埋在
+     * 「内容与浏览 → 通用偏好 → 更新提醒」深处，等于没有入口。这里提到第一层级。
+     */
+    private fun buildNotifyGroup() {
+        addGroup(
+            R.drawable.icon_announcement,
+            "通知设置",
+            "新消息、追番更新等通知栏提醒的开关",
+            GROUP_NOTIFY
         )
     }
 

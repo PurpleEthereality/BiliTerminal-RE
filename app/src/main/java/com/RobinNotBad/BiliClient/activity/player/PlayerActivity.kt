@@ -60,6 +60,7 @@ import com.RobinNotBad.BiliClient.model.ViewPoint
 import com.RobinNotBad.BiliClient.player.DanmakuManager
 import com.RobinNotBad.BiliClient.player.PlayerDefaults
 import com.RobinNotBad.BiliClient.player.PlayerSurfaceBinder
+import com.RobinNotBad.BiliClient.player.SkipOpEdPrefs
 import com.RobinNotBad.BiliClient.player.ViewPointSkip
 import com.RobinNotBad.BiliClient.player.SurfaceTarget
 import com.RobinNotBad.BiliClient.service.PlaybackService
@@ -2292,7 +2293,11 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     /** 显示视频分段、或自动跳过片头片尾——任一开启都需要 view_points 数据。 */
     private fun needViewPoints(): Boolean =
         SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SHOW_VIEWPOINTS, true) ||
-            SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, false)
+            SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, SkipOpEdPrefs.DEFAULT_ENABLED)
+
+    /** 自动跳过片头片尾当前是否开启。默认值统一走 [SkipOpEdPrefs]，别在调用点写死字面量。 */
+    private fun skipOpEdEnabled(): Boolean =
+        SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, SkipOpEdPrefs.DEFAULT_ENABLED)
 
     /**
      * 自动跳过片头/片尾。
@@ -2302,7 +2307,7 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
      */
     private fun maybeAutoSkipOpEd(positionSec: Double) {
         if (skipSegments.isEmpty()) return
-        if (!SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, false)) return
+        if (!skipOpEdEnabled()) return
         val segment = ViewPointSkip.shouldSkip(positionSec, skipSegments, skipHandled) ?: return
         skipHandled.add(ViewPointSkip.keyOf(segment))
         Logu.d("跳过片头片尾", "跳过 type=" + segment.type + " " + segment.fromSec + "s -> " + segment.toSec + "s")
@@ -2341,22 +2346,31 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
     }
 
     /**
-     * 第一次在「有片头片尾」的视频里播放、且用户还没开这个功能时，只提示一次。
+     * 第一次在「有片头片尾」的视频里播放时提示一次。
      *
-     * 直接给一个「开启」按钮，用户不用去设置页翻；见过一次就写 `player_skip_op_ed_guided`，
-     * 以后每集都弹会很烦。
+     * **判据是「引导过没有」，不是「开关开着没有」**（见 [SkipOpEdPrefs.shouldShowGuide]）：
+     * 本功能已改为默认开启，若还按「开关开着就不引导」，清单第 200 条的引导会永远不出现，
+     * 新用户遇到自动跳过时会莫名其妙（不知道为什么进度自己动了）。
+     * 开关已开时文案改为「已自动跳过、可撤回」，不再劝用户「开启」。
      */
     private fun maybeShowSkipGuide() {
-        if (skipSegments.isEmpty()) return
-        if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, false)) return
-        if (SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED_GUIDED, false)) return
+        val enabled = skipOpEdEnabled()
+        if (!SkipOpEdPrefs.shouldShowGuide(
+                skipSegments.isNotEmpty(),
+                SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED_GUIDED, false)
+            )
+        ) return
         SharedPreferencesUtil.putBoolean(SettingsKeys.PLAYER_SKIP_OP_ED_GUIDED, true)
-        val action = MsgUtil.Action("开启", View.OnClickListener {
-            SharedPreferencesUtil.putBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, true)
-            MsgUtil.showMsg("已开启自动跳过片头片尾")
+        val action = MsgUtil.Action(SkipOpEdPrefs.guideActionText(enabled), View.OnClickListener {
+            if (!enabled) {
+                SharedPreferencesUtil.putBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, true)
+                MsgUtil.showMsg("已开启自动跳过片头片尾")
+            }
         })
         val anchor = findViewById<View>(android.R.id.content) ?: return
-        MsgUtil.createSnack(anchor, "这个视频有片头片尾，可以自动跳过", Snackbar.LENGTH_LONG, action).show()
+        MsgUtil.createSnack(
+            anchor, SkipOpEdPrefs.guideText(enabled), Snackbar.LENGTH_LONG, action
+        ).show()
     }
 
     /**
