@@ -42,7 +42,10 @@ class WriteReplyActivity : BaseActivity() {
             12016 to "包含敏感内容！",
             12025 to "字数过多啦QAQ",
             12035 to "被拉黑了...",
-            12051 to "重复评论，请勿刷屏！"
+            12051 to "重复评论，请勿刷屏！",
+            // 12066 是服务端对带图评论的拒绝码，本地快照与上游 collector 都没有收录
+            //（上游 action.md 该表末尾写「其他错误码有待补充」），此处只保证不再显示裸数字
+            12066 to "图片信息异常，请重新选图后再试"
         )
 
         // 单张图片的绝对上限，超过就不传了（手表上传大文件基本必失败，还容易 OOM）
@@ -354,18 +357,10 @@ class WriteReplyActivity : BaseActivity() {
     }
 
     private fun buildPictures(): String {
-        val jsonArray = JSONArray()
+        // 组装逻辑已抽到 ReplyApi.buildPictures（纯函数，带 JVM 单测），这里只负责加锁取快照
         synchronized(uploadDataList) {
-            for (data in uploadDataList) {
-                val jsonObject = JSONObject()
-                jsonObject.put("img_src", data.image_url)
-                jsonObject.put("img_width", data.image_width)
-                jsonObject.put("img_height", data.image_height)
-                jsonObject.put("img_size", data.img_size)
-                jsonArray.put(jsonObject)
-            }
+            return ReplyApi.buildPictures(ArrayList(uploadDataList))
         }
-        return jsonArray.toString()
     }
 
     @SuppressLint("SetTextI18n")

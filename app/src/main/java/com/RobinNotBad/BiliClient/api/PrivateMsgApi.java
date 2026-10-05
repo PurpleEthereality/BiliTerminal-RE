@@ -337,13 +337,32 @@ public class PrivateMsgApi {
      */
     public static JSONObject buildImageContent(String url, int width, int height, long byteSize, String imageType)
             throws JSONException {
+        return buildImageContentOfKb(url, width, height, sizeToKb(byteSize), imageType);
+    }
+
+    /**
+     * 构造图片消息（{@code msg_type=2}）的 content 对象，大小直接以**千字节**给出。
+     *
+     * <p>存在的理由：图床上传接口（upload_bfs）返回的 {@code img_size} 本身就是千字节
+     * （官方示例 {@code "img_size": 6.261}，bilibili-API/docs/dynamic/publish.md:40,66），
+     * 而 {@link ImageApi.UploadedImage#size} 存的正是这个值。若把它当成"字节数"再走
+     * {@link #buildImageContent(String, int, int, long, String)}，会被 {@link #sizeToKb(long)}
+     * 再除一次 1024，发出去的 {@code size} 只有真实值的 1/1024。
+     *
+     * <p>{@code size} 字段单位见 bilibili-API/docs/message/private_msg_content.md:42
+     * （千字节，示例 {@code 55.443}）。
+     *
+     * @param sizeKb 图片大小，单位千字节；非正数按 0 处理，避免发出 NaN / 负数
+     */
+    public static JSONObject buildImageContentOfKb(String url, int width, int height, double sizeKb, String imageType)
+            throws JSONException {
         return new JSONObject()
                 .put("url", url)
                 .put("width", width)
                 .put("height", height)
                 .put("imageType", imageType)
                 .put("original", 1)
-                .put("size", sizeToKb(byteSize));
+                .put("size", sizeKb > 0 ? sizeKb : 0d);
     }
 
     /**

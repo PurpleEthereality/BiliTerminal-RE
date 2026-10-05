@@ -224,10 +224,12 @@ class PrivateMsgActivity : BaseActivity() {
                     prepared.mimeType,
                     ImageApi.BIZ_REPLY
                 ).getOrThrow()
-                val content = PrivateMsgApi.buildImageContent(
+                val content = PrivateMsgApi.buildImageContentOfKb(
                     uploaded.url,
                     uploaded.width,
                     uploaded.height,
+                    // UploadedImage.size 是图床返回的 img_size，本身就是千字节（小数），
+                    // 不能再按字节数走 sizeToKb，否则会被多除一次 1024
                     uploaded.size,
                     PrivateMsgApi.imageTypeOf(prepared.mimeType)
                 )

@@ -65,9 +65,16 @@ public class ImageApi {
         public final String url;
         public final int width;
         public final int height;
-        public final long size;
+        /**
+         * 图片大小，单位 KB（小数）。
+         *
+         * <p>与 {@link ReplyApi.UploadImageData#img_size} 保持一致用 double：
+         * 服务端返回的是小数 KB（官方示例 {@code "img_size": 6.261}，
+         * bilibili-API/docs/dynamic/publish.md:66），用整型存会把小数截断。
+         */
+        public final double size;
 
-        public UploadedImage(String url, int width, int height, long size) {
+        public UploadedImage(String url, int width, int height, double size) {
             this.url = url;
             this.width = width;
             this.height = height;

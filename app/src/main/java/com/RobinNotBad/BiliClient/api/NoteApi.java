@@ -1,5 +1,9 @@
 package com.RobinNotBad.BiliClient.api;
 
+import android.util.Log;
+
+import androidx.annotation.NonNull;
+
 import com.RobinNotBad.BiliClient.model.Note;
 import com.RobinNotBad.BiliClient.model.NoteBlock;
 import com.RobinNotBad.BiliClient.util.NetWorkUtil;
@@ -33,6 +37,9 @@ public class NoteApi {
 
     /** oid_type：0 = 视频，此时 oid 就是 avid（快照只支持这一种）。 */
     private static final int OID_TYPE_VIDEO = 0;
+
+    /** 真机诊断日志 tag：{@code adb logcat -s BiliNote} 可一次过滤出笔记链路全部日志。 */
+    private static final String TAG = "BiliNote";
 
     private NoteApi() {
     }
@@ -197,6 +204,45 @@ public class NoteApi {
         }
     }
 
+    /**
+     * 失败提示分级：把异常翻译成能显示在页面上的中文。纯函数，便于单测。
+     *
+     * <p>背景：{@link #noteErrorMsg(int)} 只覆盖「接口返回了错误码」这一种情况，
+     * 而页面拿到的是异常。原先页面把所有异常一律显示成「获取笔记失败」，
+     * 断网/未登录/79502/79503 四种完全不同的处置被压成同一句话。
+     *
+     * <p>分级依据：
+     * <ul>
+     *   <li>网络异常（{@link IOException}）→ 网络文案，不看异常描述里的类名；</li>
+     *   <li>{@link JSONException} → 它的 message 就是 {@link #errorText(JSONObject, int)}
+     *       的产物（服务端 message 优先），是可信的真实原因，直接转述；</li>
+     *   <li>其余 → 一般性失败文案，不外泄内部细节。</li>
+     * </ul>
+     *
+     * <p>不外泄的具体原因：断网的异常描述形如 {@code java.net.UnknownHostException: api.bilibili.com}，
+     * 手表小屏上既长又无意义。
+     *
+     * <p><b>返回类型声明为非空</b>（{@code @NonNull}）：本类的方法对 Kotlin 调用方是平台类型
+     * {@code String!}，若此处返回 null，Kotlin 侧一赋给非空 {@code String} 就会抛
+     * {@code NullPointerException: null cannot be cast to non-null type kotlin.String}。
+     * 故任何一个分支都不允许返回 null —— 下面每条分支都显式返回字面量，末行兜底 return 保证全覆盖。
+     * {@code e.getMessage()} 为 null、剥离前缀后为空串这两种情况都已在分支内处理。
+     */
+    @NonNull
+    public static String failureText(Throwable e) {
+        if (e == null) return "获取笔记失败";
+        if (e instanceof IOException) return "网络异常，请检查网络后重试";
+        if (e instanceof JSONException) {
+            String detail = e.getMessage();
+            if (detail == null) return "获取笔记失败";
+            detail = detail.replace("org.json.JSONException:", "").trim();
+            // noteErrorMsg 的兜底是「获取笔记失败（错误码 x）」，那种情况别再显示一遍
+            if (detail.isEmpty() || detail.startsWith("获取笔记失败")) return "获取笔记失败";
+            return detail;
+        }
+        return "获取笔记失败";
+    }
+
     // ---------------------------------------------------------------- 网络请求
 
     /** 取稿件私有笔记的 id 列表；没有笔记返回空表。 */
@@ -207,8 +253,13 @@ public class NoteApi {
                 + "&csrf=" + NetWorkUtil.currentCsrf();
         JSONObject all = NetWorkUtil.getJson(url);
         int code = all.optInt("code", -1);
-        if (code != 0) throw new JSONException(errorText(all, code));
-        return parseNoteIds(all.optJSONObject("data"));
+        if (code != 0) {
+            logFailure(TAG, url, aid, "", all, code);
+            throw new JSONException(errorText(all, code));
+        }
+        List<String> ids = parseNoteIds(all.optJSONObject("data"));
+        Log.d(TAG, "aid=" + aid + " 笔记数=" + ids.size());
+        return ids;
     }
 
     /**
@@ -221,8 +272,47 @@ public class NoteApi {
                 + "&note_id=" + noteId;
         JSONObject all = NetWorkUtil.getJson(url);
         int code = all.optInt("code", -1);
-        if (code != 0) throw new JSONException(errorText(all, code));
-        return parseNoteDetail(all.optJSONObject("data"));
+        if (code != 0) {
+            logFailure(TAG, url, aid, noteId, all, code);
+            throw new JSONException(errorText(all, code));
+        }
+        Note note = parseNoteDetail(all.optJSONObject("data"));
+        // 正文块数很关键：0 块会让页面走到「这篇笔记还没有正文」，与 79503 现象相同，
+        // 真机上要靠这条日志把「接口没给 content」和「content 解析不出块」区分开
+        Log.d(TAG, "aid=" + aid + " note_id=" + noteId
+                + " 标题长度=" + note.title.length() + " 正文块数=" + note.blocks.size());
+        return note;
+    }
+
+    /**
+     * 失败诊断日志（真机排查埋点，26.10.04 批次 6 的 C27 复查）。
+     *
+     * <p>79502/79503 的成因在本地无法确证（需要有效 Cookie 打真接口），所以这里把
+     * <b>请求 URL + code + 服务端 message</b> 全打出来。用户复现后一条 logcat 就能定位：
+     * <pre>adb logcat -s BiliNote</pre>
+     *
+     * <p>URL 里的 {@code csrf} 一律截断，不落明文；{@code note_id} 是用户自己的笔记 id，
+     * 保留原值才看得出精度问题（这正是要查的东西）。
+     */
+    private static void logFailure(String tag, String url, long aid, String noteId,
+                                   JSONObject all, int code) {
+        Log.e(tag, "请求失败"
+                + " | aid=" + aid
+                + (noteId.isEmpty() ? "" : " | note_id=" + noteId)
+                + " | code=" + code
+                + " | message=" + all.optString("message", "")
+                + " | url=" + maskCsrf(url));
+    }
+
+    /** 把 URL 里的 csrf 值换成 {@code ***}，日志里不留凭据明文。 */
+    private static String maskCsrf(String url) {
+        if (url == null || url.isEmpty()) return "";
+        int at = url.indexOf("csrf=");
+        if (at < 0) return url;
+        int valueStart = at + "csrf=".length();
+        int valueEnd = url.indexOf('&', valueStart);
+        if (valueEnd < 0) valueEnd = url.length();
+        return url.substring(0, valueStart) + "***" + url.substring(valueEnd);
     }
 
     /** 错误提示：服务端 message 优先，没有就用错误码文案。 */

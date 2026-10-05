@@ -75,11 +75,22 @@ class NoteActivity : BaseActivity() {
                 if (note.noteId.isEmpty()) note.noteId = noteId
                 runOnUiThread { showNote(note) }
             } catch (e: Exception) {
-                runOnUiThread { showEmpty("获取笔记失败") }
+                // 不能把所有异常都压成一句「获取笔记失败」：断网、未登录、79502/79503
+                // 的处置完全不同，用户只看到同一句话就没法反馈也没法自救
+                val text = failureText(e)
+                runOnUiThread { showEmpty(text) }
                 MsgUtil.err(e)
             }
         }
     }
+
+    /**
+     * 失败提示分级：服务端有话说就转述，纯网络问题给网络文案，其余才是一般性失败。
+     *
+     * <p>判定逻辑本身是纯函数 {@link NoteApi#failureText(Throwable)}（带 JVM 单测），
+     * 这里只负责切主线程显示。
+     */
+    private fun failureText(e: Exception): String = NoteApi.failureText(e)
 
     private fun showEmpty(text: String) {
         titleView.visibility = View.GONE

@@ -202,7 +202,17 @@ public class ReplyApi {
         public String image_url;
         public int image_width;
         public int image_height;
-        public long img_size;
+        /**
+         * 图片大小，单位 KB。
+         *
+         * <p><b>必须用 double</b>：服务端返回的是小数 KB，官方响应示例为
+         * {@code "img_size": 6.261}（bilibili-API/docs/dynamic/publish.md:66），
+         * 卡片接口里还有 {@code 1425.97998046875}（docs/dynamic/card_info.md:133）。
+         * 上游 PiliPlus 同样是按 double 读的
+         * （lib/models_new/upload_bfs/data.dart:5,19）。历史上这里是 {@code long} +
+         * {@code optLong}，会把小数截断（6.261 → 6、662.6 → 662）。
+         */
+        public double img_size;
     }
 
     /**
@@ -263,11 +273,46 @@ public class ReplyApi {
             d.image_url = data.optString("image_url", "");
             d.image_width = data.optInt("image_width", 0);
             d.image_height = data.optInt("image_height", 0);
-            d.img_size = data.optLong("img_size", 0);
+            d.img_size = data.optDouble("img_size", 0);
             return Result.success(d);
         } catch (Exception e) {
             return Result.failure(e);
         }
+    }
+
+    /**
+     * 把已上传成功的评论图片拼成 {@code pictures} 参数（JSON 数组字符串）。
+     *
+     * <p>字段名与单位以服务端文档为准（bilibili-API/docs/comment/readme.md:289-296）：
+     * {@code img_src} 图片地址、{@code img_width} 宽、{@code img_height} 高、
+     * {@code img_size} 大小（**单位 KB，小数**）。与上游 PiliPlus
+     * {@code lib/pages/common/publish/common_rich_text_pub_page.dart:519-524} 的组装方式一致。
+     *
+     * <p>纯函数：不读全局状态、不碰界面，便于 JVM 单测（AGENTS.md「请求与解析分离」）。
+     *
+     * @param images 已上传成功的图片；为 null 时按空列表处理
+     * @return JSON 数组字符串；没有任何图片时返回空串，调用方据此不带 pictures 参数
+     */
+    public static String buildPictures(List<UploadImageData> images) {
+        if (images == null || images.isEmpty()) return "";
+        JSONArray jsonArray = new JSONArray();
+        for (UploadImageData data : images) {
+            if (data == null) continue;
+            JSONObject jsonObject = new JSONObject();
+            try {
+                jsonObject.put("img_src", data.image_url);
+                jsonObject.put("img_width", data.image_width);
+                jsonObject.put("img_height", data.image_height);
+                // 不能取整：服务端返回的是小数 KB，截断会改变图片大小语义
+                jsonObject.put("img_size", data.img_size);
+            } catch (JSONException e) {
+                // put 在 key 非 null 时不会抛；真抛了也是脏数据，跳过这一张而不是整条评论发不出去
+                continue;
+            }
+            jsonArray.put(jsonObject);
+        }
+        if (jsonArray.length() == 0) return "";
+        return jsonArray.toString();
     }
 
     /** 发送带图评论（pictures 为评论图片 JSON 数组字符串）。 */

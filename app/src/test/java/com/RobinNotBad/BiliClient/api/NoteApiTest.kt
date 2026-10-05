@@ -2,9 +2,11 @@ package com.RobinNotBad.BiliClient.api
 
 import com.RobinNotBad.BiliClient.model.NoteBlock
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -161,5 +163,62 @@ class NoteApiTest {
         assertTrue(NoteApi.noteErrorMsg(79502).contains("笔记"))
         assertTrue(NoteApi.noteErrorMsg(79503).contains("正文"))
         assertTrue(NoteApi.noteErrorMsg(12345).contains("12345"))
+    }
+
+    // ------------------------------------------------------------ 失败提示分级
+
+    @Test
+    fun failureText_givesNetworkAdviceForIoExceptions() {
+        // 断网时异常描述是 java.net.UnknownHostException: api.bilibili.com 这种，
+        // 手表上没法看，也不能显示给用户
+        val e = java.net.UnknownHostException("api.bilibili.com")
+        assertEquals("网络异常，请检查网络后重试", NoteApi.failureText(e))
+        // SocketTimeoutException 也继承 IOException，同样走网络文案
+        assertEquals(
+            "网络异常，请检查网络后重试",
+            NoteApi.failureText(java.net.SocketTimeoutException("timeout"))
+        )
+    }
+
+    @Test
+    fun failureText_passesThroughServerMessage() {
+        // list/archive 与 info 在 code != 0 时抛的 JSONException 带的是 errorText 的产物，
+        // 即「服务端 message 优先」。79502/79503 的真实文案就是这么上来的
+        assertEquals("没有找到这篇笔记", NoteApi.failureText(JSONException("没有找到这篇笔记")))
+        assertEquals("这篇笔记还没有正文", NoteApi.failureText(JSONException("这篇笔记还没有正文")))
+        assertEquals("还没有登录喵~", NoteApi.failureText(JSONException("还没有登录喵~")))
+        // message 里带异常类名前缀时也要剥掉，界面不该出现 org.json.JSONException
+        assertEquals("服务端原话", NoteApi.failureText(JSONException("org.json.JSONException:服务端原话")))
+    }
+
+    @Test
+    fun failureText_hidesGenericFallback() {
+        // noteErrorMsg 的兜底文案是「获取笔记失败（错误码 x）」，再显示一遍没意义
+        assertEquals("获取笔记失败", NoteApi.failureText(JSONException("获取笔记失败（错误码 -999）")))
+        // 没有 message 的 JSONException
+        assertEquals("获取笔记失败", NoteApi.failureText(JSONException(null as String?)))
+        // 传入 null 异常也要给文案，不能让页面空白
+        assertEquals("获取笔记失败", NoteApi.failureText(null as Throwable?))
+    }
+
+    @Test
+    fun jsonExceptionWithoutMessage_keepsNullMessage() {
+        // 这条用例是上一轮的失败根因所在，保留为回归防护：
+        // NoteApi.failureText 是 Java 方法，返回类型对 Kotlin 是平台类型 String!。
+        // 上一轮这里写的是 `JSONException(null as String)` —— `as String`（非空）会把 null 直接
+        // 断言成非空类型，构造器调用当场抛
+        // `NullPointerException: null cannot be cast to non-null type kotlin.String`，
+        // 异常在进入被测方法之前就抛了。该报错与 failureText 的实现无关（它本身有 null 兜底）。
+        // 正确写法是 `as String?`，让 null 真正传进去。
+        val e = JSONException(null as String?)
+        assertNull(e.message)
+        assertEquals("获取笔记失败", NoteApi.failureText(e))
+    }
+
+    @Test
+    fun failureText_hidesInternalDetailForUnknownTypes() {
+        // 其余异常（解析异常、类型转换等）不外泄类名与堆栈描述
+        assertEquals("获取笔记失败", NoteApi.failureText(IllegalStateException("内部细节")))
+        assertEquals("获取笔记失败", NoteApi.failureText(RuntimeException("boom")))
     }
 }

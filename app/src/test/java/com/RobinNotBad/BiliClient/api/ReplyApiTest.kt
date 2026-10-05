@@ -131,4 +131,73 @@ class ReplyApiTest {
         // 文案必须能直接丢给 MsgUtil.showMsg，所以连完整文案一起钉死
         assertEquals("还有 3 张图片正在上传，请稍候", ReplyApi.uploadPendingTip(3))
     }
+
+    // ---- pictures 组装（ReplyApi.buildPictures，原先内联在 WriteReplyActivity 里） ----
+
+    private fun image(url: String, w: Int, h: Int, size: Double) =
+        ReplyApi.UploadImageData().apply {
+            image_url = url
+            image_width = w
+            image_height = h
+            img_size = size
+        }
+
+    @Test
+    fun buildPictures_keepsFractionalKb() {
+        // 服务端返回的 img_size 是小数 KB（官方示例 "img_size": 6.261，
+        // bilibili-API/docs/dynamic/publish.md:66）。历史上这里用 long + optLong 存，
+        // 会把 6.261 截成 6、662.6005859375 截成 662。
+        // 这条测试就是钉死"不能截断"。
+        val json = ReplyApi.buildPictures(listOf(image("http://i0.hdslb.com/a.png", 73, 71, 6.261)))
+        assertTrue("小数 KB 必须原样保留，不能被截成整数：$json", json.contains("6.261"))
+        assertFalse("6.261 不能被截断成 6：$json", json.contains("\"img_size\":6,"))
+    }
+
+    @Test
+    fun buildPictures_hasAllFourDocumentedFields() {
+        // 字段名以服务端文档为准（bilibili-API/docs/comment/readme.md:289-296）：
+        // img_src / img_width / img_height / img_size，缺一个服务端就不认这张图。
+        val json = ReplyApi.buildPictures(listOf(image("http://i0.hdslb.com/a.png", 73, 71, 6.261)))
+        for (field in listOf("img_src", "img_width", "img_height", "img_size")) {
+            assertTrue("pictures 里必须有 $field：$json", json.contains("\"$field\""))
+        }
+        assertTrue("图片地址要原样带上：$json", json.contains("http://i0.hdslb.com/a.png"))
+        assertTrue("宽度要带上：$json", json.contains("\"img_width\":73"))
+        assertTrue("高度要带上：$json", json.contains("\"img_height\":71"))
+    }
+
+    @Test
+    fun buildPictures_emptyMeansNoParameter() {
+        // 没有图片时必须返回空串：sendReply 据此判断"不带 pictures 参数"，
+        // 若返回 "[]" 会被服务端当成一次非法带图评论。
+        assertEquals("没有图片时返回空串", "", ReplyApi.buildPictures(emptyList()))
+        assertEquals("null 按空列表处理", "", ReplyApi.buildPictures(null))
+    }
+
+    @Test
+    fun buildPictures_skipsNullEntriesButKeepsTheRest() {
+        // 列表里的 null 是脏数据（例如上传失败留下的占位），
+        // 跳过它而不是让整条评论发不出去。
+        val json = ReplyApi.buildPictures(listOf(null, image("http://i0.hdslb.com/b.png", 10, 20, 1.5)))
+        assertTrue("有效的那张要在：$json", json.contains("http://i0.hdslb.com/b.png"))
+        assertEquals("只应剩一张图", 1, org.json.JSONArray(json).length())
+    }
+
+    @Test
+    fun buildPictures_keepsOrderAndCount() {
+        // 多图顺序要与用户选的顺序一致（服务端按数组顺序展示）
+        val json = ReplyApi.buildPictures(
+            listOf(
+                image("http://i0.hdslb.com/1.png", 1, 1, 1.0),
+                image("http://i0.hdslb.com/2.png", 2, 2, 2.5),
+                image("http://i0.hdslb.com/3.png", 3, 3, 3.75)
+            )
+        )
+        val array = org.json.JSONArray(json)
+        assertEquals("三张图都要在", 3, array.length())
+        assertEquals("http://i0.hdslb.com/1.png", array.getJSONObject(0).getString("img_src"))
+        assertEquals("http://i0.hdslb.com/2.png", array.getJSONObject(1).getString("img_src"))
+        assertEquals("http://i0.hdslb.com/3.png", array.getJSONObject(2).getString("img_src"))
+        assertEquals("2.5 不能被截断", 2.5, array.getJSONObject(1).getDouble("img_size"), 0.000001)
+    }
 }

@@ -173,4 +173,33 @@ class PrivateMsgApiTest {
         assertEquals("1 表示 APP 显示「下载原图」", 1, content.getInt("original"))
         assertEquals(55.443, content.getDouble("size"), 0.001)
     }
+
+    @Test
+    fun buildImageContentOfKb_不再次除以1024() {
+        // 回归用例：图床上传返回的 img_size 已经是千字节（官方示例 "img_size": 6.261，
+        // bilibili-API/docs/dynamic/publish.md:40,66），直接交给接口即可。
+        // 历史上调用方把它当字节数传给 buildImageContent，被 sizeToKb 再除一次 1024，
+        // 发出去的 size 只有真实值的 1/1024。
+        val content = PrivateMsgApi.buildImageContentOfKb(
+            "https://message.biliimg.com/bfs/im_new/xxx.jpg", 300, 400, 6.261, "jpeg"
+        )
+
+        assertEquals("KB 进就要 KB 出，不能被再除一次 1024", 6.261, content.getDouble("size"), 0.000001)
+    }
+
+    @Test
+    fun buildImageContentOfKb_与字节版对同一个值给出一致结果() {
+        // 同一个大小，两条入口必须等价：56774 字节 == 55.443KB
+        val byKb = PrivateMsgApi.buildImageContentOfKb("u", 1, 1, 55.443, "jpeg")
+        val byByte = PrivateMsgApi.buildImageContent("u", 1, 1, 56774L, "jpeg")
+
+        assertEquals(byByte.getDouble("size"), byKb.getDouble("size"), 0.001)
+    }
+
+    @Test
+    fun buildImageContentOfKb_非正数按0处理() {
+        // 不能让 0 / 负数变成 NaN 或负的 size 发出去
+        assertEquals(0.0, PrivateMsgApi.buildImageContentOfKb("u", 1, 1, 0.0, "jpeg").getDouble("size"), 0.0)
+        assertEquals(0.0, PrivateMsgApi.buildImageContentOfKb("u", 1, 1, -5.0, "jpeg").getDouble("size"), 0.0)
+    }
 }
