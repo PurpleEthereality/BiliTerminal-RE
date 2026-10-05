@@ -5,8 +5,6 @@ import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
-
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.base.RefreshListActivity
 import com.RobinNotBad.BiliClient.adapter.video.VideoCardAdapter
@@ -19,6 +17,7 @@ import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.RobinNotBad.BiliClient.util.TerminalContext
+import com.RobinNotBad.BiliClient.util.TerminalDialog
 
 class FavoriteVideoListActivity : RefreshListActivity() {
 
@@ -83,6 +82,9 @@ class FavoriteVideoListActivity : RefreshListActivity() {
 
     private fun setupSortBar() {
         findViewById<View>(R.id.sortBar).visibility = View.VISIBLE
+        // 列表一滚动就把排序行收回去（手表屏小，收起来多露出一行视频）。
+        // 多选条（manageBar）故意不在这里：用户正勾着视频呢，条自己收走就没法点删除了。
+        setupAutoHideBars(findViewById(R.id.sortBar))
         sortFavTime = findViewById(R.id.sortFavTime)
         sortView = findViewById(R.id.sortView)
         sortPubtime = findViewById(R.id.sortPubtime)
@@ -92,6 +94,14 @@ class FavoriteVideoListActivity : RefreshListActivity() {
         sortView?.setOnClickListener { switchSort(FavoriteApi.ORDER_VIEW) }
         sortPubtime?.setOnClickListener { switchSort(FavoriteApi.ORDER_PUBTIME) }
         updateSortColors()
+
+        // 临时诊断埋点（26.10.04 批次 7）：用户在真机上反馈「没看到排序行」，静态排查已确认
+        // 点亮是无条件的、资源也进了包，需要一行日志确认运行时状态。
+        // 真机排查：adb logcat -s "debug-收藏夹排序"（应看到 visibility=0 VISIBLE）。
+        Log.e(
+            "debug-收藏夹排序",
+            "sortBar.visibility=${findViewById<View>(R.id.sortBar).visibility} mediaId=$mediaId fid=$fid readOnly=$readOnly"
+        )
     }
 
     private fun switchSort(order: String) {
@@ -100,6 +110,8 @@ class FavoriteVideoListActivity : RefreshListActivity() {
         updateSortColors()
         // 排序是服务端参数，必须从第一页重拉；重拉前先退出多选，避免勾选状态指向旧列表
         if (selectionMode) exitSelectionMode()
+        // 列表马上要回到第一页，用户已经滚不回去了，排序行必须回到位
+        expandAutoHideBars()
         page = 1
         bottom = false
         videoList.clear()
@@ -172,29 +184,29 @@ class FavoriteVideoListActivity : RefreshListActivity() {
             MsgUtil.showMsg("先选几条吧~")
             return
         }
-        AlertDialog.Builder(this)
-            .setTitle("删除收藏内容")
-            .setMessage("确定把选中的 ${targets.size} 条从收藏夹里移除吗？")
-            .setPositiveButton("删除") { _, _ ->
-                CenterThreadPool.run {
-                    try {
-                        val code = FavoriteApi.batchDeleteResources(mediaId, targets)
-                        runOnUiThread {
-                            if (code == 0) {
-                                MsgUtil.showMsg("已删除 ${targets.size} 条")
-                                applyRemoved(targets)
-                                exitSelectionMode()
-                            } else {
-                                MsgUtil.showMsg(FavoriteApi.resourceErrorMsg(code))
-                            }
+        TerminalDialog.confirm(
+            context = this,
+            title = "删除收藏内容",
+            message = "确定把选中的 ${targets.size} 条从收藏夹里移除吗？",
+            confirmText = "删除"
+        ) {
+            CenterThreadPool.run {
+                try {
+                    val code = FavoriteApi.batchDeleteResources(mediaId, targets)
+                    runOnUiThread {
+                        if (code == 0) {
+                            MsgUtil.showMsg("已删除 ${targets.size} 条")
+                            applyRemoved(targets)
+                            exitSelectionMode()
+                        } else {
+                            MsgUtil.showMsg(FavoriteApi.resourceErrorMsg(code))
                         }
-                    } catch (e: Exception) {
-                        report(e)
                     }
+                } catch (e: Exception) {
+                    report(e)
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }.show()
     }
 
     @SuppressLint("NotifyDataSetChanged")
@@ -301,10 +313,13 @@ class FavoriteVideoListActivity : RefreshListActivity() {
         actions.add("复制到…" to { showTargetFolderPicker(card, false) })
         actions.add("移动到…" to { showTargetFolderPicker(card, true) })
         actions.add("取消收藏" to { confirmRemoveFavorite(card) })
-        AlertDialog.Builder(this)
-            .setTitle(card.title)
-            .setItems(actions.map { it.first }.toTypedArray()) { _, which -> actions[which].second() }
-            .show()
+        // 「取消收藏」是破坏性操作（索引 2），用危险色标出来
+        TerminalDialog.menu(
+            context = this,
+            title = card.title,
+            items = actions.map { it.first },
+            danger = setOf(2)
+        ) { which -> actions[which].second() }.show()
     }
 
     /** 拉自己的收藏夹列表让用户选目标（排除当前这个） */
@@ -317,12 +332,11 @@ class FavoriteVideoListActivity : RefreshListActivity() {
                         MsgUtil.showMsg("没有别的收藏夹可以放喵~")
                         return@runOnUiThread
                     }
-                    AlertDialog.Builder(this)
-                        .setTitle(if (move) "移动到…" else "复制到…")
-                        .setItems(targets.map { it.name }.toTypedArray()) { _, which ->
-                            transfer(card, targets[which].mediaId, move)
-                        }
-                        .show()
+                    TerminalDialog.menu(
+                        context = this@FavoriteVideoListActivity,
+                        title = if (move) "移动到…" else "复制到…",
+                        items = targets.map { it.name }
+                    ) { which -> transfer(card, targets[which].mediaId, move) }.show()
                 }
             } catch (e: Exception) {
                 report(e)
@@ -350,28 +364,28 @@ class FavoriteVideoListActivity : RefreshListActivity() {
     }
 
     private fun confirmRemoveFavorite(card: VideoCard) {
-        AlertDialog.Builder(this)
-            .setTitle("取消收藏")
-            .setMessage("确定把《${card.title}》从收藏夹里去掉吗？")
-            .setPositiveButton("确定") { _, _ ->
-                CenterThreadPool.run {
-                    try {
-                        val code = FavoriteApi.deleteFavorite(card.aid, fid)
-                        runOnUiThread {
-                            if (code == 0) {
-                                MsgUtil.showMsg("已取消收藏")
-                                removeItem(card)
-                            } else {
-                                MsgUtil.showMsg("取消失败，错误码：$code")
-                            }
+        TerminalDialog.confirm(
+            context = this,
+            title = "取消收藏",
+            message = "确定把《${card.title}》从收藏夹里去掉吗？",
+            confirmText = "确定"
+        ) {
+            CenterThreadPool.run {
+                try {
+                    val code = FavoriteApi.deleteFavorite(card.aid, fid)
+                    runOnUiThread {
+                        if (code == 0) {
+                            MsgUtil.showMsg("已取消收藏")
+                            removeItem(card)
+                        } else {
+                            MsgUtil.showMsg("取消失败，错误码：$code")
                         }
-                    } catch (e: Exception) {
-                        report(e)
                     }
+                } catch (e: Exception) {
+                    report(e)
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }.show()
     }
 
     @SuppressLint("NotifyDataSetChanged")
