@@ -298,7 +298,7 @@ jobs:
               [ -f "$f" ] || continue
               n=$(basename "$f")
               echo "- ${n}"
-              echo "  https://github.com/zisekongling/BiliTerminal-RE/releases/download/${TAG}/${n}"
+              echo "  https://github.com/PurpleEthereality/BiliTerminal-RE/releases/download/${TAG}/${n}"
             done
           } > "$out"
           cat "$out"
@@ -365,11 +365,13 @@ jobs:
           set -euo pipefail
           echo "::add-mask::$RELAY_URL"
           echo "::add-mask::$RELAY_SECRET"
+          # 换主后中转服务暂停使用（Secrets.RELAY_URL / RELAY_SECRET 未配置）：
+          # 缺这两个值只该少一段 Gitee 同步，不该让整个发版失败 —— 告警后跳过。
           if [ -z "${RELAY_URL:-}" ] || [ -z "${RELAY_SECRET:-}" ]; then
-            echo "::error::未配置 Secrets.RELAY_URL / Secrets.RELAY_SECRET，无法通知中转服务"
-            exit 1
+            echo "::warning::未配置 Secrets.RELAY_URL / Secrets.RELAY_SECRET，跳过 Gitee 中转同步"
+            exit 0
           fi
-          BODY=$(printf '{"repository":{"full_name":"zisekongling/BiliTerminal-RE"},"release":{"tag_name":"%s"}}' "$TAG")
+          BODY=$(printf '{"repository":{"full_name":"PurpleEthereality/BiliTerminal-RE"},"release":{"tag_name":"%s"}}' "$TAG")
           printf '%s' "$BODY" > /tmp/relay.json
           SIG=$(openssl dgst -sha256 -hmac "$RELAY_SECRET" -binary /tmp/relay.json | xxd -p -c256)
           for i in 1 2 3; do

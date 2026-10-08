@@ -100,7 +100,7 @@ object UpdateManager {
      */
     private val releaseSources = listOf(
         "Gitee" to "https://gitee.com/api/v5/repos/zisekongling/bili-terminal-re/releases/latest",
-        "GitHub" to "https://api.github.com/repos/zisekongling/BiliTerminal-RE/releases/latest"
+        "GitHub" to "https://api.github.com/repos/PurpleEthereality/BiliTerminal-RE/releases/latest"
     )
 
     private fun doFetchUpdateConfig(): UpdateConfig {

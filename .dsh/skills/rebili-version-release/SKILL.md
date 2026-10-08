@@ -95,6 +95,9 @@ description: >-
    `RELAY_URL` / `RELAY_SECRET`，请求体用 HMAC-SHA256 签名；由中转服务自己去 GitHub
    拉附件并同步到 Gitee `zisekongling/bili-terminal-re`（幂等，同步后 Gitee 只留最近若干个发行版）。
    **Action 侧绝不直接访问 Gitee**（网络不通），也不要把地址/密钥写进代码或日志。
+   ⚠️ **2026-10-08 换主后这两个 Secret 没配**（值随旧仓库一起丢失）：工作流已改成「缺 Secret
+   就 `::warning::` 跳过」而不再 `exit 1`，所以**现在发版不会自动同步到 Gitee**，
+   Gitee 侧需手工补，或等 relay 恢复后重发通知。
 
 - 客户端更新源：Gitee 发行版优先，失败回落 GitHub 发行版；两处都是公开仓库，读 release 不需要 token。
 - Gitee 直链格式：`https://gitee.com/zisekongling/bili-terminal-re/releases/download/<tag>/<文件名>`。
@@ -109,7 +112,7 @@ description: >-
 ### 5. 校验
 - strings.xml 保持 XML 合法（本次只改数组文本）。
 - 版本号改过就必须让 `:app:verifyVersionConsistency` 通过（校验 build.gradle 与 strings.xml 更新日志锚点）。
-- **Release 建好后必须回读它的说明正文**（`https://api.github.com/repos/zisekongling/BiliTerminal-RE/releases/latest` 的 `body`），确认 `update_log_current` 的全部条目都在里面。若正文只有 `### APK 校验值（MD5）` + `<!-- update: … -->` + `**Full Changelog**`，就是省略了更新说明 —— 见 §4 的硬要求，必须补上。**别只看 `conclusion=success` 就收工**：工作流全绿也不代表说明写了。
+- **Release 建好后必须回读它的说明正文**（`https://api.github.com/repos/PurpleEthereality/BiliTerminal-RE/releases/latest` 的 `body`），确认 `update_log_current` 的全部条目都在里面。若正文只有 `### APK 校验值（MD5）` + `<!-- update: … -->` + `**Full Changelog**`，就是省略了更新说明 —— 见 §4 的硬要求，必须补上。**别只看 `conclusion=success` 就收工**：工作流全绿也不代表说明写了。
 - 向用户汇报：改了哪些文件、发行 APK 的路径/大小、**Release 说明是否含完整更新日志**、CI 里 Gitee 同步是否成功、`release-links.txt` 里的直链。
 
 ## 约定与坑
