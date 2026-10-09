@@ -1,0 +1,12 @@
+# 部署脚本与配置必须保持 LF 行尾。
+# 本仓库的 core.autocrlf 是 true，在 Windows 上签出会被改成 CRLF：
+#   - *.sh 带 CR 后丢到 Linux 上会报 "bad interpreter: /bin/bash^M"
+#   - nginx / systemd 单元文件同理
+# 这些文件是往服务器上直接拷的，一旦行尾被改就会部署失败，所以在这里钉死。
+server/*.sh        text eol=lf
+server/*.py        text eol=lf
+server/*.html      text eol=lf
+server/*.service   text eol=lf
+server/requirements.txt text eol=lf
+server/nginx/*.conf     text eol=lf
+*.sh               text eol=lf
