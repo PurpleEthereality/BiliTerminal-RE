@@ -4515,10 +4515,13 @@ return NONE
 
 ### 41.7 遗留与后续
 
-- **版本号没动**（仍是 `2610090` / `26.10.09`）。这批是给「下一个版本」的功能，
-  发版时按 `AGENTS.md` 与 `.dsh/skills/rebili-version-release/SKILL.md` 正常走：
-  bump `app/build.gradle` + 往 `strings.xml` 的 `update_log_current` 补本次条目，
-  否则 `.github/scripts/extract_update_log.py` 抽出来的 Release 说明会缺这一条（26.10.05 的教训见第四节）。
+- **版本号**：写这一节时没动（`2610090` / `26.10.09`），随后按 `AGENTS.md` 与
+  `.dsh/skills/rebili-version-release/SKILL.md` 正常发版，落成 **`2610101` / `26.10.10`**：
+  bump `app/build.gradle` + `strings.xml` 的 `update_log_current` 补本次 7 条 + `update_history_log`
+  顶部新增 `## 2026-10-09` 分组（`update_log_current` 的 5 条原样归档）。
+  本地 `verifyVersionConsistency` + `testDebugUnitTest`（457 例）+ `assembleRelease` 全绿，
+  四个 ABI 的 release APK 已产出，然后推 tag `26.10.10` 走 `.github/workflows/build-release.yml`。
+  发版时这一步不能省，否则 `.github/scripts/extract_update_log.py` 抽出来的 Release 说明会缺这一条（26.10.05 的教训见第四节）。
 - **没有在真机上跑过**：新增的反馈页 / 关于页入口 / 崩溃自动上报 / 启动弹窗都只过了编译与 JVM 单测，
   真机回归清单（`docs/review/real-device-regression-checklist.md`）里应补：
   ① 关于页 → 反馈页能进、分类选择、4000 字上限、断网发送的报错文案、成功后输入框清空；

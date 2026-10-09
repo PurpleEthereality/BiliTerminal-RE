@@ -13,7 +13,6 @@ import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.SettingsKeys
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
-import com.RobinNotBad.BiliClient.util.StringUtil
 import com.RobinNotBad.BiliClient.util.TerminalDialog
 import com.google.android.material.button.MaterialButton
 
@@ -107,9 +106,6 @@ class FeedbackActivity : BaseActivity() {
                 SharedPreferencesUtil.putBoolean(SettingsKeys.FEEDBACK_ATTACH_MID, attachMid)
                 renderAttach()
             }
-
-            // ---------- QQ 群兜底：长按/点击可复制群号 ----------
-            StringUtil.setCopy(findViewById(R.id.qq_group_text), "482091687 / 656364457 / 745414928")
 
             // ---------- 发送 ----------
             submitBtn.setOnClickListener {

@@ -157,24 +157,6 @@
                 android:visibility="gone"
                 tools:text="已收到，反馈编号：12" />
 
-            <com.google.android.material.card.MaterialCardView
-                android:id="@+id/qq_group_card"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp">
-
-                <TextView
-                    android:id="@+id/qq_group_text"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center"
-                    android:paddingHorizontal="4dp"
-                    android:paddingVertical="6dp"
-                    android:text="@string/feedback_qq_hint"
-                    android:textSize="11sp" />
-
-            </com.google.android.material.card.MaterialCardView>
-
         </LinearLayout>
 
     </com.RobinNotBad.BiliClient.ui.widget.RotaryScrollView>
