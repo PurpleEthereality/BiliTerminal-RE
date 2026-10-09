@@ -2290,14 +2290,28 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
         }
     }
 
-    /** 显示视频分段、或自动跳过片头片尾——任一开启都需要 view_points 数据。 */
+    /**
+     * 是否需要 `view_points` 数据：只有「显示视频分段」用得到。
+     *
+     * 26.10.10 之前这里还 `|| PLAYER_SKIP_OP_ED`，因为自动跳过也要这份数据；该功能已撤回
+     * （见 [SkipOpEdPrefs.FEATURE_ENABLED]），只开了自动跳过、没开分段显示的用户不该再为它
+     * 白拉一次接口——但老用户存档里的 `true` 还在，所以这一项**必须显式去掉**，
+     * 光靠功能闸门会让网络请求照旧发出去。
+     */
     private fun needViewPoints(): Boolean =
-        SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SHOW_VIEWPOINTS, true) ||
-            SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, SkipOpEdPrefs.DEFAULT_ENABLED)
+        SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SHOW_VIEWPOINTS, true)
 
-    /** 自动跳过片头片尾当前是否开启。默认值统一走 [SkipOpEdPrefs]，别在调用点写死字面量。 */
+    /**
+     * 自动跳过片头片尾当前是否生效。
+     *
+     * 26.10.10 起本功能已紧急撤回：[SkipOpEdPrefs.isEnabled] 内含一道与存档无关的否决位，
+     * 所以这里恒为 `false`——老用户存档里留着的 `true` 不会让它复活。
+     * 默认值与判据统一走 [SkipOpEdPrefs]，别在调用点写死字面量。
+     */
     private fun skipOpEdEnabled(): Boolean =
-        SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, SkipOpEdPrefs.DEFAULT_ENABLED)
+        SkipOpEdPrefs.isEnabled(
+            SharedPreferencesUtil.getBoolean(SettingsKeys.PLAYER_SKIP_OP_ED, SkipOpEdPrefs.DEFAULT_ENABLED)
+        )
 
     /**
      * 自动跳过片头/片尾。
@@ -2354,6 +2368,9 @@ class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener {
      * 开关已开时文案改为「已自动跳过、可撤回」，不再劝用户「开启」。
      */
     private fun maybeShowSkipGuide() {
+        // 功能已撤回：连引导都不能出现。引导上带「开启」按钮，点了会往存档里写 true，
+        // 等于给了用户一条绕过闸门的路（虽然闸门仍然拦得住，但弹一条已经下线的功能提示本身就是骚扰）。
+        if (!SkipOpEdPrefs.FEATURE_ENABLED) return
         val enabled = skipOpEdEnabled()
         if (!SkipOpEdPrefs.shouldShowGuide(
                 skipSegments.isNotEmpty(),

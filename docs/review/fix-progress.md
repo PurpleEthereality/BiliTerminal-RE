@@ -4516,7 +4516,8 @@ return NONE
 ### 41.7 遗留与后续
 
 - **版本号**：写这一节时没动（`2610090` / `26.10.09`），随后按 `AGENTS.md` 与
-  `.dsh/skills/rebili-version-release/SKILL.md` 正常发版，落成 **`2610101` / `26.10.10`**：
+  `.dsh/skills/rebili-version-release/SKILL.md` 正常发版，落成 **`2610101` / `26.10.10`**
+  （同日又因紧急撤回「自动跳过片头片尾」追加了一个包 **`2610102` / `26.10.10`**，见第四十三节）：
   bump `app/build.gradle` + `strings.xml` 的 `update_log_current` 补本次 7 条 + `update_history_log`
   顶部新增 `## 2026-10-09` 分组（`update_log_current` 的 5 条原样归档）。
   本地 `verifyVersionConsistency` + `testDebugUnitTest`（457 例）+ `assembleRelease` 全绿，
@@ -4711,4 +4712,66 @@ isCrashReportAutoEnabled() = hasPrivacyConsent() && getBoolean(CRASH_REPORT_AUTO
 - 服务端 **没有告警渠道**（只有 systemd `Restart` + `health.log` 留痕）。
 - 控制台目前**只有口令登录**，没有 TOTP / IP 白名单；口令泄露 = 全部后台能力。
 - WebUI **没有真机/真浏览器回归记录**（环境里没有浏览器），只验证了 HTML 结构与接口联通。
+
+## 四十三、26.10.10 补丁：紧急撤回「自动跳过片头片尾」（2610102）
+
+**用户原话**：「将跳过片头片尾的功能紧急撤回，直接关闭且隐藏此设置，立刻发新版本26.10.10 2610102 tag打新的」，
+并追加「更新公告追加一条说明即可」。要求是**撤回而非删除**：代码与设置项保留，只让它不生效、入口不可见。
+
+### 43.1 为什么必须新加开关，而不是把默认值改成 false
+
+原实现（26.10.09 引入）的默认值是 `SkipOpEdPrefs.DEFAULT_ENABLED = true`，最直觉的撤回想当然就是把它改成 `false`。
+**这是无效的**：`SharedPreferences.getBoolean(key, def)` 里的 `def` 只在**键不存在**时生效，
+而老用户从 26.10.09 起就已经被写入了 `true`（首次读取即落盘），改默认值对这些人一点作用都没有，自动跳过照旧。
+
+所以撤回落在一个**与用户存档无关的否决位**上：
+
+```kotlin
+// app/src/main/java/com/RobinNotBad/BiliClient/player/SkipOpEdPrefs.kt
+const val DEFAULT_ENABLED = true   // 保持 true，恢复后行为与本补丁前完全一致
+const val FEATURE_ENABLED = false  // 26.10.10 撤回；恢复时只改这一行
+fun isEnabled(prefValue: Boolean): Boolean = FEATURE_ENABLED && prefValue
+```
+
+`DEFAULT_ENABLED` 之所以必须保持 `true`：`app/src/test/java/com/RobinNotBad/BiliClient/player/SkipOpEdPrefsTest.kt:41`
+的 `默认值是开启` 断言钉着它（那是用户上一轮明确要求的「默认必须是开启」）。改它既撤回不了老用户，还会弄红测试。
+恢复流程因此是**一行**：把 `FEATURE_ENABLED` 改回 `true`。
+
+### 43.2 撤回的四处落点
+
+| 位置 | 改动 |
+|---|---|
+| `player/SkipOpEdPrefs.kt` | 新增 `FEATURE_ENABLED` + `isEnabled(prefValue)` 纯函数；object 头注释加「26.10.10 已紧急撤回」 |
+| `activity/player/PlayerActivity.kt` `skipOpEdEnabled()` | 改为 `SkipOpEdPrefs.isEnabled(getBoolean(PLAYER_SKIP_OP_ED, DEFAULT_ENABLED))`，即运行期恒 `false` |
+| 同上 `maybeShowSkipGuide()` | 开头 `if (!SkipOpEdPrefs.FEATURE_ENABLED) return`——引导里有「开启」按钮会写回存档，撤回后不该再弹（真机清单第 200 条） |
+| 同上 `needViewPoints()` | **显式删掉 `\|\| PLAYER_SKIP_OP_ED` 一项**，只留 `PLAYER_SHOW_VIEWPOINTS`。光有运行期闸门不够：老用户存档里 `PLAYER_SKIP_OP_ED` 还是 `true`，判断不改就仍会为「跳过」白拉一次 `view_points` |
+| `activity/settings/SettingTerminalPlayerActivity.kt:132-133` | `add(SettingSection("switch", "自动跳过片头片尾", …))` 两行注释掉，`:10` 的 `import ...player.SkipOpEdPrefs` 一并注释（避免未使用引用），两处都写明恢复方法 |
+| `activity/settings/SettingsIndex.kt` | 搜索关键词表里删掉 `"自动跳过片头片尾"`，否则搜索结果里留着一个点进去定位不到的幽灵条目 |
+
+`ViewPointSkip.kt`（纯判定）与其单测**一行未动**——撤回是关闸门，不是拆功能。
+
+### 43.3 单测补充
+
+`app/src/test/java/com/RobinNotBad/BiliClient/player/SkipOpEdPrefsTest.kt` 新增 3 例，钉住最容易改错的地方：
+`功能已撤回时总开关必须是关闭`、`撤回期间存档里写着开启也不能跳`（先断言存档确实读出 `true`，再断言 `isEnabled` 为 `false`）、
+`撤回期间两种存档取值都判定为不启用`。类注释新增第 4 条「撤回必须与存档无关」。
+
+### 43.4 公告与版本
+
+- `app/src/main/res/values/strings.xml` 的 `update_log_current` 追加第 8 条：
+  「暂时下线「自动跳过片头片尾」：设置入口已隐藏，之前开启过的也不再自动跳过，播放时不会再有相关提示。相关代码与设置项保留，后续视情况恢复。」
+- `app/build.gradle` versionCode `2610101` → **`2610102`**，versionName 仍为 `26.10.10`
+  （同一天第三个包，尾位递增，规则见 `.dsh/skills/rebili-version-release/SKILL.md`）。
+- tag 用 **`26.10.10.1`**：`26.10.10` 已被 2610101 的不可变 Release 用掉，
+  按 **release immutability**（被 release 用过的 tag 永久不可复用）必须换 tag。
+
+### 43.5 恢复清单（将来要放回来时照做）
+
+1. `SkipOpEdPrefs.FEATURE_ENABLED` 改回 `true`（**唯一一行实质改动**）。
+2. `SettingTerminalPlayerActivity.kt`：取消 `import` 与 `add(SettingSection(...))` 的注释。
+3. `SettingsIndex.kt`：把 `"自动跳过片头片尾"` 加回关键词表。
+4. `PlayerActivity.needViewPoints()`：把 `|| getBoolean(PLAYER_SKIP_OP_ED, …)` 加回去。
+5. 若在 `update_log_current` 里写过「已下线」，恢复时改成「重新上线」。
+6. 真机回归清单第 199/200 条（`docs/review/real-device-regression-checklist.md:322-324`）仍适用，
+   恢复后必须重跑。
 

@@ -445,6 +445,14 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 ### 7.7 番剧片头/片尾自动跳过（26.10.04 新增）
 
+> ⚠️ **26.10.10 已紧急撤回（versionCode 2610102）**：本节描述的功能**当前处于关闭状态，设置入口已隐藏**。
+> 代码与设置项一律保留，下面按「可用状态」写的设计说明仍然有效，只是暂时不生效。撤回机制：
+> `player/SkipOpEdPrefs.kt` 的 `FEATURE_ENABLED = false`（**与用户存档无关的否决位**——
+> 只改 `DEFAULT_ENABLED` 对老用户无效，他们的存档里早就是 `true`）；设置项在
+> `SettingTerminalPlayerActivity` 内被注释；关键词从 `SettingsIndex` 摘掉；
+> `PlayerActivity.needViewPoints()` 里的 `PLAYER_SKIP_OP_ED` 一项已删（否则老用户仍会为「跳过」白拉 `view_points`）。
+> 完整恢复清单见 `docs/review/fix-progress.md` **§43.5**。
+
 设计参照 PiliPlus（`bggRGjQaUbCoE/PiliPlus` @ `2515ecf`）的 `pgcSkipType` / `SkipType` 体系。
 
 **数据来源**：`api/PlayerApi.getViewPoints(aid, cid)`（`x/player/wbi/v2` 的 `data.view_points[]`）里的 `type` —— **1 = 片头，2 = 片尾**。
@@ -461,10 +469,10 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 - 跳跃复用 `seekToPosition()`，与手动拖动走同一条路径，弹幕与外部音轨一起同步。
 - 反悔：`showSkipUndoSnack()` 用 `MsgUtil.createSnack(anchor, 文案, LENGTH_LONG, MsgUtil.Action("撤回"){...})` 跳回片段起点。`lastSkippedSegment` 用来判断这条 Snackbar 是否已过期，防止「期间又跳过别的片段」后点撤回把人拽回去。
 - **用户主动 seek 必须标记为已处理**：`seekToPosition()` 与 seekbar 的 `onStopTrackingTouch` 两条路径都调 `onUserSeekTo()`。不标的话，用户拖进片头想看一眼，下一轮定时器立刻又把他弹走。
-- `loadViewPoints()` 的三个调用条件从「显示视频分段开启」放宽为 `needViewPoints()`（显示分段 **或** 自动跳过，任一开启）。
+- `loadViewPoints()` 的三个调用条件从「显示视频分段开启」放宽为 `needViewPoints()`（显示分段 **或** 自动跳过，任一开启）。**26.10.10 撤回后这里只剩「显示视频分段」**，`PLAYER_SKIP_OP_ED` 一项已显式删除——只加运行期闸门不够，老用户存档里那一项还是 `true`，判断不改就仍会为跳过去拉 `view_points`。
 - 换集/换P 时重置 `skipSegments` / `skipHandled` / `lastSkippedSegment`，不带上一集的进度。
 
-**设置项**（默认**开启**，26.10.04 后续由关闭改为开启）：
+**设置项**（默认**开启**，26.10.04 后续由关闭改为开启；**26.10.10 起入口已隐藏，见本节顶部警告**）：
 - `SettingsKeys.PLAYER_SKIP_OP_ED`（`player_skip_op_ed`）——开关本体。**默认值只有一个来源**：`player/SkipOpEdPrefs.kt` 的 `DEFAULT_ENABLED = true`，四个调用点全部引用它（`PlayerActivity.needViewPoints()` / `skipOpEdEnabled()` / `SettingTerminalPlayerActivity`），别再散落 `true`/`false` 字面量（原先四处各写 `false`，改默认值时漏一处就会「设置页显示开着、播放器却不跳」）。
 - **老用户显式关过的保持关**：`SharedPreferences.getBoolean(key, def)` 的语义就是「键不存在才用 def」，所以只改默认值天然满足「新装默认开、升级后尊重旧选择」，**不需要任何迁移代码**。`SkipOpEdPrefsTest` 用「显式关过→仍为 false」钉死这条。
 - `SettingsKeys.PLAYER_SKIP_OP_ED_GUIDED`（`player_skip_op_ed_guided`）——**只是「引导提示已弹过」的记账位，不出现在设置页**，别当成用户可见开关。

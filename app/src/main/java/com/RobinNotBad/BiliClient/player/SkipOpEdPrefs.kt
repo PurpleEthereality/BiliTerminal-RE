@@ -15,11 +15,41 @@ package com.RobinNotBad.BiliClient.player
  *
  * 注意 [DEFAULT_ENABLED] 只用于**读取**：`SharedPreferences.getBoolean(key, def)` 的语义就是
  * 「键不存在才用 def」，所以老用户若显式关过，升级后仍然是关的——这正是我们要的行为。
+ *
+ * ⚠️ **26.10.10 起本功能已紧急撤回**：整个功能由 [FEATURE_ENABLED] 关掉并在设置页隐藏，
+ * 与用户存档无关。下面关于「默认开启」的历史说明保留，仅作为恢复后的依据。
  */
 object SkipOpEdPrefs {
 
     /** `player_skip_op_ed` 的默认值：开启。 */
     const val DEFAULT_ENABLED = true
+
+    /**
+     * **功能总开关：26.10.10 紧急撤回，现在置为 `false`。**
+     *
+     * 为什么不直接把 [DEFAULT_ENABLED] 改成 `false`：默认值只决定「键不存在时读什么」，
+     * 老用户存档里早就是 `true` 了，改默认值对他们**一点作用都没有**，自动跳过照旧生效。
+     * 撤回必须与存档无关，所以这里是独立的否决位。
+     *
+     * 撤回期间的实际表现：
+     * - 自动跳过完全失效（[isEnabled] 恒为 `false`，与 [DEFAULT_ENABLED]、存档都无关）；
+     * - 播放器不再为了跳过而拉取 `view_points`（见 `PlayerActivity.needViewPoints()`）；
+     * - 首次引导不再弹出（引导里带「开启」按钮，会写回存档）；
+     * - 设置页入口已隐藏（`SettingTerminalPlayerActivity`）与搜索索引里已摘掉
+     *   （`SettingsIndex`），用户没有任何途径把它打开。
+     *
+     * 恢复时只把这里改回 `true` 并把设置项加回去即可——[ViewPointSkip] 的判定逻辑
+     * 与它的单测**一行未动**，不是靠删代码做到的撤回。
+     */
+    const val FEATURE_ENABLED = false
+
+    /**
+     * 自动跳过当前是否生效：功能总开关 **与** 用户存档，两者都为真才算开。
+     *
+     * 抽成纯函数是为了能直接单测「撤回期间存档里写着 `true` 也不能跳」这条断言——
+     * 它恰恰是这次撤回最容易被改错的地方（只改默认值是最常见的错法）。
+     */
+    fun isEnabled(prefValue: Boolean): Boolean = FEATURE_ENABLED && prefValue
 
     /**
      * 首次引导是否该弹。
