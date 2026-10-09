@@ -19,6 +19,7 @@ import com.RobinNotBad.BiliClient.api.MessageApi
 import com.RobinNotBad.BiliClient.tutorial.TutorialStore
 import com.RobinNotBad.BiliClient.util.BangumiUpdateChecker
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
+import com.RobinNotBad.BiliClient.util.CrashTrail
 import com.RobinNotBad.BiliClient.util.Logu
 import com.RobinNotBad.BiliClient.util.MsgNotifier
 import com.RobinNotBad.BiliClient.util.MsgUtil
@@ -288,7 +289,14 @@ class BiliTerminal : Application() {
 
                 override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
                 override fun onActivityStarted(activity: Activity) {}
-                override fun onActivityResumed(activity: Activity) {}
+                override fun onActivityResumed(activity: Activity) {
+                    // 26.10.09（自建崩溃报告）：崩溃报告里最有用的一条是「崩溃前用户在干什么」，
+                    // 而 Android 10 起应用读不到 logcat（READ_LOGS 是系统权限），只能自己记页面轨迹
+                    // （见 CrashTrail）。记在 resumed 而不是 created：从返回栈重入某个页面时
+                    // created 不会重放，记在 created 会让轨迹断掉。
+                    CrashTrail.record(activity.javaClass.simpleName)
+                }
+
                 override fun onActivityPaused(activity: Activity) {}
                 override fun onActivityStopped(activity: Activity) {}
                 override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}

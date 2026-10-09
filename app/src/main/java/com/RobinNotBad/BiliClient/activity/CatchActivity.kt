@@ -12,9 +12,11 @@ import android.widget.TextView
 import com.RobinNotBad.BiliClient.R
 import com.RobinNotBad.BiliClient.activity.base.BaseActivity
 import com.RobinNotBad.BiliClient.api.AppInfoApi
+import com.RobinNotBad.BiliClient.api.TerminalApi
 import com.RobinNotBad.BiliClient.model.ApiResult
 import com.RobinNotBad.BiliClient.service.DownloadService
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
+import com.RobinNotBad.BiliClient.util.CrashReporter
 import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
 import com.RobinNotBad.BiliClient.util.StringUtil
@@ -36,6 +38,35 @@ class CatchActivity : BaseActivity() {
         val stack = intent.getStringExtra("stack")
 
         stackView.text = stack
+
+        // 26.10.09（自建崩溃报告）：这些 extra 由 ErrorCatch 在崩溃瞬间塞进来，
+        // 因为主进程马上就被 killProcess，页面轨迹之类的东西只在那一刻存在。
+        val exception = intent.getStringExtra("exception")
+        val message = intent.getStringExtra("message")
+        val crashThread = intent.getStringExtra("thread")
+        val trail = intent.getStringExtra("trail")
+        val uptime = intent.getLongExtra("uptime", 0L)
+
+        val autoStatusView = findViewById<TextView>(R.id.auto_report_status)
+
+        // 自动上报走自建服务器，与下面那个「手动上传到上游」的按钮互相独立：
+        // 上游那套要求已登录、且按异常类型白名单把一部分崩溃挡在门外（见 allowUpload），
+        // 而自动上报要的正是这些没被人为挑过的样本。开关默认开，用户可在设置里关。
+        if (TerminalApi.isCrashReportAutoEnabled()) {
+            autoStatusView.visibility = android.view.View.VISIBLE
+            autoStatusView.text = "正在自动上报错误报告…"
+            CenterThreadPool.run {
+                val res = CrashReporter.upload(
+                    this@CatchActivity, exception, message, crashThread, stack, trail, uptime
+                )
+                runOnUiThread {
+                    autoStatusView.text = if (res.code >= 0)
+                        "已自动上报错误报告\n报错ID：${res.code}\n如需补充说明请到「设置 - 关于 - 反馈与建议」"
+                    else
+                        "自动上报失败：${res.message}\n（可在「设置 - 关于与帮助」里关闭自动上报）"
+                }
+            }
+        }
 
         findViewById<android.view.View>(R.id.exit_btn).setOnClickListener { android.os.Process.killProcess(android.os.Process.myPid()) }
 

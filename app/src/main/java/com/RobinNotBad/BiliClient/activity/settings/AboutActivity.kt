@@ -15,6 +15,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.RobinNotBad.BiliClient.BiliTerminal
 import com.RobinNotBad.BiliClient.R
+import com.RobinNotBad.BiliClient.activity.FeedbackActivity
 import com.RobinNotBad.BiliClient.activity.base.BaseActivity
 import com.RobinNotBad.BiliClient.util.GlideUtil
 import com.RobinNotBad.BiliClient.util.MsgUtil
@@ -116,6 +117,11 @@ class AboutActivity : BaseActivity() {
             findViewById<View>(R.id.sponsor_list).setOnClickListener {
                 val intent = Intent(this, SponsorActivity::class.java)
                 startActivity(intent)
+            }
+
+            // 26.10.09：自建反馈通道。与上面的 QQ 群 / issue 并存，不替换任何渠道。
+            findViewById<View>(R.id.feedback_entry).setOnClickListener {
+                startActivity(Intent(this, FeedbackActivity::class.java))
             }
 
             findViewById<View>(R.id.history_log_entry).setOnClickListener {

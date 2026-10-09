@@ -3,10 +3,12 @@ package com.RobinNotBad.BiliClient;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
+import android.os.SystemClock;
 
 import androidx.annotation.NonNull;
 
 import com.RobinNotBad.BiliClient.activity.CatchActivity;
+import com.RobinNotBad.BiliClient.util.CrashTrail;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -41,6 +43,16 @@ public class ErrorCatch implements Thread.UncaughtExceptionHandler {
         try {
             Intent intent = new Intent(context, CatchActivity.class);
             intent.putExtra("stack", writer.toString());
+            // 26.10.09（自建崩溃报告）：这些是「只有崩溃瞬间才拿得到」的字段——
+            // 进程马上就被 killProcess 了，页面轨迹、出错线程、异常类名都随之消失，
+            // 所以必须在 startActivity 之前塞进 Intent 带过去。
+            // 这里刻意只做取值，不做采集/网络/磁盘：崩溃线程里任何多余的工作都可能让
+            // 「崩溃页打不开」变成第二种崩溃。真正的组装与上传在 :error_activity 进程里做。
+            intent.putExtra("exception", throwable.getClass().getName());
+            intent.putExtra("message", String.valueOf(throwable.getMessage()));
+            intent.putExtra("thread", thread.getName());
+            intent.putExtra("trail", CrashTrail.snapshot());
+            intent.putExtra("uptime", SystemClock.elapsedRealtime() / 1000);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); //这句是安卓4必须有的
             context.startActivity(intent);
         } catch (Throwable t) {

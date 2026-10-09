@@ -3,7 +3,7 @@ package com.RobinNotBad.BiliClient.activity.settings
 import android.os.Bundle
 import com.RobinNotBad.BiliClient.activity.base.RefreshListActivity
 import com.RobinNotBad.BiliClient.adapter.AnnouncementAdapter
-import com.RobinNotBad.BiliClient.api.AppInfoApi
+import com.RobinNotBad.BiliClient.api.TerminalApi
 import com.RobinNotBad.BiliClient.model.Announcement
 import com.RobinNotBad.BiliClient.util.CenterThreadPool
 import com.RobinNotBad.BiliClient.util.MsgUtil
@@ -27,20 +27,17 @@ class AnnouncementsActivity : RefreshListActivity() {
     private fun loadAnnouncements() {
         setRefreshing(true)
         CenterThreadPool.run {
-            try {
-                val announcements: ArrayList<Announcement> = AppInfoApi.getAnnouncementList()
-                runOnUiThread {
-                    if (announcements.isEmpty()) showEmptyView() else hideEmptyView()
-                    setAdapter(AnnouncementAdapter(this@AnnouncementsActivity, announcements))
-                    setRefreshing(false)
-                }
-            } catch (e: Exception) {
-                report(e)
-                runOnUiThread {
-                    showEmptyView()
-                    setRefreshing(false)
-                    MsgUtil.showMsg("连接到哔哩终端接口时发生错误")
-                }
+            // 26.10.09：上游（api.biliterminal.cn）与自建（rebiliterminal.zsapp.asia）两路公告合并。
+            // loadMergedAnnouncements 内部对两路各自 try/catch，任何一路挂掉都不影响另一路展示——
+            // 旧实现是「上游一个源抛异常整页就报错」，用户会连能取到的公告也看不到。
+            // 返回 false 表示至少有一路失败，但 out 里仍有成功那一路的内容。
+            val announcements = ArrayList<Announcement>()
+            val allOk = TerminalApi.loadMergedAnnouncements(announcements)
+            runOnUiThread {
+                if (announcements.isEmpty()) showEmptyView() else hideEmptyView()
+                setAdapter(AnnouncementAdapter(this@AnnouncementsActivity, announcements))
+                setRefreshing(false)
+                if (!allOk && announcements.isNotEmpty()) MsgUtil.showMsg("部分公告源连不上，已显示能取到的内容")
             }
         }
     }

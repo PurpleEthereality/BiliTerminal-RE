@@ -14,7 +14,7 @@
     <string name="about_source">本程序使用或借鉴了下列项目的部分代码及其合法收集的API：\nWearBili：https://github.com/SpaceXC/WearBili\n腕上哔哩：https://github.com/luern0313/WristBilibili\nBAC Document：https://socialsisteryi.github.io/bilibili-API-collect\n小电视播放器：https://github.com/xinxiangshiicheng/xinxiangshicheng_wearbili_player\n程序的界面借鉴于WearBili的UI部分，设计者为@JesseGary_（已得到授权）\n\n本程序使用的第三方库：\nOkHttp：com.squareup.okhttp3:okhttp\nGlide：com.github.bumptech.glide:glide\nPhotoView：com.github.chrisbanes:PhotoView\nJsoup：org.jsoup:jsoup\nEventBus：org.greenrobot:eventbus\nIJKPlayer：https://github.com/bilibili/ijkplayer\nDanmakuFlameMaster：com.github.ctiao:DanmakuFlameMaster\nGeetest：com.geetest.sensebot:sensebot\nAOSP：https://source.android.google.cn/\n\n软件图标提供者：银狐enlab（原图来自B站）\n其他部分图标来自网络，有修改，版权归原作者所有，如有侵权，请联系开发组删除。</string>
 
     # 旧的免责声明
-    <string name="about_to_uncle">本软件开发的目的是使配置较低的安卓手表与老旧手机能够使用B站网页端提供的部分基本功能。本软件基于B站网页端接口运行，不会对任何接口进行恶意轰炸，也不会收集任何用户隐私信息。软件不存在付费功能，代码完全开源，收到的捐赠仅用于软件服务器的日常维护。如果您仍然认为本软件侵犯了您的权利，请联系我们（有事好商量呜呜呜）\n同时，我们也不对学生用户在不恰当的时间、地点使用本软件导致的财产损失（设备被没收）或精神伤害（？）负责。请尽量自控，不要影响到自己的学习和生活哦！</string>
+    <string name="about_to_uncle">本软件开发的目的是使配置较低的安卓手表与老旧手机能够使用B站网页端提供的部分基本功能。本软件基于B站网页端接口运行，不会对任何接口进行恶意轰炸。软件默认开启一项匿名的使用统计（只包含随机生成的安装号、版本号与机型，不含账号、Cookie 或任何设备唯一标识），你可以在「设置 - 关于与帮助」中随时关闭，关闭后不再上报；崩溃时也会自动上报一份错误报告，同样可以关闭。软件不存在付费功能，代码完全开源，收到的捐赠仅用于软件服务器的日常维护。如果您仍然认为本软件侵犯了您的权利，请联系我们（有事好商量呜呜呜）\n同时，我们也不对学生用户在不恰当的时间、地点使用本软件导致的财产损失（设备被没收）或精神伤害（？）负责。请尽量自控，不要影响到自己的学习和生活哦！</string>
 
     <string name="desc_setup_ui">首次使用，非常建议调整下界面哦~\n调整下面的选项，然后查看预览\n直到对布局满意为止</string>
     <string name="desc_setup_ui_padding">第一个输入框为横向边距，第二个输入框为纵向边距，单位百分比。\n出于保护，数值超过30不会保存。</string>
@@ -22,7 +22,7 @@
     <string name="desc_setting_ui_density">最低72，建议每次仅进行轻微调节，调节后请预览页面，确认显示正常后完成修改，打开新页面后将会生效。\n若乱调此选项，导致应用无法正常使用的，请清除应用数据或卸载重装！\n注：此选项可能有其他问题，没有必要请不要修改。</string>
     <string name="desc_setting_ui_round">开启选项后，页面将会修改为圆屏布局。\n由于纯靠代码实现，有部分页面可能未适配，但这是目前最好且工作量最小的办法了。</string>
     <string name="desc_setting_player">*你也可以通过长按“播放”按钮快速进入此页面。若无法跳转播放，请确保你已经安装对应播放器且播放器和哔哩终端都是最新版本。\n*播放器和哔哩终端在洋葱商店、hankmi商店、唯趣均可下载（洋葱上架最快，唯趣上架较慢），适配安卓4的小电视请加群后从群文件中获取。\n*如果使用的是内置播放器，则此处的清晰度为开始播放时的默认清晰度。</string>
-    <string name="text_setup_introduction">你好呀，同在茫茫网络世界中漂流的旅者！这里是哔哩终端的开发团队。感谢你选择了哔哩终端，每增加一位用户，我们就增加了更多开发的动力！\n\n愿你在这一方小小的屏幕中，找到属于自己的小小的快乐！\n\nQQ交流群：482091687\n备用群：656364457\n唯一官网：biliterminal.cn\n开源地址：https://gitee.com/RobinNotBad/BiliClient\n*以上信息可稍后在关于页面查看\n\n请注意：\n本软件永久免费开源，不会收集你的任何账号及隐私信息，请放心使用！\n若你在任何平台付费下载到哔哩终端，那么你被坑了！\n\n点击下面的按钮，让我们开始吧！</string>
+    <string name="text_setup_introduction">你好呀，同在茫茫网络世界中漂流的旅者！这里是哔哩终端的开发团队。感谢你选择了哔哩终端，每增加一位用户，我们就增加了更多开发的动力！\n\n愿你在这一方小小的屏幕中，找到属于自己的小小的快乐！\n\nQQ交流群：482091687\n备用群：656364457\n唯一官网：biliterminal.cn\n开源地址：https://gitee.com/RobinNotBad/BiliClient\n*以上信息可稍后在关于页面查看\n\n请注意：\n本软件永久免费开源，不会收集你的账号密码或 Cookie，请放心使用！\n软件默认开启一项匿名使用统计（只有随机安装号、版本号与机型，不含账号），可在设置里随时关闭。\n若你在任何平台付费下载到哔哩终端，那么你被坑了！\n\n点击下面的按钮，让我们开始吧！</string>
 
     <string name="egg_special">群友“垃圾的东西”要求加一个撅作者的彩蛋（\n\n所以，\n\n》点击此处撅Robin《\n\n别点，假的（\n\n此彩蛋的触发方式：搜索关键词中同时包含“撅”和“Robin”</string>
     <string name="egg_warmwords_warmworld">恭喜你触发了这个彩蛋（其实貌似挺容易触发的？\n\n请记住，如果遇到心理健康相关问题：\n全国统一心理援助热线电话：12356\n全国24小时免费心理咨询热线：010\-82951332\n或官方手机端哔哩哔哩，打开 我的-下滑找到推荐服务-能量加油站。\n\n如果你需要这个，那么希望这个彩蛋能帮到你。\n如果其他人需要，那就请推荐给他/她吧。\n\n“你不需要变成飞鸟或者游鱼，只要你努力地生活，你所珍视的一切都会是你幸福的源泉。”[extra_insert]{"type":"video","content":"BV13b411t7KW","title":"听听这首歌吧，让我们【手牵手】……"}</string>
@@ -503,6 +503,57 @@
     </string-array>
 
     <string name="about_trailer_feedback">此版本为哔哩终端改版，有bug不要找原开发者，请点击联合开发者的TRAE作者进行反馈。</string>
+
+    <!-- ==================== 反馈与建议（自建服务器，26.10.09 新增） ==================== -->
+    <string name="pagename_feedback">反馈与建议</string>
+    <string name="feedback_entry_title">反馈与建议</string>
+    <string name="feedback_entry_desc">直接发送给本项目的开发者（自建通道，无需登录）</string>
+    <!--
+      隐私说明写在输入框正上方，而且必须把「发了什么」和「没发什么」都写清楚：
+      改这两句之前先去读 strings 里的 about_to_uncle / text_setup_introduction，
+      那两句是这个应用对用户的公开承诺，加了遥测就必须同步改，否则就是自相矛盾。
+    -->
+    <string name="feedback_privacy">反馈会直接发送到本项目自建服务器（不是 B 站接口）。只发送你写的内容、版本号与机型，不会发送账号密码或 Cookie。</string>
+    <string name="feedback_content_hint">请描述你遇到的问题或建议…</string>
+    <string name="feedback_contact_hint">联系方式（选填，方便回复你）</string>
+    <string name="feedback_submit">发送反馈</string>
+    <string name="feedback_attach_mid_on">附带我的账号 ID：开</string>
+    <string name="feedback_attach_mid_off">附带我的账号 ID：关</string>
+    <string name="feedback_category_label">反馈类型</string>
+    <string name="feedback_category_bug">功能异常</string>
+    <string name="feedback_category_suggestion">功能建议</string>
+    <string name="feedback_category_content">内容问题</string>
+    <string name="feedback_category_performance">卡顿 / 耗电</string>
+    <string name="feedback_category_other">其他</string>
+    <string name="feedback_empty">请先写点内容再发送</string>
+    <string name="feedback_too_long">内容太长了，请控制在 4000 字以内</string>
+    <string name="feedback_sending">正在发送…</string>
+    <string name="feedback_ok">已收到，反馈编号：%1$d\n感谢你的反馈！</string>
+    <string name="feedback_fail">发送失败：%1$s</string>
+    <string name="feedback_qq_hint">也可以加 QQ 群反馈：482091687 / 656364457 / 745414928</string>
+
+    <!-- ==================== 匿名统计与崩溃上报（自建服务器，26.10.09 新增） ==================== -->
+    <string name="setting_telemetry">匿名使用统计</string>
+    <string name="desc_setting_telemetry">每天最多上报一次「随机安装号 + 版本号 + 机型」，用于统计安装量与活跃度。不含账号、Cookie 与任何设备唯一标识。关闭后不再上报。</string>
+    <string name="setting_crash_auto">崩溃自动上报</string>
+    <string name="desc_setting_crash_auto">崩溃时自动把堆栈、机型与最近的页面记录发到自建服务器，便于定位问题。关闭后仅保留崩溃页上的手动上传。</string>
+    <string name="setting_feedback_attach_mid">反馈附带账号 ID</string>
+    <string name="desc_setting_feedback_attach_mid">默认关闭。打开后反馈与崩溃报告会附上你的 UID，方便开发者定位你的账号相关问题，代价是上报内容能关联到你的账号。</string>
+
+    <!--
+      启动时的隐私说明再确认（26.10.09）。
+
+      它是上面两句公开承诺的「可执行版本」：文案说「默认开启匿名统计、可随时关闭」，
+      这个弹窗负责在第一次上报之前拿到用户点过的「同意」。任何一处改动都要三处同步：
+      privacy_consent_message / about_to_uncle / text_setup_introduction，
+      并且把 TerminalApi.PRIVACY_VERSION +1（老用户会因此重新看到一次确认）。
+    -->
+    <string name="privacy_consent_title">隐私说明</string>
+    <string name="privacy_consent_message">这个应用会做两件与你有关的事：\n\n1. 匿名使用统计：上报随机生成的安装号、版本号和机型，用来统计有多少人装、每天有多少人用。不含账号、Cookie、位置，也不读取 ANDROID_ID 等任何设备唯一标识，一天最多一次。\n\n2. 崩溃自动上报：崩溃时把错误堆栈、版本号和机型发到同一台服务器，方便定位问题。\n\n反馈功能不受影响：「设置 - 关于 - 反馈与建议」里写的内容只会发到本项目自建服务器，不会发到 B 站。\n\n点「同意」即开启上面两项，之后可随时在「设置 - 关于与帮助」里单独关闭；点「不同意」则现在就不上报，之后也能在那里重新打开。</string>
+    <string name="privacy_consent_agree">同意</string>
+    <string name="privacy_consent_decline">不同意</string>
+    <string name="privacy_consent_scroll_hint">正文较长，可上下滑动阅读</string>
+    <string name="privacy_consent_declined">已关闭匿名使用统计与崩溃自动上报，可随时在「设置 - 关于与帮助」里重新打开</string>
 
     <string name="tutorial_pager">提示\n\n←这个页面可以左右翻页喵→\n\n（共有%d页，滑动一下不再显示）</string>
     <string name="btn_confirm_settings">确认设置</string>

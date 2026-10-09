@@ -17,6 +17,7 @@ import com.RobinNotBad.BiliClient.activity.settings.setup.SetupUIActivity
 import com.RobinNotBad.BiliClient.activity.video.RecommendActivity
 import com.RobinNotBad.BiliClient.activity.video.local.LocalListActivity
 import com.RobinNotBad.BiliClient.api.AppInfoApi
+import com.RobinNotBad.BiliClient.api.TerminalApi
 import com.RobinNotBad.BiliClient.api.AppTokenRefreshApi
 import com.RobinNotBad.BiliClient.api.CookieRefreshApi
 import com.RobinNotBad.BiliClient.api.CookiesApi
@@ -27,6 +28,8 @@ import com.RobinNotBad.BiliClient.util.MsgUtil
 import com.RobinNotBad.BiliClient.util.NetWorkUtil
 import com.RobinNotBad.BiliClient.util.PerformanceManager
 import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
+import com.RobinNotBad.BiliClient.util.TelemetryReporter
+import com.RobinNotBad.BiliClient.util.TerminalDialog
 import java.io.IOException
 
 @SuppressLint("CustomSplashScreen")
@@ -90,7 +93,7 @@ class SplashActivity : Activity() {
         if (ensureUEToolOverlayPermission()) return
 
         // 启动主流程（抽取成单独方法，供授权回调再次调用）
-        proceedSplashFlow()
+        proceedSplashFlowWithPrivacyGate()
     }
 
     /**
@@ -269,8 +272,48 @@ class SplashActivity : Activity() {
                 }
             }
             // 继续启动主流程
-            proceedSplashFlow()
+            proceedSplashFlowWithPrivacyGate()
         }
+    }
+
+    /**
+     * 隐私说明再确认闸门（26.10.09）。
+     *
+     * <p>「默认开启匿名统计 + 崩溃自动上报」这件事必须先拿到用户点过的「同意」：
+     * 只要 [TerminalApi.needsPrivacyConsent] 为真（当前版本的隐私说明还没被回答过），
+     * 就先弹一次，表过态再继续启动。文案承诺与真实行为这两件事从此有了一道可执行的口子。
+     *
+     * <p>两条路都**继续启动流程**，不拦人：
+     * - 「同意」→ [TerminalApi.acceptPrivacyConsent]（记同意 + 两个开关复位为开）→ 继续；
+     * - 「不同意」→ [TerminalApi.declinePrivacyConsent]（只记「问过了」+ 关掉两个开关，
+     *   同意版本号保持原值，于是 [TerminalApi.hasPrivacyConsent] 仍为 false，一律不上报）→ 继续。
+     *
+     * <p>`setCancelable(false)` 是必要的：这里是 [TerminalDialog.choice] 而不是 `confirm`，
+     * 两个按钮各自带回调；如果允许返回键/点空白关掉，弹窗消失后既没表态也不会继续启动，
+     * 用户就卡在闪屏上了。
+     */
+    private fun proceedSplashFlowWithPrivacyGate() {
+        if (!TerminalApi.needsPrivacyConsent()) {
+            proceedSplashFlow()
+            return
+        }
+        TerminalDialog.choice(
+            context = this,
+            title = getString(R.string.privacy_consent_title),
+            message = getString(R.string.privacy_consent_message),
+            primaryText = getString(R.string.privacy_consent_agree),
+            secondaryText = getString(R.string.privacy_consent_decline),
+            hint = getString(R.string.privacy_consent_scroll_hint),
+            onPrimary = {
+                TerminalApi.acceptPrivacyConsent()
+                proceedSplashFlow()
+            },
+            onSecondary = {
+                TerminalApi.declinePrivacyConsent()
+                MsgUtil.showMsgLong(getString(R.string.privacy_consent_declined))
+                proceedSplashFlow()
+            }
+        ).apply { setCancelable(false) }.show()
     }
 
     /**
@@ -335,6 +378,20 @@ class SplashActivity : Activity() {
                         }
                     }
                     CenterThreadPool.run { AppInfoApi.check(this@SplashActivity) }
+
+                    // 26.10.09：自建服务器这一路（与上游那路完全独立，各自尽力而为）。
+                    // 1) 自建公告源的启动差量弹窗——上游 checkAnnouncement 照跑不动，
+                    //    两边的「已读最大 id」是两个独立的 key，靠 10 亿 id 偏移隔开；
+                    // 2) 匿名使用统计（唯一安装数 + 日活），一天一次，设置里可关。
+                    // 两件事都包了异常：自建接口挂了不能影响启动流程。
+                    CenterThreadPool.run {
+                        try {
+                            TerminalApi.checkAnnouncement()
+                        } catch (e: Exception) {
+                            Log.e("Splash", "自建公告拉取失败: ${e.message}")
+                        }
+                    }
+                    CenterThreadPool.run { TelemetryReporter.reportIfNeeded() }
 
                 } catch (e: Exception) {
                     // 放宽到 Exception：原来只接 JSONException，其它异常会直接打断启动流程

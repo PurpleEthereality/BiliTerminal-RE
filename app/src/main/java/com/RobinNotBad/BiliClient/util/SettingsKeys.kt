@@ -175,6 +175,51 @@ object SettingsKeys {
     const val PLAYER_LAST_AUTONEXT = "player_last_autonext"
     const val PLAYER_LAST_SPEED = "player_last_speed"
 
+    // ==================== 自建终端服务（反馈 / 遥测 / 崩溃报告 / 公告） ====================
+    /**
+     * 匿名使用统计开关。默认开（默认值只在 [com.RobinNotBad.BiliClient.util.TelemetryReporter] 里定义一次）。
+     *
+     * 上报内容只有随机 install_id + 版本号 + 机型/系统版本，不带任何账号信息，
+     * 也绝不携带 Cookie；用途仅为统计唯一安装数与日活。
+     */
+    const val TELEMETRY_ENABLE = "terminal_telemetry_enable"
+
+    /** 匿名安装标识：首次启动生成的随机 UUID，与 B 站账号完全无关，卸载重装即换新。 */
+    const val TELEMETRY_INSTALL_ID = "terminal_install_id"
+
+    /** 最近一次上报成功的日期（yyyy-MM-dd，UTC+8），用于「一天一次」。 */
+    const val TELEMETRY_LAST_REPORT_DAY = "terminal_telemetry_last_day"
+
+    /**
+     * 自建公告源已读到的最大 id。与上游 api.biliterminal.cn 的 `app_announcement_last`
+     * 分开计数：自建源的自增 id 统一带 10 亿偏移，两者互不影响。
+     */
+    const val TERMINAL_ANNOUNCEMENT_LAST = "terminal_announcement_last"
+
+    /** 崩溃后是否自动上传错误报告。默认开；关掉后崩溃页仍保留手动上传按钮。 */
+    const val CRASH_REPORT_AUTO = "terminal_crash_report_auto"
+
+    /**
+     * 反馈/崩溃报告是否附带 B 站 UID。
+     *
+     * **默认关**：用户可见文案里承诺「不收集账号信息」，所以 UID 必须由用户
+     * 在反馈页显式勾选后才附带（价值是开发者能查这个账号的具体问题，
+     * 代价是把匿名反馈变成实名反馈，选择权交给用户）。
+     */
+    const val FEEDBACK_ATTACH_MID = "terminal_feedback_attach_mid"
+
+    /**
+     * 用户已**同意**的隐私说明版本号（0 = 从未同意）。
+     *
+     * 与 [PRIVACY_PROMPTED_VERSION] 分开存是刻意的：「同意」决定能不能上报，
+     * 「问过没有」决定还要不要弹窗——「不同意」同样是一次回答，不该每次启动都再问一遍。
+     * 判据统一走 `TerminalApi.hasPrivacyConsent()` / `needsPrivacyConsent()`，别在别处读这个键。
+     */
+    const val PRIVACY_CONSENT_VERSION = "terminal_privacy_consent_version"
+
+    /** 用户已就哪个版本的隐私说明表过态（同意或不同意都算）。 */
+    const val PRIVACY_PROMPTED_VERSION = "terminal_privacy_prompted_version"
+
     // ==================== 调试 ====================
     const val DEV_LOGV = "dev_logv"
     const val DEV_LOGD = "dev_logd"

@@ -160,6 +160,49 @@ object TerminalDialog {
         return sheet.dialog
     }
 
+    /**
+     * 两选一，**两个按钮各带自己的回调**。
+     *
+     * 与 [confirm] 的唯一区别就在这里：[confirm] 的「取消」被写死成单纯 `dismiss()`，
+     * 调用方没法在「用户选了取消」时做别的事。用 `setOnDismissListener` 也补不了——
+     * `confirm` 内部是先 `dismiss()` 再 `onConfirm()`，dismiss 回调触发时还拿不到
+     * 「用户其实点了确定」这个信息，两边都会走一遍。
+     *
+     * 场景：启动时的隐私说明确认。「不同意」不是「取消这个操作」，而是一次同样有效的
+     * 回答（要继续启动流程、只是不上报），所以必须能挂回调。
+     *
+     * 按钮顺序与 [confirm] 一致：[secondaryText] 在左、[primaryText] 在右。
+     * 调用方若想禁止返回键/点空白关掉，自己 `setCancelable(false)`。
+     *
+     * <p>按钮用**固定底栏**（滚动区外面）：这个方法的正文通常偏长，而滚动区高度被钉在屏高的
+     * 45%，按钮跟着正文滚就会被顶到看不见的地方。配上 `setCancelable(false)` 就是死锁。
+     */
+    fun choice(
+        context: Context,
+        title: String? = null,
+        message: CharSequence,
+        primaryText: String,
+        secondaryText: String,
+        hint: String? = null,
+        onPrimary: () -> Unit,
+        onSecondary: () -> Unit
+    ): AlertDialog {
+        val sheet = Sheet(context, title, bottomButtonBar = true)
+        sheet.addMessage(message)
+        sheet.addButton(secondaryText, sheet.secondaryColor()) {
+            sheet.dialog.dismiss()
+            onSecondary()
+        }
+        sheet.addButton(primaryText, sheet.primaryColor()) {
+            sheet.dialog.dismiss()
+            onPrimary()
+        }
+        // 内容超出滚动区时给一句提示：滚动条是隐藏的（scrollbars="none"），
+        // 不提示的话用户只会看到一段被截断的文字。
+        if (!hint.isNullOrEmpty()) sheet.setHint(hint)
+        return sheet.dialog
+    }
+
     /** 纯提示型（只有一个按钮），如「该季暂无剧集」。 */
     fun alert(
         context: Context,
@@ -181,7 +224,19 @@ object TerminalDialog {
      *
      * 公开出来只为让 [singleChoice] 的调用方能在回调里改选中态 —— 其余场景不需要碰它。
      */
-    class Sheet internal constructor(context: Context, title: String?) {
+    class Sheet internal constructor(
+        context: Context,
+        title: String?,
+        /**
+         * 按钮是否放到滚动区**外面**的固定底栏。
+         *
+         * <p>默认 false = 老行为：按钮跟在正文末尾、随正文一起滚。菜单/单选/确认框的正文
+         * 都很短，用不着改。true 给 [TerminalDialog.choice] 这类「正文很长 + 按钮必须能点到」
+         * 的场景用——滚动区被 [capScrollHeight] 钉成屏高的 45%，长正文会把按钮顶到看不见的
+         * 地方，而这类弹窗又不允许返回键关掉，点不到按钮就是用户彻底卡住。
+         */
+        private val bottomButtonBar: Boolean = false
+    ) {
 
         val dialog: AlertDialog = AlertDialog.Builder(context).create()
         val rows = ArrayList<Row>()
@@ -194,6 +249,7 @@ object TerminalDialog {
         private val titleView: TextView = content.findViewById(R.id.terminal_dialog_title)
         private val divider: View = content.findViewById(R.id.terminal_dialog_divider)
         private val hintView: TextView = content.findViewById(R.id.terminal_dialog_hint)
+        private val buttonBar: LinearLayout = content.findViewById(R.id.terminal_dialog_buttons)
 
         init {
             // 只让**窗口背景**承担圆角描边（来自 overlay 的 android:background =
@@ -206,6 +262,7 @@ object TerminalDialog {
             dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
             dialog.setView(content, 0, 0, 0, 0)
             capScrollHeight()
+            buttonBar.visibility = if (bottomButtonBar) View.VISIBLE else View.GONE
 
             if (title.isNullOrEmpty()) {
                 titleView.visibility = View.GONE
@@ -271,19 +328,24 @@ object TerminalDialog {
 
         /** 加一个右对齐的文字按钮（确认型用）。 */
         internal fun addButton(label: String, color: Int, onClick: () -> Unit) {
-            val bar = container.getChildAt(container.childCount - 1) as? LinearLayout
-            val target = if (bar?.tag == BUTTON_BAR_TAG) {
-                bar
+            val target = if (bottomButtonBar) {
+                // 固定底栏：滚动区外面，永远可见（见构造参数 bottomButtonBar 的说明）
+                buttonBar
             } else {
-                LinearLayout(dialog.context).apply {
-                    tag = BUTTON_BAR_TAG
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.END
-                    setPadding(
-                        dimen(R.dimen.dialog_item_padding_h), 0,
-                        dimen(R.dimen.dialog_item_padding_h), 0
-                    )
-                }.also { container.addView(it) }
+                val bar = container.getChildAt(container.childCount - 1) as? LinearLayout
+                if (bar?.tag == BUTTON_BAR_TAG) {
+                    bar
+                } else {
+                    LinearLayout(dialog.context).apply {
+                        tag = BUTTON_BAR_TAG
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.END
+                        setPadding(
+                            dimen(R.dimen.dialog_item_padding_h), 0,
+                            dimen(R.dimen.dialog_item_padding_h), 0
+                        )
+                    }.also { container.addView(it) }
+                }
             }
 
             target.addView(

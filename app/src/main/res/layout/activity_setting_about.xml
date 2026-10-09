@@ -410,6 +410,43 @@
 
             </com.google.android.material.card.MaterialCardView>
 
+            <!--
+              自建反馈通道的入口（26.10.09 新增）。
+              挂在关于页而不是新增一个菜单项：菜单结构对老用户是缓存的，新加的分组不会自动出现，
+              而关于页是所有版本都有的固定入口。
+            -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/feedback_entry"
+                android:layout_marginTop="6dp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="6dp">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:text="@string/feedback_entry_title"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:text="@string/feedback_entry_desc"
+                        android:textSize="11sp" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
             <com.google.android.material.card.MaterialCardView
                 android:layout_marginTop="6dp"
                 android:layout_width="match_parent"

@@ -53,6 +53,24 @@
 
     </ScrollView>
 
+    <!--
+      固定底栏（可选）。默认 GONE = 老行为：按钮跟在正文末尾、随正文一起滚——
+      菜单/单选/确认框的正文都很短，用不着它。
+
+      启用时（见 TerminalDialog.Sheet 的 bottomButtonBar 参数）按钮挪到滚动区**外面**，
+      因为滚动区被 capScrollHeight() 钉成屏高的 45%，正文一长按钮就被顶到看不见的地方，
+      而这类弹窗（启动时的隐私说明）又不允许返回键关掉，点不到按钮 = 用户彻底卡住。
+    -->
+    <LinearLayout
+        android:id="@+id/terminal_dialog_buttons"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end"
+        android:paddingStart="@dimen/dialog_item_padding_h"
+        android:paddingEnd="@dimen/dialog_item_padding_h"
+        android:visibility="gone" />
+
     <TextView
         android:id="@+id/terminal_dialog_hint"
         android:layout_width="match_parent"

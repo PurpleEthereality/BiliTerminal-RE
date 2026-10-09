@@ -126,6 +126,13 @@
             android:process=":error_activity"
             android:label="崩溃捕捉"
             android:screenOrientation="locked" />
+        <!-- 26.10.09：自建反馈通道。与 B 站账号体系无关，不需要登录，故 exported=false 即可
+             （只从关于页 / 设置页进入）。 -->
+        <activity
+            android:name=".activity.FeedbackActivity"
+            android:exported="false"
+            android:label="反馈与建议"
+            android:screenOrientation="locked" />
         <activity
             android:name=".activity.TutorialActivity"
             android:exported="false"

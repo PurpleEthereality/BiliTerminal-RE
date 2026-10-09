@@ -85,6 +85,19 @@
             android:text="@string/desc_crash"
             android:textSize="12sp" />
 
+        <!-- 26.10.09：自建服务器的崩溃报告是「自动上传」的（上游那套仍需手动点按钮），
+             这里显示自动上传的状态与报错 ID。默认隐藏，只在开关打开时显示。 -->
+        <TextView
+            android:id="@+id/auto_report_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:alpha="0.85"
+            android:gravity="center"
+            android:textSize="12sp"
+            android:visibility="gone"
+            tools:text="已自动上报错误报告，报错ID：123" />
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/upload_btn"
             android:text="上传堆栈"
