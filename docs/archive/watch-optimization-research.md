@@ -1,5 +1,7 @@
 # 手表端优化调研：竞品对比、B 站功能面与改造清单
 
+> **存档说明（2026-10-10 整理）**：本文是 26.10.04 的一次性调研快照，**记录的只是当时**，不是现状。改造项已逐条拍板并落地；长期有效的接口与风控硬约束已回迁到 `docs/bilibili-api-notes.md`，仍未落地项已回迁到 `docs/superpowers/plans/2026-08-27-new-features-roadmap.md` 的「仍未落地项」附录，当前状态与待办看 `docs/review/fix-progress.md`。正文一字未改（文中引用的 `docs/review/...` 路径可能已归档）。
+>
 > 调研日期：2026-10-04
 > 基线版本：26.10.03（versionCode 2610031，见 `app/build.gradle:23-24`）
 > 方法：GitHub REST API 一手查询 + Android 官方文档 + 对 `app/src/main` 源码逐条核对

@@ -1,8 +1,9 @@
 # ReBiliClient 架构通读（为改功能准备）
 
-> 通读日期：当前 `main` 分支工作区（`versionName 26.10.03`），26.10.04 复核
+> 通读日期：当前 `main` 分支工作区（`versionName 26.10.10` / `versionCode 2610102`），26.10.04 初版、26.10.10 复核
 > 目的：改功能前先摸清**真实**架构。本文结论均基于逐文件读源码核实；`AGENTS.md` 已按本文事实重写。
-> 配套阅读：`docs/review/fix-progress.md`（修复进度 + 待办总台账）、`docs/tutorial-system-redesign.md`（教程系统重做，进行中）、`docs/watch-optimization-research.md`（手表端优化调研：竞品对比 / 性能体检 / 改造清单，26.10.04）
+> 配套阅读：`docs/review/fix-progress.md`（**当前状态快照 + 未完成待办**，唯一活台账）、`docs/FEATURES.md`（用户可见功能总表）、`docs/tutorial-system-redesign.md`（教程系统重做，进行中）。
+> 历史调研 / 审计 / 已执行完毕的方案已全部移入 `docs/archive/`（总索引见 `docs/archive/README.md`，文档总索引见 `docs/README.md`）——**归档文档只代表当时，引用前先确认现状**。
 
 ---
 
@@ -162,12 +163,12 @@ AppCompatActivity
 
 | 依赖 | 获取方式 | 位置 |
 |---|---|---|
-| Application 级 Context / 工具 | `BiliTerminal.context`（**静态字段**，`@JvmField`，直接引用） | `BiliTerminal.kt:41` |
-| 当前栈顶 Activity | `BiliTerminal.getInstanceActivityOnTop()`（`WeakReference`） | `BiliTerminal.kt:83` |
+| Application 级 Context / 工具 | `BiliTerminal.context`（**静态字段**，`@JvmField`，直接引用） | `BiliTerminal.kt:48` |
+| 当前栈顶 Activity | `BiliTerminal.getInstanceActivityOnTop()`（`WeakReference`） | `BiliTerminal.kt:90` |
 | 内容缓存 / 数据源 | `TerminalContext.getInstance()`（`InstanceHolder` 懒汉单例） | `TerminalContext.java:371` |
 | 网络客户端 | `NetWorkUtil.getOkHttpInstance()`（`AtomicReference` 双检） | `NetWorkUtil.java:85` |
 | 设置读写 | `SharedPreferencesUtil` 静态方法（`sharedPreferences` 静态字段） | `util/SharedPreferencesUtil.java` |
-| 跨页事件 | **EventBus**（greenrobot），`SnackEvent` 为 sticky | `BaseActivity.kt:198,233` |
+| 跨页事件 | **EventBus**（greenrobot），`SnackEvent` 为 sticky | `BaseActivity.kt:291-297,355-358` |
 | 线程/协程 | `CenterThreadPool` 静态方法 | `util/CenterThreadPool.java` |
 
 **这意味着**：任何新增功能都可以在任何地方 `BiliTerminal.context` / `TerminalContext.getInstance()` 直接取到全局对象，**不需要也无法用注入**。代价是全局可变状态遍地，测试困难。
@@ -223,6 +224,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 - **单例 OkHttpClient**，`followRedirects(false)` + 自定义拦截器手写重定向（`b23.tv` 短链走 `RedirectHandler` 回调）。
 - **DNS 强制 IPv4**（`Inet4Selector`，注释称 IPv6 请求有异常）。
+- **`callTimeout` 有意不设**（`util/NetWorkUtil.java:144-145` 有注释）：这一个单例 OkHttpClient 同时跑 API 与大文件流式下载，而 `callTimeout` 覆盖「整个调用含读完 body」，会掐断正常的长下载。**别按「统一设超时」的直觉把它加上去**；要限时请用 `connectTimeout`/`readTimeout`。
 - **Cookie 管理**：内存缓存 `cachedCookies` + `webHeaders` 静态 `ArrayList`（**索引 1 存 Cookie 字符串**）。`putCookie`/`setCookies` 的 `synchronized` 与 `saveCookiesLocked()`（`saveCookiesFromResponse` 的加锁主体）共用同一把 `NetWorkUtil.class` 锁。
 - **csrf 唯一入口**（26.10.04 批次 2，台账 A1）：`currentCsrf()`（`:432`）＝ `pickCsrf(getCachedCookies(), 快照)`（`:443`，纯逻辑、有单测），优先取实时 Cookie 里的 `bili_jct`，取不到才退回 `SharedPreferencesUtil.csrf` 快照；`saveCookiesLocked()`（`:510` 附近）在落 Cookie 时**顺手回写**快照。**所有 POST 的 csrf 都必须调它，不要再直接读 `SharedPreferencesUtil.csrf`**——`bili_jct` 随 Cookie 刷新轮换，用旧快照会静默拿 `-111`（现象是「点赞/评论偶尔点了没反应」）。原来 14 个 `api/` 类里散布 41 处直接读快照的代码已全部收敛到这一处。
 - **风控重试**：`executeJsonWithRiskRetry` 对 `code == -352 / -412` 重试；`executeWithDoctypeRetry` 对返回 `<!doctype`（被风控拦成 HTML）的响应重试。重试次数/间隔读 SharedPreferences（`api_retry_max_times`、`api_retry_interval_seconds`）。
@@ -366,19 +368,19 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 ### 7.2 更早的修复（26.08.27 快照之后，别照旧报告去改）
 
-- `RefreshListActivity.kt:112-118`：`setRefreshing(false)` 时复位 `isLoading`（注释说明了原因）。
-- `RefreshMainActivity.kt:74-88`：`goOnLoad()` 同步置成员 `isRefreshing`，`onScrolled` 用它防重入。
+- `RefreshListActivity.kt:356-361`：`setRefreshing(false)` 时复位 `isLoading`（注释说明了原因）。
+- `RefreshMainActivity.kt:147-156`：`goOnLoad()` 同步置成员 `isRefreshing`，`onScrolled`（`:61`）用它防重入。
 - `ToolsUtil.java:71-73`：`getRgb888` 已改为 `color & 0xFFFFFF`（注释保留旧实现说明）。
 - `NetWorkUtil.java:100-113`：重定向前判空 scheme/host、先 `response.close()`。
-- `PlayerActivity` / `UpdateManager` / `LocalListActivity` / `VideoInfoFragment` 等见 `fix-progress.md` 第二节。
+- `PlayerActivity` / `UpdateManager` / `LocalListActivity` / `VideoInfoFragment` 等见 `docs/archive/review/fix-progress-history.md` 第二节。
 
 **建议**：改任何文件前先 `grep` 一下对应代码是否还是旧报告里描述的样子——旧报告基于 `26.08.27` 快照，之后有 3 轮修复。
 
 ### 7.3 结构性风险（改功能时容易放大）
 
-- **巨型类**：`activity/player/PlayerActivity.kt` 127 KB、`activity/video/ShortVideoPlayerActivity.kt` 35 KB。`service/DownloadService.kt` 曾是第二条 65 KB 的巨型类，26.10.04 批次 8（E2）已拆到 **1284 行**，实现分居 `service/download/` 的 4 个文件（见 §7.27）。改播放相关功能前先想清楚在哪个位置插入；改下载相关功能请先读 §7.27 的锁与状态契约。
-- **Application 静态状态已收敛为一套**：26.10.02 起只有 `BiliTerminal.context` / `BiliTerminal.instance`（`BiliTerminal.kt` 伴生对象 `@JvmField`，`:43-44`），`BiliTerminalApp` 已整文件删除。**新代码一律用 `BiliTerminal`**。
-- **测试覆盖仍偏低**：`app/src/test/` 39 个文件（38 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **327 个用例**，对 383 个源文件（26.10.04 批次 8 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`FollowApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`BangumiApiTest`、`DynamicApiTest`、`TopicApiTest`、`NoteApiTest`、`WatchLaterApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`ReplySortTest`、`NetWorkUtilTest`、`PerformanceManagerTest`、`BangumiUpdateCheckerTest`、`MsgNotifierTest`、`ApkVerifierTest`、`SettingsKeysTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`、`DownloadPathSpecTest`、`DownloadProgressMathTest`、`DownloadBatchStatsTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
+- **巨型类**：`activity/player/PlayerActivity.kt` 166 KB / 3628 行、`activity/video/ShortVideoPlayerActivity.kt` 43 KB / 1017 行（26.10.10 实测）。`service/DownloadService.kt` 曾是第二条 65 KB 的巨型类，26.10.04 批次 8（E2）已拆到 **1284 行**，实现分居 `service/download/` 的 4 个文件（见 §7.27）。改播放相关功能前先想清楚在哪个位置插入；改下载相关功能请先读 §7.27 的锁与状态契约。
+- **Application 静态状态已收敛为一套**：26.10.02 起只有 `BiliTerminal.context`（`BiliTerminal.kt:47-48`，伴生对象 `@JvmField`，静态字段）与 `instance`（`:53`，`private WeakReference<InstanceActivity>`，只能经 `setInstance()`(`:85`) / `getInstanceActivityOnTop()`(`:90`) 访问），`BiliTerminalApp` 已整文件删除。**新代码一律用 `BiliTerminal`**。
+- **测试覆盖仍偏低**：`app/src/test/` 50 个文件（49 个测试类 + 1 个共享假实现 `FakeSharedPreferences.kt`），共 **460 个用例**，对 395 个源文件（26.10.10 实测）。已有：`HotSearchApiTest`、`FavoriteApiTest`、`FollowApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`BangumiApiTest`、`DynamicApiTest`、`TopicApiTest`、`NoteApiTest`、`WatchLaterApiTest`、`PlayerApiPbpTest`、`ReplyApiTest`、`ReplyParseActionTest`、`ReplySortTest`、`NetWorkUtilTest`、`PerformanceManagerTest`、`BangumiUpdateCheckerTest`、`MsgNotifierTest`、`ApkVerifierTest`、`SettingsKeysTest`、`UpdateReleaseTest`、`MenuConfigTest`、`MySpaceConfigTest`、`ToolsUtilTest`、`StringUtilTest`（Java）、`HotSearchAdapterTest`、`TutorialDslTest`、`DanmakuSyncTest`、`PlayerDefaultsTest`、`ViewPointSkipTest`、`ColorSchemeTest`、`CornerStyleTest`、`FontStyleTest`、`AppearanceManagerTest`、`ViewCapabilityProbeTest`、`DownloadPathSpecTest`、`DownloadProgressMathTest`、`DownloadBatchStatsTest`。改动解析/配置/主题/能力探测逻辑时补纯 JVM 单测——注入 `SharedPreferencesUtil.sharedPreferences`，用 `util/FakeSharedPreferences.kt`（26.09.11 从 `NetWorkUtilTest` 的私有内部类提取为共享助手，别再抄一份）。
 - **主题色表带缓存，失效点只有一处**：`ColorScheme.getCurrentTheme()`（26.09.11 起）缓存当前色表，**只由 `AppearanceManager.setTheme()` 经 `ColorScheme.invalidateCache()` 置空**。这是刻意的——36 个属性 getter 全走它，而列表滚动时一个 item 要调多次，此前每次都重读 SharedPreferences（热路径重复 IO）。**若将来给主题 key 增加第二个写入路径（比如直接 `SharedPreferencesUtil.putString(SettingsKeys.THEME, …)`），必须同步调用 `ColorScheme.invalidateCache()`，否则改主题后色表不跟着变且在 `onResume` 重建后依然错**。守卫测试：`ColorSchemeTest.themeCache_isInvalidatedOnEverySetTheme`、`colorGetters_doNotTouchSharedPreferencesAfterFirstRead`。
 - **主题体系有 3 个"裸 Activity"不参与**：`SplashActivity`、`GetIntentActivity` 不继承 `BaseActivity`（开屏/外链恒定 B站粉），`PlayerActivity` 自己 `setTheme` 但**不调 `applyWindowTheme`、也不参与 `onResume` 主题检测**。改主题相关行为时别以为全局都生效了。
 - **文案硬编码**：遗留页面标题/Toast 直接写中文字符串（Manifest 里 `android:label` 也是中文），只有设置页用 `desc_*` 资源。改文案按现有风格来，别顺手抽 `strings.xml`。
@@ -389,7 +391,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 | | 普通视频播放器 | 短视频播放器 |
 |---|---|---|
-| 入口 | `activity/player/PlayerActivity.kt`（**3087 行**） | `activity/video/ShortVideoPlayerActivity.kt`（907 行） |
+| 入口 | `activity/player/PlayerActivity.kt`（**3628 行**） | `activity/video/ShortVideoPlayerActivity.kt`（1017 行） |
 | 基类 | **直接 `extends Activity`**，不走 `BaseActivity` 体系（自己实现主题、EventBus、横竖屏） | `InstanceActivity` + `ViewPager2` 竖滑翻页 |
 | 播放内核 | **裸 `IjkMediaPlayer`**，`setOption`/`setDataSource`/监听器全部内联在 Activity 里 | `player/IjkPlayerBridge`（Flow 驱动状态）+ `player/DanmakuManager` |
 | 弹幕 | `IDanmakuView` 内联处理（`streamDanmaku`/`createParser` 都在 Activity 里） | `DanmakuManager` |
@@ -451,7 +453,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 > 只改 `DEFAULT_ENABLED` 对老用户无效，他们的存档里早就是 `true`）；设置项在
 > `SettingTerminalPlayerActivity` 内被注释；关键词从 `SettingsIndex` 摘掉；
 > `PlayerActivity.needViewPoints()` 里的 `PLAYER_SKIP_OP_ED` 一项已删（否则老用户仍会为「跳过」白拉 `view_points`）。
-> 完整恢复清单见 `docs/review/fix-progress.md` **§43.5**。
+> 完整恢复清单见 `docs/review/fix-progress.md` **§3.3**（原 §43.5）。
 
 设计参照 PiliPlus（`bggRGjQaUbCoE/PiliPlus` @ `2515ecf`）的 `pgcSkipType` / `SkipType` 体系。
 
@@ -494,14 +496,14 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 - **请求侧**（照 PiliPlus `_getDmTrend()` 对齐）：除了 `cid` 还要带 `aid`/`bvid`，并固定带 **`r=loader`**；**Referer 必须落在具体视频页**（`/video/{bvid}`，没有 bvid 就用 `/video/av{aid}`），站点根会被风控挡掉。
 - **纯解析**：`api/PlayerApi.parseHighEnergyData(JSONObject)`（static，零网络、**不写日志**——`Logu` 走 `android.util.Log`，在 JVM 单测里会抛 not-mocked）。它按「根上的 modules → data 里的 modules → data 本身 → 根自己」四个候选依次找，**优先返回真正带 `events.default` 的那个**；都不带才退回第一个候选（至少留下 `step_sec`/`debug` 便于排查）。配套 `app/src/test/.../api/PlayerApiPbpTest.kt` 9 例。
 - **`buildPbpReferer(bvid, aid)`** 也是纯函数（bvid > av号 > 站点根），单测覆盖。
-- 网络侧 `getHighEnergyData(cid, aid, bvid)` 用 `new ArrayList<>(NetWorkUtil.webHeaders)` 复制一份请求头、只替换 `Referer`，**不动全局表**（全局表是 volatile copy-on-write 快照，见 `util/NetWorkUtil.java:521` 的注释）。调用点 `activity/player/PlayerActivity.kt` 的 `loadHighEnergyData()` 从 Intent 里取可选的 `bvid`——`PlayerData` 没有该字段，所以多数入口会落到 av 号 Referer。
+- 网络侧 `getHighEnergyData(cid, aid, bvid)` 用 `new ArrayList<>(NetWorkUtil.webHeaders)` 复制一份请求头、只替换 `Referer`，**不动全局表**（全局表是 volatile copy-on-write 快照，见 `util/NetWorkUtil.java:550-557` 的注释）。调用点 `activity/player/PlayerActivity.kt` 的 `loadHighEnergyData()` 从 Intent 里取可选的 `bvid`——`PlayerData` 没有该字段，所以多数入口会落到 av 号 Referer。
 
 ### 7.9 列表增量刷新：`notifyItemRangeInserted` 的起点由 adapter 的 `getItemCount()` 决定（26.10.04 批次 3）
 
 **核心事实：本项目大量 adapter 的 `getItemCount()` 是 `data.size + 1`（位置 0 塞一个头部），所以通知增量时起点要 `sizeBefore + 1`。看到 `+ 1` 不要条件反射当越界，先读对应 adapter 的 `getItemCount()`。**
 
-- **无头部**（直接用 list 构造）：`adapter/video/VideoCardAdapter.kt:70` `getItemCount() = videoCardList.size`、`adapter/article/ArticleCardAdapter.kt:123`、`adapter/LiveCardAdapter.kt:64` → 起点就是 `lastSize`。26.10.04 修掉的 3 个搜索页（`SearchVideoFragment` / `SearchArticleFragment` / `SearchLiveFragment`）原来写成 `lastSize + 1`，是**真越界**（第 2 页起 `IndexOutOfBounds` / `Inconsistency detected`）。
-- **有头部**：`adapter/ReplyAdapter.kt:556-558` `replyList.size + 1`、`adapter/dynamic/UserDynamicAdapter.kt:112-114` `dynamicList.size + 1`、`activity/video/series/SeriesInfoActivity` 的内部 adapter `data.size + 1` → 这些调用点的 `+ 1` 是**对的**（`ReplyFragment.kt:250`、`UserDynamicFragment.kt:89`、`SeriesInfoActivity.kt:86`），已核实、别动。`adapter/user/FollowGroupAdapter.kt:108` 的 `groupPosition + 1` 是分组结构，同理。
+- **无头部**（直接用 list 构造）：`adapter/video/VideoCardAdapter.kt:103` `getItemCount() = videoCardList.size`、`adapter/article/ArticleCardAdapter.kt:123`、`adapter/LiveCardAdapter.kt:64` → 起点就是 `lastSize`。26.10.04 修掉的 3 个搜索页（`SearchVideoFragment` / `SearchArticleFragment` / `SearchLiveFragment`）原来写成 `lastSize + 1`，是**真越界**（第 2 页起 `IndexOutOfBounds` / `Inconsistency detected`）。
+- **有头部**：`adapter/ReplyAdapter.kt:678-680` `replyList.size + 1`、`adapter/dynamic/UserDynamicAdapter.kt:115-117` `dynamicList.size + 1`、`activity/video/series/SeriesInfoActivity` 的内部 adapter `data.size + 1` → 这些调用点的 `+ 1` 是**对的**（`ReplyFragment.kt:250`、`UserDynamicFragment.kt:89`、`SeriesInfoActivity.kt:86`），已核实、别动。`adapter/user/FollowGroupAdapter.kt:125` 的 `groupPosition + 1` 是分组结构，同理。
 - **通知前必须先改数据，且同在主线程**：`ReplyFragment.kt:238` 的注释就是这个约定。反面教材是 `activity/video/series/UserSeriesActivity.kt`——原来只 `notifyItemRangeInserted(oldSize, seasonList.size)` 却**从没 `addAll` 进 adapter 的 list**，报出的数量和真实条数永远对不上；已改成记住第 1 页的 adapter、第 2 页起先 `seasonList.addAll(...)` 再通知（`adapter/video/SeriesCardAdapter.kt` 的 `seasonList` 因此由 `List` 放宽为 `MutableList`）。
 - 配套：`activity/RefreshListActivity` 的 `getRecyclerViewCacheSize()` / `getRecyclerViewPrefetchCount()` 来自 `PerformanceManager`，与 `notifyItemRangeInserted` 无关，别混为一谈。
 
@@ -527,7 +529,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 ### 7.12 设置 key 的唯一来源：`SettingsKeys`（26.10.04 批次 4）
 
-- **`player` / `play_qn` 两个键现在只有唯一来源：`util/SettingsKeys.kt:72` 的 `PLAYER`、`:74` 的 `PLAY_QN`。** 原来还有第三处定义 `SharedPreferencesUtil.player`（死字段，已删）和 13 处字面量（已全部改调常量）。看见新代码里直接写 `"player"` / `"play_qn"` 就是回退。
+- **`player` / `play_qn` 两个键现在只有唯一来源：`util/SettingsKeys.kt:90` 的 `PLAYER`、`:92` 的 `PLAY_QN`。** 原来还有第三处定义 `SharedPreferencesUtil.player`（死字段，已删）和 13 处字面量（已全部改调常量）。看见新代码里直接写 `"player"` / `"play_qn"` 就是回退。
 - **别被同名假阳性骗了**：`activity/settings/SettingMainActivity.kt:118` 的 `"player"` 是设置页**分组 id / 跳转标记**，与 SharedPreferences 键只是字面量碰巧相同，**不是** `SettingsKeys.PLAYER`（该处已加注释）。
 - `SettingsKeysTest` 把两个键名字符串钉死。理由：键名是**磁盘协议**，改了不报错、只让用户设置静默回默认值（覆盖安装升级时才会被发现）。
 - 其余键（`mid`、`player_show_viewpoints` 等）仍散着字面量，尚未收敛；新增键请直接加进 `SettingsKeys`。
@@ -696,11 +698,67 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 - **能力在基类 `activity/base/RefreshListActivity.kt`，默认关闭**：子类调 `setupAutoHideBars(vararg bars: View?)` 才生效（不调 = 零影响，所以对其它几十个列表页安全）。`activity_simple_refresh.xml` 里的 `filterBar`/`sortBar`/`manageBar`/`groupBar` 是 `SwipeRefreshLayout` **之上的兄弟节点**，不在 RecyclerView 内，**不会随列表滚走**，只能手动改 `layoutParams.height` 做收放。**没做成 adapter 头部项**：那会重映射所有业务 adapter 的 `viewType`/`adapterPosition`（同 §7.23 的理由）。
 - **判据抽成纯函数 `util/view/ScrollRetractDecider.kt`**：`action(accumulated: Int, collapsed: Boolean, canScrollUp: Boolean): Int` 返回 `NONE`/`COLLAPSE`/`EXPAND`（`THRESHOLD = 12`）。View 层在 JVM 单测里是 Android 桩，断言写了也是假的（见 §36.7 第 1 条），所以判据必须与 Android 解耦才有真单测。
-- **展开只有「回到顶部」一条路（26.10.05 第三批真机反馈后收紧，见 `docs/review/fix-progress.md` §三十九）**：`EXPAND` 只可能在 `!canScrollUp && accumulated <= 0` 时返回，列表**中间**向上滚一律 `NONE`。原因是**动画的高度变化会顶动列表内容**——条是列表的兄弟节点、位于列表上方，高度一变可见区域跟着变、内容整体位移；用户正按住屏幕拖动时手指底下的条目被推走，表现为「条和滑动手势打架」。收回则随时可以（内容朝手指方向让位，方向一致不冲突）。**旧口径「向上累计滚过阈值就展开」是错的，不要改回去。**
+- **展开只有「回到顶部」一条路（26.10.05 第三批真机反馈后收紧，见 `docs/archive/review/fix-progress-history.md` §三十九）**：`EXPAND` 只可能在 `!canScrollUp && accumulated <= 0` 时返回，列表**中间**向上滚一律 `NONE`。原因是**动画的高度变化会顶动列表内容**——条是列表的兄弟节点、位于列表上方，高度一变可见区域跟着变、内容整体位移；用户正按住屏幕拖动时手指底下的条目被推走，表现为「条和滑动手势打架」。收回则随时可以（内容朝手指方向让位，方向一致不冲突）。**旧口径「向上累计滚过阈值就展开」是错的，不要改回去。**
 - **两条反直觉但必须保留的设计**：①**已收回时继续向下滚仍返回 `COLLAPSE`**，作用是让调用方清零累加值——若返回 `NONE`，累加值会一直涨，用户往上滚时先要抵消历史正值，表现为「条收起来以后怎么滚都不回来」；②**`collapsed && !canScrollUp && accumulated <= 0` 强制 `EXPAND`**——已在顶部还收着就必须展开，因为列表到顶后不会再产生负 `dy`，否则永远展不开。
 - **`naturalBarHeight` 必须缓存**：条是 `wrap_content`，收回时高度被压成 0，0 高度量不出「原本多高」，否则**收得回去、展不回来**。
 - **`animateBars` 的三个易错点**：①收回只处理 `visibility == VISIBLE && naturalBarHeight > 0` 的条——**不可见的条不能收**，否则会被记进 `collapsedBars`，展开时把本该 `GONE` 的条点亮；②`barsAnimator?.cancel()` 后**必须立刻置 `null`**（`cancel()` 会同步回调旧动画的 `onAnimationEnd`，那时若还指着旧动画就会把 height 复位成 `WRAP_CONTENT`），并在 `onAnimationEnd` 里用 `if (barsAnimator !== animation) return` 挡下被取消的动画；③**多条共用一个 `ValueAnimator`**（高度按同一条 0..1 进度算），每条各起一个动画会因启动微差错位。
-- **接线点**：`activity/user/WatchLaterActivity.kt` 接 `filterBar`（并在 `reloadForFilter()` 里先 `expandAutoHideBars()`，否则点了「未看完」条还是收着的）；`activity/user/favorite/FavoriteVideoListActivity.kt` 接 `sortBar`（并在 `switchSort()` 里 `expandAutoHideBars()`）。**`manageBar` 故意不接**：多选模式下用户正勾着视频，条收走就没法点删除。（同批次的长按操作面板见 `util/LongPressPrefs.kt` 与 `docs/review/fix-progress.md` §37.1。）
+- **接线点**：`activity/user/WatchLaterActivity.kt` 接 `filterBar`（并在 `reloadForFilter()` 里先 `expandAutoHideBars()`，否则点了「未看完」条还是收着的）；`activity/user/favorite/FavoriteVideoListActivity.kt` 接 `sortBar`（并在 `switchSort()` 里 `expandAutoHideBars()`）。**`manageBar` 故意不接**：多选模式下用户正勾着视频，条收走就没法点删除。（同批次的长按操作面板见 `util/LongPressPrefs.kt` 与 `docs/archive/review/fix-progress-history.md` §37.1。）
+
+### 7.29 okhttp 的 `Response` 到底要不要 `close()`（结论更正，26.10.10 回迁）
+
+**旧结论「所有 API 从不 `close()` `Response`，连接与 fd 被占用」是错的**，别再照着它去「补 close」：
+`okhttp3.ResponseBody.string()` / `bytes()` 内部就是 `source().use { … }`（字节码调 `CloseableKt.closeFinally`），**body 读完即把连接归还连接池**。
+真正会泄漏的只有「拿到 `Response` 却没把 body 读到底就丢弃」的路径（26.09 那轮共 10 处，已全部修掉）。
+原报告点名的 `api/UserInfoApi.java:323` / `:368`、`api/ReplyApi.java:254` 都走 `bytes()` 读完，**不是泄漏**。
+判据只有一条：**body 读完了没**——读完了就不用管，没读完才必须自己 `close()`。
+
+### 7.30 `IjkPlayerBridge.release()` 不是终结路径：cancel 之后必须立刻重建 scope
+
+`release()` 会被 `activity/video/ShortVideoPlayerActivity.kt:243`（`onViewRecycled`）调用，**同一个 holder 之后还会 `initPlayer()` → `createPlayer()` 复用**。
+只 cancel 顶层 `job` 会让 `startProgressTracking()` 后续 launch 进**已取消的 scope**，表现为**进度条从此静默不动**（不崩、只是不动）；正确做法是 `scope.cancel()` 之后**立即重建** scope（现有实现见 `player/IjkPlayerBridge.kt:41-44` 与 `release()` 末尾）。
+⚠️ 这和 `AGENTS.md` 记的 `VideoPlayerCore.release()` 一次性 `released` 标志（复用会泄漏 native 播放器）**是两条不同的坑**，不要合并理解。
+
+### 7.31 重定向的 fail-closed 白名单：第二条凭证外流通道
+
+`NetWorkUtil.isBilibiliHost(host)`（`util/NetWorkUtil.java:179`，配套白名单 `BILIBILI_AKAMAI_MIRROR_HOSTS` `:169`）对手动跟跳做**精确主机校验**（fail-closed，白名单外的 host 一律不跟），并用手动跟跳请求的 `request.tag` **累计跳数**封死「白名单内互相跳转」的无限重定向环（拦截器 `:111-127`，每次跟跳前先 `response.close()`）。
+改重定向 / 跟跳相关代码前必读——这是 6.4 之外**另一条凭证外流通道**的封堵，别当成「多此一举的 host 判断」删掉。
+
+### 7.32 `PlayerActivity.onStop` 不停播是 F1 的「有意设计」，别再说成 bug
+
+后台播放（F1）故意不在 `onStop` 停播（见 `activity/video/PlayerActivity.kt:1679-1684`）。26.09 审计曾把它记为「后台耗电缺陷」，复查已撤回该结论。
+另外 F1 **当前没有 wakelock**（`WAKE_LOCK` 未声明、也没调 `setWakeMode`），熄屏表现属**待真机确认项**，不是「漏加了」。
+
+### 7.33 `api_retry_max_times` 目前只有读、没有设置项
+
+`util/NetWorkUtil.java:237` / `:300` 会读 `api_retry_max_times` 与 `api_retry_interval_seconds`，但**设置页没有任何写入方**——用户在设置里调不了这两个值。
+别把它当成「已可配置」而重复实现；真要开放，得同时改 `util/SettingsKeys.kt` + 设置页 `SettingSection` + `activity/settings/SettingsIndex.kt` 三处。
+
+### 7.34 收藏夹上限与「默认收藏夹」的识别规则
+
+服务端不返回上限时按本工程约定填：**默认收藏夹上限 50000、用户自建 1000**，且**默认收藏夹以 `index == 0` 识别**（与 `api/FavoriteApi.java` 既有 `isDefault` 逻辑一致）。
+`parseFavoriteState` 的 `maxCountList` 参数就带着这个推断值——这是「服务端不给就用约定值」的先例。**上限不是接口字段**，别去响应里找。
+
+### 7.35 B 站 `playurl` 与签到类接口的接入常识（26.10.10 回迁）
+
+取流（`playurl`）：
+- `fnval` 是**按位或**叠加的格式位（16 / 64 / 256 / 512 / 1024 / 2048 / 4048），`4048` = 全开。
+- 流 URL 的防盗链校验要求 **`Referer` 为 `.bilibili.com` 域且 UA 非空**，否则 **`403 Forbidden`**；`platform=html5` 可跳过防盗链。
+- 缺 WBI 签名（`w_rid` / `wts`）时接口返回 **`-403`**（与 6.2 的签名实现配套看）。
+- 流 URL **有效期约 120 分钟**，过期必须重新取流，**不可缓存进离线队列复用**。
+- JSON 里 URL 中的 `&` 被转义成 **`\u0026`**，解析时必须还原。
+- **选流优先级**（`model/DashData.java`）：音频优先普通 AAC（`mp4a.*`），杜比 / 无损仅作兜底（`:114-143`）；视频按 **H.264 > H.265 > AV1**（`:74-112`）。注意**已没有合并层**——`util/MediaMerger.kt` 已被删除。
+
+验接口的廉价判据：无 Cookie 调这些接口，**返回 `-101` 即说明接口存在**（`-101` = 未登录，不是「接口没了」）。
+已实测地址：直播签到 `POST https://api.bilibili.com/xlive/web-ucenter/v1/sign/DoSign`（配套 `WebGetSignInfo`）、粉丝勋章佩戴 `/xlive/web-room/v1/fansMedal/wear`、漫画打卡 `/twirp/activity.v1.Activity/ClockIn`。
+**一处实现分叉**：大会员签到最终**没有走**规划里的 `/pgc/activity/score/task/sign`，而是走 `VipApi.addExperience()`（`POST https://api.bilibili.com/x/vip/experience/add`）。未实现的签到/漫画类功能清单见 `docs/superpowers/plans/2026-08-27-new-features-roadmap.md`。
+
+### 7.36 蓝牙 A/V 同步：未排期，且与前两套偏移机制互不合并
+
+全工程**零实现**（`audioDelay` / `syncOffset` 无命中，清单里**一个蓝牙权限都没有**）。将来若要做，两条硬约束：
+1. 接入点是 `PlayerActivity.progressChange()`，**只偏移「显示时间基」，绝不动 `ijkPlayer.currentPosition`**；
+2. **语义与既有 `player_subtitle_delta`（字幕校准）不同，不要合并成一个偏移**，也**绝不能套进 DASH 外部音轨的 800 ms 强对齐判断**。
+
+推荐底座是方案 A（`SettingsKeys.PLAYER_AV_SYNC_OFFSET` 手动微调）；方案 B 自动套偏移需要 `BLUETOOTH_CONNECT` 权限。方案 A–D 的完整对比见 `docs/archive/bluetooth-av-sync-report.md`。
 
 ---
 
@@ -722,7 +780,7 @@ Fragment → BaseFragment → RefreshListFragment   ← Fragment 版列表页
 
 `InstanceActivity` 额外：`onCreate` 里 `BiliTerminal.setInstance(this)`；**顶栏点击不自动绑定**，须手动 `setMenuClick()`。
 
-**顶栏曾是公共组件，但那次收敛被回滚了**：`res/layout/cell_topbar.xml` 目前**全库 0 处引用**（26.09.11 实测：149 个布局里只有 7 个含 `<include>`，且都不含 `cell_topbar`），实际是各页手抄顶栏。历史经过见 `docs/review/fix-progress.md:216`——「44 个布局换成 `<include>`」那一轮在真机实测顶栏吃满整屏后**已整体还原**。所以本段旧描述（"44 个布局共用"）**与现状相反**，要重做收敛请先读 `docs/visual-experience-report.md` 的方案再动手。
+**顶栏曾是公共组件，但那次收敛被回滚了**：`res/layout/cell_topbar.xml` **文件本身已删除**（26.10.10 复核：`app/src/main/res/layout/` 139 个布局里含 `<include>` 的仍是 7 个——`activity_emote` / `activity_setting_about` / `activity_setting_ui_preview` / `cell_dynamic` / `cell_dynamic_child` / `cell_private_msg` / `cell_video_local`，19 处 `<include>` 中无一指向 `cell_topbar`，全库对它的引用为 0），实际是各页手抄顶栏。历史经过见 `docs/archive/review/fix-progress-history.md:227,252`——「44 个布局换成 `<include>`」那一轮在真机实测顶栏吃满整屏后**已整体还原**。所以本段旧描述（"44 个布局共用"）**与现状相反**，要重做收敛请先读 `docs/archive/visual-experience-report.md` 的方案再动手。
 
 ### 8.2 新列表页模板（必须做这 4 步）
 
@@ -745,7 +803,7 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 | 防重入字段 | private `isLoading` | protected `isRefreshing` |
 | 并发保护 | 仅 500ms 时间戳 | `synchronized` + 100ms |
 | 触发阈值 | `findLastVisibleItemPosition >= itemCount-4`，IDLE 也查 | 完全可见项 `>= itemCount-3` 且 `!canScrollVertically(1)` |
-| 空视图 | 有 `showEmptyView/hideEmptyView` | **无**（布局里有 `emptyTip` 但无人管理） |
+| 空视图 | 有 `showEmptyView/hideEmptyView` | 有（`emptyView` / `showEmptyView` / `hideEmptyView` / `setOnEmptyRetry`，26.10.10 已补） |
 | 性能 | `PerformanceManager` 动态缓存 + 独立 RecycledViewPool | 固定 cacheSize 10、pool max 20 |
 
 ### 8.3 Adapter 写法
@@ -801,7 +859,7 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 | `BiliTerminal.jumpToUser(context, mid)` | 16 处手抄 Intent | 所有「跳用户主页」；等价于 `Intent().setClass(UserInfoActivity).putExtra("mid", mid)` |
 | `ui/widget/RotaryEncoderSupport` | 3 份表冠滚动 + 1 处开关读取 | 三个 `Rotary*` 控件的公共逻辑；控件各自保留事件接入方式（监听器 vs `dispatchGenericMotionEvent`） |
 | `util/ViewCapabilityProbe` | 2 处直接调 `View.hasOn*ClickListeners()` | 框架方法「本机可能有、也可能被裁掉」时的反射探测 + 降级，见 8.5 第 11 条 |
-| `util/TerminalDialog` | 17 处内联 `AlertDialog.Builder`（7 菜单 + 2 单选 + 8 确认） | 26.10.05 收口；弹窗样式问题在**主题层**不在调用点，根因与迁移清单见 `docs/review/dialog-redesign-progress.md` |
+| `util/TerminalDialog` | 17 处内联 `AlertDialog.Builder`（7 菜单 + 2 单选 + 8 确认） | 26.10.05 收口；弹窗样式问题在**主题层**不在调用点，根因与迁移清单见 `docs/archive/review/dialog-redesign-progress.md`（技术结论已并入 §8.7.0） |
 
 > `Rotary*` 三件套的差异是**刻意保留**的：`RecyclerView`/`ScrollView` 走
 > `setOnGenericMotionListener` 且滚动后抢焦点，`NestedScrollView` 走 `dispatchGenericMotionEvent`
@@ -810,15 +868,15 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 ### 8.5 这一层额外的坑
 
 1. `InstanceActivity` 不自动绑顶栏 → 子类忘调 `setMenuClick()` 则顶栏点击无反应。
-2. `CenterThreadPool.observe(future, consumer)` **空 catch 静默吞异常**（`CenterThreadPool.java:147-148`）。
-3. `RefreshMainActivity.kt:43` 把 layoutManager 强转 `LinearLayoutManager`——换 StaggeredGrid 会 CCE（横屏给的 `CustomGridManager` 是 GridLayoutManager 子类，安全）。
+2. `CenterThreadPool.observe(future, consumer)` **空 catch 静默吞异常**（`CenterThreadPool.java:116-122`）。
+3. `RefreshMainActivity.kt:58` 把 layoutManager 强转 `LinearLayoutManager`——换 StaggeredGrid 会 CCE（横屏给的 `CustomGridManager` 是 GridLayoutManager 子类，安全）。
 4. 主题/密度变化触发 `recreate()`，子类 `onResume` 的一次性逻辑会重跑。
 5. 覆写 `eventBusEnabled()` 返回 false 会连 sticky Snackbar 一起失效。
 6. `RefreshListFragment` 的 `setRefreshing` 只切 UI，不复位状态；也没有 `hideEmptyView`。
 7. `setAdapter/setRefreshing/showEmptyView` 内部已切主线程，但直接 `recyclerView.adapter =` / `notifyItemRangeInserted` 必须自己回主线程。
 8. **改 `Guideline.setGuidelinePercent` 不会自动重新布局**：`Guideline.onMeasure` 恒 `setMeasuredDimension(0,0)`，自身尺寸不随 percent 变化，父级若是 `wrap_content` 的 ConstraintLayout 就不会重算，必须手动 `requestLayout()`。登录页二维码缩放（`QRLoginFragment.kt`）踩过这个坑；另外宽度变化要带动高度得靠 `app:layout_constraintDimensionRatio`。
 9. **`wrap_content` 的 RelativeLayout 里不能放 `layout_alignParentBottom` 的子元素**：只要有一个"贴底"子元素，RelativeLayout 的 `wrap_content` 就会被撑成父容器高度。公共顶栏 `cell_topbar.xml` 第一版就是这么写的（1dp 分割线贴底），结果**顶栏直接吃满整屏、列表被顶到屏幕外**（真机实测 `top` bounds = `[0,114][1080,2394]`）。现在顶栏根节点是竖向 LinearLayout，内层 RelativeLayout 只放标题/时钟（`BaseActivity.setRound()` 需要 RelativeLayout.LayoutParams）。
-10. **`<include>` 建议显式写 `android:layout_width/layout_height`**：不写时行为依赖被包含布局根节点的参数，排查困难。另外注意：`cell_topbar.xml` 目前**已无任何 include 引用**（那次 44 处替换被整体回滚，见 8.1 节），未来若重做收敛再照本条办。
+10. **`<include>` 建议显式写 `android:layout_width/layout_height`**：不写时行为依赖被包含布局根节点的参数，排查困难。另外注意：`cell_topbar.xml` **文件本身已删除**（那次 44 处替换被整体回滚、模板也已还原并移除，见 8.1 节；26.10.10 复核），未来若重做收敛再照本条办。
 11. **别裸调「理论上一定存在」的框架方法——部分手表框架会把它裁掉**（26.09.13 真机崩溃）。`android.view.View.hasOnLongClickListeners()` 是 API 15 就有的公开 API，`android-34` 的 class 文件里也确实有（`javap` 验证），但某手表的 `/system/framework/framework.jar` 里没有，`BaseActivity.setupTopbarLongPressToHome()` 一调就抛
     `NoSuchMethodError: No virtual method hasOnLongClickListeners()Z in class Landroid/view/View;` —— **`onStart` 里崩，页面全打不开**，且编译期、Lint、单测全都查不出来。
     统一走 `util/ViewCapabilityProbe.probeBoolean(view, "方法名") { 名, 异常 -> 日志 }`：能反射调通就走框架，调不通返回 `null` 让调用方走降级分支（自己是标志位即可），探测结论进程级缓存、只失败一次。返回 `null` 是**降级信号**不是错误，调用方必须处理。
@@ -854,7 +912,7 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 | `ColorScheme.kt` | 配色：7 套主题（**只读模块**，原 `ui/theme/ThemeManager.kt`） | `theme_selector` | 7 套 |
 | `CornerStyle.kt` | 卡片圆角 | `ui_corner_radius` | `square`（默认）/ `rounded` |
 | `FontStyle.kt` | 自定义字体（用户从文件管理器选字体文件） | `ui_font_path` | 有 / 无（默认无） |
-| `AppearanceApplier.kt` | 把外观（自定义字体等）落到视图树上：`applyToContentView`，由 `BaseActivity.kt:377` 调用 | — | — |
+| `AppearanceApplier.kt` | 把外观（自定义字体等）落到视图树上：`applyToContentView`，由 `BaseActivity.kt:388` 调用 | — | — |
 
 **分层约定（别打破）**
 - **模块**（`CornerStyle`/`FontStyle`）只放：候选值常量、显示名、纯函数（规整、档位→数值）、读取。
@@ -864,8 +922,8 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 **版本号机制**：`AppearanceManager.version()` 是一个存在 SharedPreferences 的 Int，
 任何外观写入都 +1。Activity 只需记住自己创建时的版本号、`onResume` 比一次，
 就知道要不要重建——**不会随模块增加而增加比较项**（新增第 4 个模块不需要改 `BaseActivity`）。
-> 现状（26.10.04 复核）：**已接入**——`BaseActivity.kt:93` 在 `onCreate` 记录 `appliedAppearanceVersion = AppearanceManager.version()`，
-> `onResume`（`:340`）发现版本号变化即 `recreate()`。新增外观模块不用改 `BaseActivity`。
+> 现状（26.10.10 复核）：**已接入**——`BaseActivity.kt:104` 在 `onCreate` 记录 `appliedAppearanceVersion = AppearanceManager.version()`（字段声明 `:75`），
+> `onResume`（`:351`）发现版本号变化即 `recreate()`。新增外观模块不用改 `BaseActivity`。
 
 **两条不可破坏的性能约定**
 1. **未启用自定义字体 = 渲染路径零开销**：`FontStyle.typeface()` 返回 null 时
@@ -905,7 +963,7 @@ setOnLoadMoreListener { page -> load(page) } // 4. page 已由基类自增，别
 > 不是整层缺失。只 grep 目标属性会把「半接入」误读成「未接入」，方案方向跟着全偏。
 
 **已知遗留**：`styles.xml` 的 `CardStyle`/`ButtonStyle` 等组件样式内**全是硬编码静态色**
-（`@color/card_dark` / `@color/pink` 等），切主题后不跟随；与 `docs/visual-experience-report.md`
+（`@color/card_dark` / `@color/pink` 等），切主题后不跟随；与 `docs/archive/visual-experience-report.md`
 §2.12「86 处布局引用静态调色板」同源。本次未动。
 
 ### 8.7.1 圆角的生效机制（26.09.11 落地，改圆角前必读）
@@ -995,11 +1053,25 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 这一条固定位置的按钮回到系统字体。把它改成条件显示等于把唯一退路藏起来。
 （若连设置页都进不去，最后的退路是系统设置里清除应用数据。）
 
+### 8.7.3 视觉上「已确认不要回退」的实现（26.10.10 由 `docs/archive/visual-experience-report.md` 附录 E 回迁）
+
+这些地方**当前是正确的**，只是可能显得「旧」或「不统一」。别在顺手重构/统一化的过程中改坏它们：
+
+- `util/AnimationUtils.java:43-45` 的 `crossFade`（100ms）与各详情页的 `crossFade` 用法 —— 加载态到内容态的过渡，删了就是「内容突然砸出来」。
+- 搜索框滚动隐藏逻辑（`SearchActivity.kt:495-518`）—— 唯一缺的是动画 `duration`，机制本身没问题。
+- 二维码三档缩放（`QRLoginFragment.kt:124-160`）—— 注意 `Guideline` 改 percent 后**必须 `requestLayout()`**（见 §8.5 第 8 条），这套缩放是踩坑后的产物。
+- 圆屏适配（`BaseActivity.kt:143-181`）与 `RotaryRecyclerView` / `RotaryScrollView` 的滚轮输入支持 —— 三件套的差异是刻意保留的（见 §8.4b 末注）。
+- `ThemeManager` 集中配色的**设计意图**：7 套主题 41 个字段的抽象是对的，问题只是「另有两套并行表」（见 §8.7）。
+- 视频卡片的 `MaterialCardView` + 主题 ripple 组合 —— 这是「有反馈」的那一半，是标准；另一半应向它对齐，**不是反过来**。
+- 弹幕恒定白字 + 黑阴影（`DanmakuManager.kt:157,168`）—— 不受主题控制是**刻意的可读性选择**，不要「顺手主题化」。
+
+**明确「不做」的：裸 `Activity` 收编**（`PlayerActivity` / `ImageViewerActivity` / `SplashActivity` / `GetIntentActivity`）。`PlayerActivity.kt:102` 是 `class PlayerActivity : Activity(), IMediaPlayer.OnPreparedListener`，**不继承 `BaseActivity`**，是全应用唯一这样的核心页。理由：播放器保持黑色系统栏是**有意为之**（继承 `BaseActivity` 会把顶栏与主题窗背景带进来），且该文件 3000+ 行，收益不抵回归风险。26.09.10 视觉报告已评估过一次并记为不做，别当漏改来「顺手统一」。其余视觉技术债（顶栏 45 份手抄、无障碍缺口、播放器热区、自适应图标）见 `docs/review/fix-progress.md` §2.4。
+
 ---
 
-## 9. API 层映射表（40 个类，改功能时定位用）
+## 9. API 层映射表（43 个类，改功能时定位用）
 
-按功能域分组。`api/` 下 38 个 Java + 2 个 Kotlin（`HotSearchApi.kt`、`ShortVideoFeedApi.kt`）。
+按功能域分组。`api/` 下 41 个 Java + 2 个 Kotlin（`HotSearchApi.kt`、`ShortVideoFeedApi.kt`）（26.10.10 实测；`BilibiliIDConverter` 已删除，见下）。
 
 ### 视频与播放
 
@@ -1028,6 +1100,8 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 | `SeriesApi` | 合集/系列 | `getUserSeries`、`getSeriesInfo`、`getSeriesByJson` |
 | `BangumiApi` | 番剧/追番 | `getFollowingList`、`getBangumi`、`getSections`、`getMdidFromEpid` |
 | `TimelineApi` | 番剧时间表 | `getTimeline` |
+| `TopicApi` | 话题广场 / 话题下动态列表（26.10.04 批次 6 的 C10） | `getRecommendedTopics`、`searchTopics`、`parseTopics`、`getTopicDynamicList` |
+| `NoteApi` | 视频笔记（只读，26.10.04 批次 6 的 C27） | `getNoteIdsOfVideo`、`getNoteInfo`、`parseBlocks`、`parseNoteDetail` |
 
 ### 用户与社交
 
@@ -1067,7 +1141,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 ### 网络出口的 3 个例外
 
-40 个类里只有 3 处**绕过** `NetWorkUtil` 自建 Request，因此不受它的解压/重试/Cookie 管理保护：
+43 个类里只有 3 处**绕过** `NetWorkUtil` 自建 Request，因此不受它的解压/重试/Cookie 管理保护：
 
 1. `ReplyApi.java:190-208` `uploadReplyImage`（multipart，不处理 br/gzip）
 2. `UserInfoApi.java:291-303` `updateUserInfo`（自带 `decompressResponse`）
@@ -1082,18 +1156,18 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 
 **不可单测**（内部发网络 / 依赖 Context / 弹 UI）：`DynamicApi.analyzeDynamic`、`MessageApi` 全部解析（SpannableString）、`PrivateMsgApi.getPrivateMsgList`、`LikeCoinFavApi.getVideoStats`。
 
-**测试覆盖现状（26.10.04 批次 8 实测）**：`app/src/test/` 38 个测试类 / 327 个用例；api 层只有 10 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`FollowApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`BangumiApiTest`、`DynamicApiTest`、`TopicApiTest`、`NoteApiTest`、`WatchLaterApiTest`，另有 `PlayerApiPbpTest`、`ReplyApiTest`、`ReplySortTest` 覆盖部分纯逻辑）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口；`PerformanceManagerTest` 覆盖档位换算与图片/分页参数（见 §7.10）；`ApkVerifierTest` 覆盖更新包校验的判定规则（见 §7.11）；`SettingsKeysTest` 把 `player`/`play_qn`/`bangumi_update_notify_enable` 三个磁盘键名钉死（见 §7.12）；`PrivateMsgApiTest` 另覆盖会话列表解析（含 `top_ts`）、`opTypeForTop` 的 0/1 映射（见 §7.13）与图片消息 content 的字段/单位换算（见 §7.14）；`MsgNotifierTest` 覆盖新消息通知的提醒判据与正文拼装（见 §7.15）以及追番更新的文案；`BangumiApiTest` 覆盖追番列表解析（见 §7.16）；`BangumiUpdateCheckerTest` 覆盖追番快照序列化与更新判定（见 §7.16）。
+**测试覆盖现状（26.10.10 实测）**：`app/src/test/` 49 个测试类 / 460 个用例；api 层只有 10 个类的解析函数被覆盖（`HotSearchApiTest`、`FavoriteApiTest`、`FollowApiTest`、`OpusApiTest`、`PrivateMsgApiTest`、`BangumiApiTest`、`DynamicApiTest`、`TopicApiTest`、`NoteApiTest`、`WatchLaterApiTest`，另有 `PlayerApiPbpTest`、`ReplyApiTest`、`ReplySortTest` 覆盖部分纯逻辑）；`ui/appearance/` 下有 4 个测试类——`ColorSchemeTest` 覆盖 7 套主题的 `key → style` / `key → 色表` / 中文显示名映射、无 key 时的默认值、以及色表缓存的失效与读取次数；`CornerStyleTest` 覆盖圆角两档与「档位 → 覆盖样式」映射；`FontStyleTest` 覆盖字体文件头校验（含 WOFF 专门拒绝）与「未配置不加载」的性能约定；`AppearanceManagerTest` 覆盖外观版本号与唯一写入入口；`PerformanceManagerTest` 覆盖档位换算与图片/分页参数（见 §7.10）；`ApkVerifierTest` 覆盖更新包校验的判定规则（见 §7.11）；`SettingsKeysTest` 把 `player`/`play_qn`/`bangumi_update_notify_enable` 三个磁盘键名钉死（见 §7.12）；`PrivateMsgApiTest` 另覆盖会话列表解析（含 `top_ts`）、`opTypeForTop` 的 0/1 映射（见 §7.13）与图片消息 content 的字段/单位换算（见 §7.14）；`MsgNotifierTest` 覆盖新消息通知的提醒判据与正文拼装（见 §7.15）以及追番更新的文案；`BangumiApiTest` 覆盖追番列表解析（见 §7.16）；`BangumiUpdateCheckerTest` 覆盖追番快照序列化与更新判定（见 §7.16）。
 
 ### API 层的坑
 
-1. **解析里发网络**：`DynamicApi.java:482` 在 `analyzeDynamic` 内调 `BangumiApi.getMdidFromEpid`；`PrivateMsgApi.java:54,70` 在解析里调 `UserInfoApi` → 无法纯测 + N+1 请求。
-2. **解析依赖 UI/Context**：`DynamicApi.java:685`（`BiliTerminal.context`）、`MessageApi.java:128/145/232/320`（SpannableString）、`LikeCoinFavApi.java:71`（弹窗）、`AppInfoApi.java:33-85`（网络 + SharedPreferences + 弹窗混在一起）。
-3. **api 类做 UI 跳转/下载**：`PlayerApi.java:44-51`（startActivity）、`53-99`（DownloadService）、`339-415`（拼 Intent）。
+1. **解析里发网络**：`DynamicApi.java:844` 在 `analyzeDynamic` 内调 `BangumiApi.getMdidFromEpid`；`PrivateMsgApi.java:59,75` 在解析里调 `UserInfoApi` → 无法纯测 + N+1 请求。
+2. **解析依赖 UI/Context**：`DynamicApi.java:1085`（`BiliTerminal.context`）、`MessageApi.java:128/145/232/320`（SpannableString）、`LikeCoinFavApi.java:71`（`MsgUtil.err` 报错——原先的弹窗已不存在，26.10.10 复核）、`AppInfoApi.java:33-85`（网络 + SharedPreferences + 弹窗混在一起）。
+3. **api 类做 UI 跳转/下载**：`PlayerApi.java:48-56`（startActivity，`:55`/`:69`）、`58-100`（DownloadService）、`426-520`（拼 Intent）。
 4. **重复实现**：视频卡片解析 **21 处**（`RankingApi`、`RecommendApi`×4、`WatchLaterApi`、`SearchApi`×3、`SeriesApi`、`FavoriteApi`×2、`UserInfoApi`、`HistoryApi`、`BangumiApi`、`MessageApi`×3、`DynamicApi`×2、`VideoInfo.java`。**本节此前写的「7 份」是过时数据**，26.08 快照写的「19 处」也偏低——26.10.04 实测 21 处（`SearchApi.java:177` 的番剧搜索分支与 `DynamicApi.java:826` 是漏计项）；`ReplyApi.sendReply` 两份；`DanmakuApi` 发送两份；`VideoInfoApi.getVideoInfo` 两份；解压逻辑 `NetWorkUtil` 已有一份、`UserInfoApi.java:354` 又写一份。**改一处记得 grep 其余几处。**
-5. **参数写错**：`PlayerApi.java:308` `.put("fnvar",0)`（应为 `fnver`）；`DanmakuApi.java:93` `segment_index` 从 1 开始（`:80` 的 javadoc 却说从 0，调用点 `:133`/`:144`）。**（`ReplyApi.likeReply` 硬编码 `type=1` 已于 26.09 修复：`ReplyApi.java:296-297` 改为显式 `REPLY_TYPE_VIDEO` 的兼容重载，真实类型由 `ReplyAdapter.kt:328/347` 传入。）**
-6. **硬编码**：弹幕 XML 地址重复 3 处（`PlayerApi.java:110,248,326`）；URL 散落在方法体内，无常量表。**（`AppInfoApi` 的 4 处明文 `http://` 已于 26.09.13 全部改为 `https://`，见 `AppInfoApi.java:143,162,184,207` 与 §6.4。）**
-7. **全局可变状态**：`SearchApi.java:24-25` 的 `static seid/search_keyword`（多入口搜索会串）、`ConfInfoApi.java:41-43` 的 WBI 缓存、`LoginApi.java:29-30`。
-8. **SharedPreferences key 混用（csrf 部分已于 26.10.04 批次 2 收敛，`player`/`play_qn` 于批次 4 收敛）**：字面量 `"csrf"`（`HistoryApi:32,84`、`WatchLaterApi:49,60`、`DanmakuApi:33`）与常量 `SharedPreferencesUtil.csrf`（`EmoteApi:50`）曾并存，现已统一改调 `NetWorkUtil.currentCsrf()`（见 §6.1）；`"player"`/`"play_qn"` 的 13 处字面量已全部改调 `SettingsKeys.PLAYER`/`PLAY_QN`，第三处定义 `SharedPreferencesUtil.player` 死字段已删（见 §7.12）。其余 key（`mid`、`player_show_viewpoints` 等）仍有字面量，尚未收敛。
+5. **参数写错**：`PlayerApi.java:310` `.put("fnvar",0)`（应为 `fnver`）；`DanmakuApi.java:93` `segment_index` 从 1 开始（`:80` 的 javadoc 却说从 0，调用点 `:133`/`:144`）。**（`ReplyApi.likeReply` 硬编码 `type=1` 已于 26.09 修复：`ReplyApi.java:341`/`:356` 改为显式 `REPLY_TYPE_VIDEO` 的兼容重载，真实类型由 `ReplyAdapter.kt:389/414` 传入。）**
+6. **硬编码**：弹幕 XML 地址重复 3 处（`PlayerApi.java:112,250,328`）；URL 散落在方法体内，无常量表。**（`AppInfoApi` 的 4 处明文 `http://` 已于 26.09.13 全部改为 `https://`，见 `AppInfoApi.java:143,162,184,207` 与 §6.4。）**
+7. **全局可变状态**：`SearchApi.java:34-41` 的 `SEID_BY_KEYWORD`（26.10.10 复核：旧的两个 `static seid/search_keyword` 字段**已删除**，现按关键词隔离并用 LRU 限制 16 条）、`ConfInfoApi.java:42-54` 的 WBI 缓存、`LoginApi.java:31-32` 的 `oauthKey`/`tvAuthCode`。
+8. **SharedPreferences key 混用（csrf 部分已于 26.10.04 批次 2 收敛，`player`/`play_qn` 于批次 4 收敛）**：字面量 `"csrf"`（`HistoryApi:38,73`、`WatchLaterApi:118,129`、`DanmakuApi:33`）与常量 `SharedPreferencesUtil.csrf`（`EmoteApi:52`）曾并存，现已统一改调 `NetWorkUtil.currentCsrf()`（见 §6.1）；`"player"`/`"play_qn"` 的 13 处字面量已全部改调 `SettingsKeys.PLAYER`/`PLAY_QN`，第三处定义 `SharedPreferencesUtil.player` 死字段已删（见 §7.12）。其余 key（`mid`、`player_show_viewpoints` 等）仍有字面量，尚未收敛。
 
 ---
 

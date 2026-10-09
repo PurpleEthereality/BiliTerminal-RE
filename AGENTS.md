@@ -6,9 +6,9 @@
 
 ## 先读架构地图
 
-改任何非平凡代码前先读 **`docs/architecture-map.md`**：真实分层、基类体系、40 个 API 类映射、UI 模板、逐条坑点。本文件只放每次都要遵守的约定。
+改任何非平凡代码前先读 **`docs/architecture-map.md`**：真实分层、基类体系、43 个 API 类映射、UI 模板、逐条坑点。本文件只放每次都要遵守的约定。
 
-其他参考：`bilibili-API/`（B 站接口文档快照，改 API 时查）、`docs/superpowers/specs/`（功能设计文档，写新功能前读）、`docs/tutorial-system-redesign.md`（教程系统重做中——**改教程前先读它**，旧链路正在被替换）。
+其他参考：**`docs/README.md`（文档总索引——先看它决定该读哪份）**、`bilibili-API/`（B 站接口文档快照）、`docs/bilibili-api-notes.md`（接口与风控常识，改 API 前读）、`docs/FEATURES.md`（用户可见功能总表）、`docs/superpowers/specs/`（功能设计文档，写新功能前读）、`docs/tutorial-system-redesign.md`（教程系统重做中——**改教程前先读它**，旧链路正在被替换）。**`docs/archive/` 里全是历史资料，记录的是当时、不是现状**，别照着它改代码。
 
 ## 项目概况
 
@@ -30,7 +30,7 @@
 - 新增菜单页改三处：`MenuActivity.btnNames`、`MenuConfig.ALL_ITEMS`、`AndroidManifest.xml`。**但新菜单 key 对老用户不会自动出现**——`MenuConfig.loadEnabled` 对已存的 `menu_enabled` 直接返回，只能靠「菜单设置」手动开。想让所有人都能立刻用到入口，别加菜单项，挂到既有页面（如动态页动作卡片）。
 - 新增设置项改三处：`util/SettingsKeys.kt`、设置页 `SettingSection`、`activity/settings/SettingsIndex.kt`。
 - 外观设置（配色 / 卡片圆角 / 字体）走 `ui/appearance/` 三模块：**模块只放候选值与纯函数，写入一律走 `AppearanceManager`**（它负责递增外观版本号）；模块里别做几何计算，也别在热路径上缓存。细则见 `docs/architecture-map.md` §8.7。
-- **弹窗一律走 `util/TerminalDialog.kt`，禁止在业务代码里裸写 `AlertDialog.Builder`。**（26.10.05 起，见 `docs/review/dialog-redesign-progress.md`）
+- **弹窗一律走 `util/TerminalDialog.kt`，禁止在业务代码里裸写 `AlertDialog.Builder`。**（26.10.05 起完成迁移，见 `docs/archive/review/dialog-redesign-progress.md`；技术结论已并进 `docs/architecture-map.md` §8.7.0）
   - **禁止的写法**：`AlertDialog.Builder(context).setItems(...)` / `.setSingleChoiceItems(...)` / `.setMultiChoiceItems(...)` / `.setMessage(...).setPositiveButton(...)`，以及任何自己 `inflate` 一个带选项列表的弹窗布局。全工程现有 17 处此类调用已在 26.10.05 全部迁移，`app/src/main/java` 下除 `TerminalDialog.kt` 自身外**不应再出现 `AlertDialog` 字样**（用 `grep -r "AlertDialog" app/src/main/java` 自检）。
   - **为什么**：弹窗的花色不只取决于调用点，更取决于主题层。7 族主题此前都没声明 `alertDialogTheme`，于是弹窗走 MaterialComponents 自带的 alert overlay，正文色取自全工程 0 处声明的 `colorOnSurface`（回退近白 → 用户看到的「灰底白字」），破坏性按钮缺 `colorError` 语义，而**唯一跟随主题的 `colorAccent` 恰好是 `#FF6699` 荧光粉**（→「粉按钮」），背景又是方角无描边（→「像安卓原生的一样」）。裸 Builder 无论怎么写都会踩这一套。
   - **正确写法**：菜单型 `TerminalDialog.menu(context, title, items, danger)`、单选型 `TerminalDialog.singleChoice(context, title, items, checked)`、确认型 `TerminalDialog.confirm(context, title, message, confirmText, cancelText, confirmIsDanger)`、纯提示 `TerminalDialog.alert(context, title, message)`。破坏性项（删除/取消收藏之类）**必须**进 `danger`，别让用户靠文案猜。
@@ -55,9 +55,13 @@
 
 ## 每次改完必须同步文档
 
-- **修 bug** → 在 `docs/review/fix-progress.md` 加记录并勾掉待办。
+- **修 bug / 关掉一个待办** → 更新 `docs/review/fix-progress.md`（**唯一活台账**，只写现状与待办；经过超过一屏就并进它的「历史章节索引」一行，正文归档）。
 - **改架构 / 基建 / 新增基类** → 更新 `docs/architecture-map.md` 对应章节。
+- **新增用户可见功能** → 更新 `docs/FEATURES.md`（必要时一并更新仓库首页 `readme.md`）。
+- **核实出新的接口 / 风控结论** → 更新 `docs/bilibili-api-notes.md`。
 - **本文件描述的内容变了**（入口、约定、坑清单）→ 顺手改 `AGENTS.md`，别留过时描述。
+- **一份知识只有一个落点**，别在多处复述；文档间引用一律写仓库相对路径（`docs/...`），源码注释里的文档路径同样要跟着改。
+- **过期文档不删，归档**：`git mv` 进 `docs/archive/` 并在 `docs/archive/README.md` 加一行「内容 + 为什么归档」；**归档前先回迁**——把文中唯一还活着的知识（不要回退的取舍、未落地的待办、实测数字）搬进活文档。归档后同步改掉所有指向它的引用。
 
 ## 构建
 

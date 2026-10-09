@@ -1,5 +1,7 @@
 # RE:哔哩终端 视觉体验优化报告
 
+> **存档说明（2026-10-10 整理）**：本文是 26.09.10 的一次性视觉审计，**记录的是当时**，不是现状（批次 0~4 的落地情况、回退情况均已变化）。归档前已回迁：附录 E「不要回退清单」→ `docs/architecture-map.md` §8.7.3（含「不做」的理由）；附录 H 真机清单 → `docs/review/real-device-regression-checklist.md` 第十三节（第 238~247 条）；仍开放的视觉技术债（顶栏 45 份手抄、无障碍缺口 110、播放器热区、自适应图标、死样式等）→ `docs/review/fix-progress.md` §2.4。正文一字未改，文中引用的 `docs/...` 路径可能已归档。
+
 > 审计对象：`main` 分支工作区（`versionName 26.09.08`）
 > 审计方式：逐文件读源码 + 全量统计 `app/src/main/res/` 与 `app/src/main/java/`（统计口径见文末附录 A）
 > 相关文档：`docs/architecture-map.md`（架构通读）、`AGENTS.md`（硬约定）

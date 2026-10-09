@@ -158,3 +158,27 @@
 - 实现前建议先在 `docs/superpowers/specs/` 写设计文档（遵循项目惯例）。
 - 涉及写操作（签到/发布/充电）务必先确认账号风控与接口可用性，参考 `NetWorkUtil` 的 DOCTYPE/风控重试机制。
 - 音频站功能已删除，规划中不再包含音乐/歌单相关内容。
+
+---
+
+## 附：从 26.10.04 手表优化调研回迁的仍未落地项（2026-10-10）
+
+> 来源 `docs/archive/watch-optimization-research.md` §7（该表里已标 ✅ 的项**不再列出**）。
+> 逐条已核对本文件既有条目：重复的不再列，只留本文件没有的。
+> 「现状」列均为 2026-10-10 在本仓库 `app/src/main/java` / `app/build.gradle` 上 grep 实测的结果，未实测的一律不标 ✅。
+
+| 优先级 | 事项 | 依据 / 位置 | 现状 |
+|---|---|---|---|
+| P0 | 去掉 `x86` ABI | 调研 §7.1（`app/build.gradle:140-146`） | **仍未做**：`app/build.gradle:144` 仍是 `include 'armeabi-v7a', 'arm64-v8a', 'x86'`，`app/libs/x86/` 下 5 个 `.so` 仍在。⚠️ 调研 §12 前提写「**x86 ABI 保留，不进本轮**」，`universalApk` 取舍单列 B10 已裁决 |
+| P0 | 弹幕点击菜单（点赞/复制/举报/屏蔽） | 调研 §7.2（PiliPlus） | **仍未做**：全库无 `OnDanmakuClickListener` / `setOnDanmakuClickListener`（grep 无命中），点弹幕无任何响应 |
+| P1 | 评论举报 | 调研 §7.2（`x/v2/reply/report`，需 csrf） | **仍未做**：grep `reply/report`、`reportReply` 无命中。**删除/置顶已落地**（`api/ReplyApi.java:492 deleteReply` / `:536 topReply`，接线于 `adapter/ReplyAdapter.kt:581,611`），故本行只留举报 |
+| P1 | 私信撤回 / 折叠消息 | 调研 §7.2（`batch_rm_dustbin`、`batch_update_dustbin_ack`，需 csrf） | **仍未做**：grep `batch_rm_dustbin` 无命中；`dustbin` 仅作为未读计数出现在 `api/MessageApi.java:59-60`。**发图/会话置顶/会话删除已落地**（`api/PrivateMsgApi.java` 的 `buildImageContent`、`setSessionTop:284`、`removeSession:298`） |
+| P1 | 关注主播开播提醒 | 调研 §7.2（`live.bilibili.com/room/v1/Room/get_status_info_by_uids`，免登录） | **仍未做**：grep `get_status_info_by_uids` 无命中。⚠️ 用户 26.10.04 已裁为「**无计划**」（调研 §12.6，与 §10.4 的「高价值低成本、值得做」相反），此行为登记接口信息，非既定要做 |
+| P1 | 画中画（PiP） | 调研 §7.2（PiliPlus） | **仍未做**：grep `enterPictureInPicture` / `PictureInPictureParams` 在 `app/src/main` 无命中 |
+| P2 | 列表 `DiffUtil.ItemCallback` 化 | 调研 §7.1（列表增量刷新，53 处） | **仍未做**：26.10.04 批次 3 只修了 4 处 `notifyItemRangeInserted` 起点真 bug，DiffUtil 化未动 |
+| P2 | 弹幕点赞 / 撤回自己的弹幕 | 调研 §7.2（`x/v2/dm/thumbup/add`、`/stats`、`x/dm/recall`） | **仍未做（只有接口壳、零接线）**：`api/DanmakuApi.java:53 likeDanmaku`、`:64 recallDanmaku` 已定义，但 grep 只命中定义本身，全库无调用点，UI 无入口 |
+| P3 | ffmpeg 裁剪重编（减体积） | 调研 §7.1（`ijkplayer-java` / `.so`） | **仍未做**：`app/libs/{arm64-v8a,armeabi-v7a,x86}/libijkffmpeg.so` 仍在（arm64 一份约 5.16 MB，占 release arm64 包约一半）；需 NDK r21e 工具链，成本高 |
+| P1「已拍板暂缓」 | Baseline Profile | 调研 §7.1（调研 §12.3 B6） | **已拍板暂缓**：grep `baselineprofile` 在 `app/build.gradle` 无命中，全仓 `**/baselineprofile/**` 无文件 |
+| P2「已拍板暂缓」 | OkHttp 连接池接线 | 调研 §7.1（调研 §12.3 B4） | **已拍板暂缓**：grep `ConnectionPool` / `connectionPool` 在 `app/src/main/java` 无命中（相关 getter 已于 26.10.04 批次 3 删除） |
+
+**「明确不做」一行指路**（不列进上表）：调研 §7.3——创作中心、会员购、漫画、课堂、直播礼物/舰长、多窗口、桌面小组件；调研 §7.2 中标注「建议不做」的——滑动跳转预览缩略图、WebDAV 备份/恢复、DLNA 投屏/超级分辨率/Live Photo/AI 原声翻译/互动视频增强。其中**漫画**本文件已有「10. 漫画客户端」条目，且按调研 §12.7 记为用户 26.10.04 最终裁定**不做**（快照与公开文档均无「追漫列表」接口），本条不再另列。

@@ -3,7 +3,8 @@
 > 适用对象：`ReBiliClient` / RE:哔哩终端 Android 手表客户端
 > 被测基线：`2d2b63b`（v26.09.24）之后的全部改动
 > 编写时间：2026-10-02
-> 配套文档：`docs/review/upstream-fork-audit.md`（缺陷清单与处置）、`docs/review/fork-fix-worklog.md`（实现取舍与复验清单）、`docs/review/audit-2026-09-24.md`（本机深度审计与修复轮次）
+> 配套文档（三份来源报告均已归档）：`docs/archive/review/upstream-fork-audit.md`（缺陷清单与处置）、`docs/archive/review/fork-fix-worklog.md`（实现取舍与复验清单）、`docs/archive/review/audit-2026-09-24.md`（本机深度审计与修复轮次）
+> **状态（2026-10-10 复核）：88 条用例一条都还没执行**——它是一份「待执行清单」而非历史记录，所以留在 `docs/review/` 保持可见；真正在用的发版前清单是 `docs/review/real-device-regression-checklist.md`。
 
 **本计划合并自两份来源**：
 - `docs/review/device-test-plan.md`（提交 `e7d182c`）——平台上行/功能组改动（T0–T15）
@@ -115,8 +116,8 @@ $adb = 'D:\Program Files\android-sdk\platform-tools\adb.exe'
 
 | 组 | 改动内容 | 用例 | 来源 |
 |---|---|---|---|
-| **T 组** | 平台上行 / 功能移植：前台服务、番剧进度上报、动态配图与表情、图文直取、搜索番剧、更新日志页、评论点赞、下载与后台、登录 Cookie | T0–T15 | `upstream-fork-audit.md` / `fork-fix-worklog.md` |
-| **D 组** | 本机深度审计修复：Response 泄漏、下载并发与字节计数、Cookie 解析、字符集、权限收敛、FileProvider、播放器 Surface/scope、搜索 `seid`、取消重试、异常链 | D0–D8 | `audit-2026-09-24.md` 第六节 |
+| **T 组** | 平台上行 / 功能移植：前台服务、番剧进度上报、动态配图与表情、图文直取、搜索番剧、更新日志页、评论点赞、下载与后台、登录 Cookie | T0–T15 | `docs/archive/review/upstream-fork-audit.md` / `docs/archive/review/fork-fix-worklog.md` |
+| **D 组** | 本机深度审计修复：Response 泄漏、下载并发与字节计数、Cookie 解析、字符集、权限收敛、FileProvider、播放器 Surface/scope、搜索 `seid`、取消重试、异常链 | D0–D8 | `docs/archive/review/audit-2026-09-24.md` 第六节 |
 
 **两组会互相干扰**，测试时留意：D 组改了 `DownloadService` 的并发守卫与恢复逻辑，T10 的下载用例要按 D 组的严格判据执行（见 D4）。
 
@@ -362,7 +363,7 @@ $adb = 'D:\Program Files\android-sdk\platform-tools\adb.exe'
 
 ## 四、D 组用例：本机审计修复轮次复验
 
-> 本组对应 `docs/review/audit-2026-09-24.md` 第六节。改动共 38 个文件，重点在**下载、登录、播放器、网络层、权限**。
+> 本组对应 `docs/archive/review/audit-2026-09-24.md` 第六节。改动共 38 个文件，重点在**下载、登录、播放器、网络层、权限**。
 > 与 T 组重叠的用例（如下载）以 **D 组的更严判据**为准。
 
 ### D1 网络层（Response 关闭 / 重试 / Cookie）
@@ -604,8 +605,8 @@ Select-String -Path crash.log -Pattern "FATAL EXCEPTION" -Context 0,40
 ## 九、测完之后
 
 1. 把这份文档里没勾上的项补勾，不通过的项填现象与证据
-2. 需要改代码的项 → 回到 `docs/review/upstream-fork-audit.md`（T 组）或 `docs/review/audit-2026-09-24.md`（D 组）对应条目下补记
-3. 全部通过后，`docs/review/fork-fix-worklog.md` 的「真机复验清单」可以标完成
+2. 需要改代码的项 → 回到 `docs/archive/review/upstream-fork-audit.md`（T 组）或 `docs/archive/review/audit-2026-09-24.md`（D 组）对应条目下补记
+3. 全部通过后，`docs/archive/review/fork-fix-worklog.md` 的「真机复验清单」可以标完成
 4. 再走发版流程（`docs/review/` 下的发版技能与 CI）
 
 ---
