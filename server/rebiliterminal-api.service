@@ -1,0 +1,21 @@
+[Unit]
+Description=RE:BiliTerminal backend (announcement / telemetry / feedback / crash)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/rebiliterminal-api
+EnvironmentFile=/opt/rebiliterminal-api/env
+ExecStart=/usr/bin/python3 -m uvicorn rebiliterminal_api:app --host 127.0.0.1 --port 8788 --workers 1 --log-level warning
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/opt/rebiliterminal-api
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RE:哔哩终端控制台</title>
+<!--
+  RE:哔哩终端后台 WebUI —— 遥测 / 反馈 / 崩溃 / 公告 四合一。
+
+  由 rebiliterminal_api.py 的 GET / 原样吐出（带 mtime 缓存），
+  数据一律通过 /admin/api/* 的 JSON 接口现取。
+
+  工程约定：
+    * 零外部依赖，不引 CDN（国内访问 jsdelivr/unpkg 不稳，且后台不能因为外网挂了就打不开）
+    * 图表是手写内联 SVG，悬停提示用原生 <title>，不引图表库
+    * 所有服务端返回的文本都要过 esc()，公告正文允许换行但绝不 innerHTML 原始串
+    * 会话失效（403/401）时直接 location.reload() 回登录页
+-->
+<style>
+  :root{
+    color-scheme: light dark;
+    --bg:#f5f6f8; --panel:#fff; --line:#e6e8eb; --line2:#f0f2f4;
+    --fg:#1f2329; --fg2:#5c636b; --fg3:#9096a0;
+    --accent:#00a1d6; --accent2:#ff8c37; --danger:#e0564a; --ok:#2eaa5e;
+    --radius:12px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#16181d; --panel:#1e2128; --line:#2c3038; --line2:#262a31;
+           --fg:#e6e8eb; --fg2:#9aa1ab; --fg3:#767d87;
+           --accent:#3fb6e0; --accent2:#ffa25c; --danger:#e8736a; --ok:#4fbf7c; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+       font-size:14px;line-height:1.55}
+  a{color:var(--accent);text-decoration:none}
+  header{position:sticky;top:0;z-index:9;display:flex;align-items:center;gap:14px;
+         padding:12px 22px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .brand{font-weight:700;font-size:16px}
+  .brand span{font-weight:400;color:var(--fg3);font-size:13px}
+  header .sp{flex:1}
+  header .updated{font-size:12px;color:var(--fg3)}
+  button,select,input,textarea{font:inherit;color:inherit}
+  .btn{padding:7px 15px;border:1px solid var(--line);border-radius:9px;background:var(--panel);
+       cursor:pointer;font-size:13px}
+  .btn:hover{border-color:var(--accent);color:var(--accent)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .btn.primary:hover{filter:brightness(1.08);color:#fff}
+  .btn.danger:hover{border-color:var(--danger);color:var(--danger)}
+  .btn:disabled{opacity:.55;cursor:default}
+  .btn.mini{padding:3px 10px;font-size:12px;border-radius:7px}
+  main{max-width:1080px;margin:0 auto;padding:20px 22px 70px}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:12px;margin-bottom:20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:13px 16px}
+  .card .k{font-size:12px;color:var(--fg3);margin-bottom:3px;white-space:nowrap}
+  .card .v{font-size:24px;font-weight:600;letter-spacing:-.4px}
+  .card .s{font-size:11px;color:var(--fg3)}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+         padding:16px 18px;margin-bottom:16px}
+  .panel h2{margin:0 0 12px;font-size:14px;font-weight:600;color:var(--fg2)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:720px){ .two{grid-template-columns:1fr} main{padding:14px 12px 60px} header{padding:10px 14px} }
+
+  svg .grid{stroke:var(--line2);stroke-width:1}
+  svg .axis{fill:var(--fg3);font-size:10px}
+  svg .bar{fill:var(--accent);opacity:.55}
+  svg .bar:hover{opacity:.95}
+  svg .line{fill:none;stroke:var(--accent2);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  svg .dot{fill:var(--accent2)}
+  .legend{display:flex;gap:18px;font-size:12px;color:var(--fg2);margin-top:6px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+  .legend i.bar{background:var(--accent);opacity:.55}
+  .legend i.line{background:var(--accent2);height:3px;border-radius:2px}
+  .empty{color:var(--fg3);font-size:13px;padding:10px 0}
+
+  .rank{display:flex;flex-direction:column;gap:9px}
+  .rank .row{display:grid;grid-template-columns:112px 1fr 52px;gap:10px;align-items:center;font-size:13px}
+  .rank .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg2)}
+  .rank .track{height:8px;background:var(--line2);border-radius:4px;overflow:hidden}
+  .rank .fill{height:100%;background:var(--accent);border-radius:4px}
+  .rank .num{text-align:right;color:var(--fg3);font-size:12px}
+
+  .tabs{display:flex;gap:6px;margin:22px 0 14px;border-bottom:1px solid var(--line)}
+  .tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:9px 14px;
+               font-size:14px;color:var(--fg2);cursor:pointer}
+  .tabs button.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+  .tabs .count{font-size:11px;color:var(--fg3);margin-left:5px}
+
+  .item{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+        padding:13px 16px;margin-bottom:10px}
+  .item .top{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:6px}
+  .item .content{white-space:pre-wrap;word-break:break-word}
+  .item .meta{font-size:12px;color:var(--fg3);margin-top:8px;word-break:break-all}
+  .tag{font-size:11px;padding:2px 8px;border-radius:20px;background:var(--line2);color:var(--fg2)}
+  .tag.bug{background:#fdeceb;color:#c0392b}
+  .tag.suggestion{background:#e8f4fd;color:#1c7ed6}
+  .tag.performance{background:#fff4e6;color:#d9480f}
+  .tag.content{background:#eaf7ee;color:#2b8a3e}
+  .tag.other{background:var(--line2);color:var(--fg2)}
+  @media (prefers-color-scheme:dark){
+    .tag.bug{background:#3d2320;color:#f0a99e}
+    .tag.suggestion{background:#1d2c3d;color:#8ec5f0}
+    .tag.performance{background:#3a2c1c;color:#f0bc8c}
+    .tag.content{background:#1e3326;color:#8fd6a5}
+  }
+  .pill{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);color:var(--fg3)}
+  .pill.on{color:var(--ok);border-color:var(--ok)}
+  .pill.off{color:var(--fg3)}
+  .time{font-size:12px;color:var(--fg3);margin-left:auto}
+
+  details.stack{margin-top:8px}
+  details.stack summary{cursor:pointer;font-size:12px;color:var(--accent);outline:none}
+  details.stack pre{margin:8px 0 0;padding:11px;background:var(--bg);border:1px solid var(--line);
+                    border-radius:9px;font-size:11.5px;line-height:1.5;overflow:auto;max-height:340px;
+                    white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,Consolas,monospace}
+
+  form.compose{display:flex;flex-direction:column;gap:10px}
+  form.compose input[type=text],form.compose textarea{
+    width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--bg)}
+  form.compose textarea{min-height:120px;resize:vertical;font-family:inherit;line-height:1.6}
+  form.compose input:focus,form.compose textarea:focus{outline:none;border-color:var(--accent)}
+  form.compose .foot{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  form.compose label.chk{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--fg2)}
+  .hint{font-size:12px;color:var(--fg3)}
+  code{background:var(--line2);padding:1px 5px;border-radius:5px;font-size:12px}
+
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(14px);
+         background:#2b2f36;color:#fff;padding:10px 20px;border-radius:10px;font-size:13px;
+         opacity:0;pointer-events:none;transition:.22s;z-index:99;max-width:88vw}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  #toast.bad{background:#8f2f27}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">RE:哔哩终端 <span>控制台</span></div>
+  <div class="sp"></div>
+  <div class="updated" id="updated">加载中…</div>
+  <button class="btn" id="refresh">刷新</button>
+  <a class="btn" href="/console/logout">退出</a>
+</header>
+
+<main>
+  <div class="cards" id="cards"></div>
+
+  <div class="panel">
+    <h2>最近 30 天 · 活跃设备与新增安装</h2>
+    <div id="chart"><p class="empty">加载中…</p></div>
+  </div>
+
+  <div class="two">
+    <div class="panel"><h2>版本分布</h2><div id="versions"></div></div>
+    <div class="panel"><h2>品牌分布</h2><div id="brands"></div></div>
+  </div>
+
+  <div class="tabs">
+    <button data-tab="ann" class="active">公告<span class="count" id="c-ann"></span></button>
+    <button data-tab="fb">反馈<span class="count" id="c-fb"></span></button>
+    <button data-tab="crash">崩溃<span class="count" id="c-crash"></span></button>
+  </div>
+
+  <section id="tab-ann">
+    <form class="compose panel" id="compose">
+      <h2 style="margin:0">发布公告</h2>
+      <input type="text" id="ann-title" placeholder="标题" maxlength="200" required>
+      <textarea id="ann-content" placeholder="正文。支持换行；客户端会原样展示。" required></textarea>
+      <div class="foot">
+        <label class="chk"><input type="checkbox" id="ann-pinned"> 置顶</label>
+        <button class="btn primary" type="submit" id="ann-submit">发布</button>
+        <span class="hint">发布后客户端下次启动即可拉到；对外 id 为内部 id + 10 亿，不会与上游公告撞车。</span>
+      </div>
+    </form>
+    <div id="ann-list"></div>
+  </section>
+
+  <section id="tab-fb" hidden><div id="fb-list"></div></section>
+  <section id="tab-crash" hidden><div id="crash-list"></div></section>
+</main>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+var $ = function (id) { return document.getElementById(id); };
+function esc(s) {
+  return String(s === null || s === undefined ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function ts(v) {
+  if (!v) return "—";
+  var d = new Date(Number(v) * 1000);
+  var p = function (n) { return (n < 10 ? "0" : "") + n; };
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+var toastTimer = null;
+function toast(msg, bad) {
+  var el = $("toast");
+  el.textContent = msg;
+  el.className = "show" + (bad ? " bad" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { el.className = ""; }, bad ? 4200 : 2600);
+}
+async function api(path, opts) {
+  var init = Object.assign({ credentials: "same-origin" }, opts || {});
+  var res;
+  try {
+    res = await fetch(path, init);
+  } catch (e) {
+    toast("网络错误：" + e.message, true);
+    return null;
+  }
+  if (res.status === 401 || res.status === 403) { location.reload(); return null; }
+  var body = null;
+  try { body = await res.json(); } catch (e) { body = null; }
+  if (!res.ok || !body || body.code !== 0) {
+    toast((body && body.msg) || ("请求失败 " + res.status), true);
+    return null;
+  }
+  return body;
+}
+
+/* ---------------- 遥测 ---------------- */
+function renderCards(d) {
+  var items = [
+    { k: "累计安装数", v: d.total_installs, s: "去重后的 install_id" },
+    { k: "今日活跃", v: d.today_active, s: "今天上报过" },
+    { k: "近 7 日活跃", v: d.week_active, s: "去重设备" },
+    { k: "24h 新增安装", v: d.today_new, s: "" },
+    { k: "反馈", v: d.feedback, s: "待处理 " + d.feedback_pending },
+    { k: "崩溃报告", v: d.crash, s: "待处理 " + d.crash_pending },
+    { k: "生效公告", v: d.announcements, s: "" }
+  ];
+  $("cards").innerHTML = items.map(function (it) {
+    return '<div class="card"><div class="k">' + esc(it.k) + '</div><div class="v">' + esc(it.v) + '</div>'
+      + (it.s ? '<div class="s">' + esc(it.s) + "</div>" : "") + "</div>";
+  }).join("");
+  $("updated").textContent = "数据截至 " + ts(d.server_time);
+  $("c-ann").textContent = d.announcements;
+  $("c-fb").textContent = d.feedback;
+  $("c-crash").textContent = d.crash;
+}
+function renderChart(daily) {
+  var host = $("chart");
+  var data = (daily || []).slice(0, 30).reverse();
+  if (!data.length) { host.innerHTML = '<p class="empty">还没有上报数据</p>'; return; }
+  var W = Math.max(340, host.clientWidth || 720), H = 230;
+  var P = { l: 40, r: 14, t: 14, b: 28 };
+  var iw = W - P.l - P.r, ih = H - P.t - P.b;
+  var max = 1, i;
+  for (i = 0; i < data.length; i++) {
+    if (data[i].active > max) max = data[i].active;
+    if (data[i].new_installs > max) max = data[i].new_installs;
+  }
+  var step = iw / data.length;
+  var x = function (i) { return P.l + step * i + step / 2; };
+  var y = function (v) { return P.t + ih - (v / max) * ih; };
+  var barW = Math.max(3, Math.min(24, step * 0.62));
+  var s = "", k, v, yy;
+  for (k = 0; k <= 4; k++) {
+    v = Math.round(max * k / 4); yy = y(v);
+    s += '<line class="grid" x1="' + P.l + '" y1="' + yy + '" x2="' + (W - P.r) + '" y2="' + yy + '"/>';
+    s += '<text class="axis" x="' + (P.l - 7) + '" y="' + (yy + 4) + '" text-anchor="end">' + v + "</text>";
+  }
+  for (i = 0; i < data.length; i++) {
+    var d = data[i], h = (d.active / max) * ih;
+    s += '<rect class="bar" x="' + (x(i) - barW / 2) + '" y="' + (P.t + ih - h) + '" width="' + barW
+      + '" height="' + Math.max(h, 0.8) + '" rx="2"><title>' + esc(d.day) + "　活跃 " + d.active
+      + "　新增 " + d.new_installs + "</title></rect>";
+  }
+  var pts = data.map(function (d, i) { return x(i).toFixed(1) + "," + y(d.new_installs).toFixed(1); }).join(" ");
+  s += '<polyline class="line" points="' + pts + '"/>';
+  for (i = 0; i < data.length; i++) {
+    s += '<circle class="dot" cx="' + x(i) + '" cy="' + y(data[i].new_installs) + '" r="2.4"><title>'
+      + esc(data[i].day) + "　新增 " + data[i].new_installs + "</title></circle>";
+  }
+  [0, Math.floor(data.length / 2), data.length - 1].forEach(function (i) {
+    s += '<text class="axis" x="' + x(i) + '" y="' + (H - 9) + '" text-anchor="middle">'
+      + esc(String(data[i].day).slice(5)) + "</text>";
+  });
+  host.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" width="100%" height="' + H + '">' + s + "</svg>"
+    + '<div class="legend"><span><i class="bar"></i>活跃设备</span><span><i class="line"></i>新增安装</span>'
+    + '<span style="margin-left:auto;color:var(--fg3)">鼠标悬停看单日数值</span></div>';
+}
+function renderRank(id, rows, key, label) {
+  var host = $(id);
+  if (!rows || !rows.length) { host.innerHTML = '<p class="empty">暂无数据</p>'; return; }
+  var max = 1, i;
+  for (i = 0; i < rows.length; i++) if (rows[i].count > max) max = rows[i].count;
+  host.innerHTML = '<div class="rank">' + rows.map(function (r) {
+    var name = r[key] === "" || r[key] === null || r[key] === undefined ? "(未知)" : r[key];
+    return '<div class="row"><div class="name" title="' + esc(name) + '">' + esc(name) + "</div>"
+      + '<div class="track"><div class="fill" style="width:' + Math.max(2, (r.count / max) * 100) + '%"></div></div>'
+      + '<div class="num">' + esc(r.count) + "</div></div>";
+  }).join("") + "</div>";
+}
+async function loadStats() {
+  var res = await api("/admin/api/stats");
+  if (!res) return;
+  var d = res.data;
+  renderCards(d);
+  renderChart(d.daily);
+  renderRank("versions", d.versions, "version");
+  renderRank("brands", d.brands, "brand");
+}
+
+/* ---------------- 公告 ---------------- */
+async function loadAnn() {
+  var res = await api("/admin/api/announcements");
+  if (!res) return;
+  var rows = res.data || [];
+  var host = $("ann-list");
+  if (!rows.length) { host.innerHTML = '<p class="empty">还没有公告</p>'; return; }
+  host.innerHTML = rows.map(function (r) {
+    return '<div class="item"><div class="top">'
+      + '<span class="pill ' + (r.active ? "on" : "off") + '">' + (r.active ? "生效中" : "已停用") + "</span>"
+      + (r.pinned ? '<span class="tag">置顶</span>' : "")
+      + '<span class="tag">#' + esc(r.id) + "</span>"
+      + '<span class="time">' + ts(r.ctime) + "</span></div>"
+      + "<div><strong>" + esc(r.title) + "</strong></div>"
+      + '<div class="content" style="margin-top:6px;color:var(--fg2)">' + esc(r.content) + "</div>"
+      + '<div class="top" style="margin:11px 0 0">'
+      + '<button class="btn mini" data-act="pin" data-id="' + r.id + '" data-val="' + (r.pinned ? 0 : 1) + '">'
+      + (r.pinned ? "取消置顶" : "置顶") + "</button>"
+      + '<button class="btn mini" data-act="active" data-id="' + r.id + '" data-val="' + (r.active ? 0 : 1) + '">'
+      + (r.active ? "停用" : "启用") + "</button>"
+      + '<button class="btn mini danger" data-act="del" data-id="' + r.id + '">删除</button>'
+      + '<span class="hint" style="margin-left:auto">对外 id ' + (1000000000 + Number(r.id)) + "</span>"
+      + "</div></div>";
+  }).join("");
+}
+$("ann-list").addEventListener("click", async function (ev) {
+  var btn = ev.target.closest("button[data-act]");
+  if (!btn) return;
+  var act = btn.dataset.act, id = Number(btn.dataset.id);
+  if (act === "del") {
+    if (!confirm("删除公告 #" + id + "？客户端下次启动就看不到了。")) return;
+    if (!await api("/admin/api/announcement/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: id })
+    })) return;
+    toast("已删除");
+  } else {
+    var payload = { id: id };
+    payload[act === "pin" ? "pinned" : "active"] = Number(btn.dataset.val) === 1;
+    if (!await api("/admin/api/announcement/update", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    })) return;
+    toast("已更新");
+  }
+  loadAnn(); loadStats();
+});
+$("compose").addEventListener("submit", async function (ev) {
+  ev.preventDefault();
+  var title = $("ann-title").value.trim();
+  var content = $("ann-content").value.trim();
+  if (!title || !content) { toast("标题和正文都不能为空", true); return; }
+  var btn = $("ann-submit");
+  btn.disabled = true;
+  var res = await api("/admin/api/announcement", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: title, content: content, pinned: $("ann-pinned").checked })
+  });
+  btn.disabled = false;
+  if (!res) return;
+  toast("已发布，对外 id " + res.public_id);
+  $("ann-title").value = ""; $("ann-content").value = ""; $("ann-pinned").checked = false;
+  loadAnn(); loadStats();
+});
+
+/* ---------------- 反馈 / 崩溃 ---------------- */
+var CATEGORY_LABEL = { bug: "BUG", suggestion: "建议", content: "内容", performance: "性能", other: "其他" };
+async function loadFeedback() {
+  var res = await api("/admin/api/feedback?limit=200");
+  if (!res) return;
+  var rows = res.data || [];
+  var host = $("fb-list");
+  if (!rows.length) { host.innerHTML = '<p class="empty">还没有反馈</p>'; return; }
+  host.innerHTML = rows.map(function (r) {
+    var cat = CATEGORY_LABEL[r.category] || r.category || "其他";
+    var meta = [];
+    if (r.contact) meta.push("联系方式：" + r.contact);
+    if (r.mid) meta.push("账号 mid：" + r.mid);
+    meta.push((r.version_name || "?") + " / " + (r.brand || "?") + " " + (r.device || ""));
+    return '<div class="item"><div class="top"><span class="tag ' + esc(r.category) + '">' + esc(cat) + "</span>"
+      + '<span class="tag">#' + esc(r.id) + "</span>"
+      + '<span class="time">' + ts(r.ctime) + "</span></div>"
+      + '<div class="content">' + esc(r.content) + "</div>"
+      + '<div class="meta">' + esc(meta.join("　·　")) + "</div></div>";
+  }).join("");
+}
+async function loadCrash() {
+  var res = await api("/admin/api/crash?limit=100");
+  if (!res) return;
+  var rows = res.data || [];
+  var host = $("crash-list");
+  if (!rows.length) { host.innerHTML = '<p class="empty">还没有崩溃报告</p>'; return; }
+  host.innerHTML = rows.map(function (r) {
+    var ram = (r.ram_total ? Math.round(r.ram_total / 1048576) : "?") + "MB / "
+      + (r.ram_avail ? Math.round(r.ram_avail / 1048576) : "?") + "MB";
+    return '<div class="item"><div class="top"><span class="tag bug">' + esc(r.exception || "异常") + "</span>"
+      + '<span class="tag">#' + esc(r.id) + "</span>"
+      + '<span class="time">' + ts(r.ctime) + "</span></div>"
+      + '<div class="content">' + esc(r.message) + "</div>"
+      + '<div class="meta">' + esc((r.version_name || "?") + " / " + (r.brand || "") + " " + (r.device || "")
+        + " " + (r.model || "") + "　·　SDK " + (r.sdk || "?") + "　·　内存 " + ram
+        + "　·　线程 " + (r.thread || "?")) + "</div>"
+      + (r.stack ? '<details class="stack"><summary>查看堆栈</summary><pre>' + esc(r.stack) + "</pre></details>" : "")
+      + "</div>";
+  }).join("");
+}
+
+/* ---------------- 交互 ---------------- */
+document.querySelectorAll(".tabs button").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    document.querySelectorAll(".tabs button").forEach(function (b) { b.classList.remove("active"); });
+    btn.classList.add("active");
+    var tab = btn.dataset.tab;
+    $("tab-ann").hidden = tab !== "ann";
+    $("tab-fb").hidden = tab !== "fb";
+    $("tab-crash").hidden = tab !== "crash";
+    if (tab === "fb") loadFeedback();
+    if (tab === "crash") loadCrash();
+    if (tab === "ann") loadAnn();
+  });
+});
+async function loadAll() {
+  await loadStats();
+  loadAnn(); loadFeedback(); loadCrash();
+}
+$("refresh").addEventListener("click", function () { toast("已刷新"); loadAll(); });
+loadAll();
+setInterval(loadStats, 60000);       // 只自动刷新遥测卡片与图表，不动列表和输入框
+</script>
+</body>
+</html>
