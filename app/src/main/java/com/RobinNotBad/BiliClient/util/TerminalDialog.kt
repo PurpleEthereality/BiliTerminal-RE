@@ -13,7 +13,7 @@ import androidx.appcompat.app.AlertDialog
 import com.RobinNotBad.BiliClient.R
 
 /**
- * 弹窗的唯一构造入口（终端列表方案 B，设计稿 `docs/design/dialog-redesign-v2.html`）。
+ * 弹窗的唯一构造入口（终端列表方案 B，设计稿 `docs/archive/design/dialog-redesign-v2.html`）。
  *
  * <h3>为什么有这个文件</h3>
  * 全工程曾有 **17 处**裸 `AlertDialog.Builder(...)` 直接内联在业务代码里（7 个 `setItems` 菜单型、

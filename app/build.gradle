@@ -263,7 +263,7 @@ dependencies {
 }
 
 // ---------------------------------------------------------------------------
-// 版本号一致性校验（见 docs/review/upstream-fork-audit.md §五 E1）
+// 版本号一致性校验（见 docs/archive/review/upstream-fork-audit.md §五 E1）
 //
 // versionName / versionCode 分散在多处，全靠人工同步，历史上已实际漂移过两次
 //（readme badge 停在 26.09.07、docs/FEATURES.md 停在 26.08.14）：

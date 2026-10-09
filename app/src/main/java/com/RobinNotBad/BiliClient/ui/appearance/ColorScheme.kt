@@ -31,7 +31,7 @@ import com.RobinNotBad.BiliClient.util.SharedPreferencesUtil
  *
  * ## 已知技术债：三套并行的颜色值表
  * 本对象的 Kotlin 色表、`res/values/themes.xml`、`res/values/colors.xml`（含大量历史别名）
- * 是**三套独立值表**，靠人工对齐。收敛计划见 `docs/visual-experience-report.md`。
+ * 是**三套独立值表**，靠人工对齐。收敛计划见 `docs/archive/visual-experience-report.md`。
  */
 object ColorScheme {
 

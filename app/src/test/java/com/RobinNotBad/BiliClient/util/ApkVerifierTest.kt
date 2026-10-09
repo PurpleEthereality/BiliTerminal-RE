@@ -8,7 +8,7 @@ import org.junit.Test
 /**
  * [ApkVerifier] 纯逻辑的 JVM 单测（26.10.04 批次 4 / E6）。
  *
- * 这里只钉住判定规则本身（Android 取签名那步要靠真机，见 fix-progress 的验证清单）。
+ * 这里只钉住判定规则本身（Android 取签名那步要靠真机，见 `docs/review/real-device-regression-checklist.md` 第 24~26 条）。
  * 重点是把「读不到签名时必须失败关闭」钉死：一旦某天有人把它改成"读不到就放过"，
  * 校验就退化成永远通过的摆设。
  */

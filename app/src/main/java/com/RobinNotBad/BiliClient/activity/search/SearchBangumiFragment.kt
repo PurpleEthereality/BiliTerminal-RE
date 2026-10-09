@@ -66,7 +66,7 @@ class SearchBangumiFragment : SearchFragment() {
             } catch (e: Exception) {
                 loadFail(e)
             }
-            // 无论成功失败都必须复位下拉刷新，否则刷新圈会一直转（见 fork-fix-worklog P18）
+            // 无论成功失败都必须复位下拉刷新，否则刷新圈会一直转（见 docs/archive/review/fork-fix-worklog.md P18）
             setRefreshing(false)
         }
     }
