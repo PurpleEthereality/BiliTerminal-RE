@@ -4399,3 +4399,313 @@ return NONE
   只能人工在 GitHub 网页端编辑该 Release 的说明，把 `update_log_current` 的 28 条粘进去。
 - 本次改动**不是新版本**，`26.10.05` 的 tag 仍指向 `8fd53af`，不需要重新发版。
 
+---
+
+## 四十一、26.10.09：自建反馈界面 + 自建公告源 + 匿名统计 / 崩溃自动上报（新功能）
+
+> 起因（用户原话）：想在反馈界面加入「发送到服务器的反馈界面」和「遥测，看看有多少人会用这个应用」。
+> 拍板：**用已有的 HK 服务器自建后端**；统计口径只要**匿名唯一安装数 + 日活**；
+> **默认开、设置里可关**；公告**不是替换上游，而是增加一个自己的公告源**。
+> 因此这一节不是「修 bug」，而是**新功能落地的完整记录**（含服务端、客户端、隐私文案三部分）。
+
+### 41.1 结论：这个项目原本没有任何「反馈界面」
+
+全仓 grep `反馈` / `feedback` 只命中注释；反馈渠道全是站外——QQ 群（`strings.xml:7` 的 `about_group`）
+和 GitHub / Gitee issue；`strings.xml` 里那条 `about_trailer_feedback` 只是一个「有 bug 别找原开发者、
+去找 TRAE 作者」的免责声明，**连链接都没有**。所以「新增反馈界面」是从零做，不是在某个页面加个按钮。
+
+### 41.2 为什么另起一套服务端，而不是接上游 `api.biliterminal.cn`
+
+上游那套（`api/AppInfoApi.java` 4 个接口，全指向 `https://api.biliterminal.cn`）有两个问题：
+1. **不是这个 fork 的**。本 fork 的中转服务已停用（`.github/workflows/relay-notify.yml:40-45` 注释
+   「换主后中转服务暂停使用（Secrets.RELAY_URL / RELAY_SECRET 未配置）」），也就是这个 fork
+   **目前没有任何自己的后端**；往上游服务器灌反馈和统计，等于替别人做运营。
+2. **上游已有接口的去重能力为零**。`AppInfoApi.customHeaders`（`AppInfoApi.java:110-140`）虽然带上了
+   `App-Info`（versionName / versionCode / isBeta / applicationId / buildType / debugEnabled）与
+   `Device-Info`（sdk / release / product / brand / device / type / id），且**故意不带 Cookie**
+   （注释写明防上游开发者盗号）——所以服务器今天就能按天粗略数「启动量」，但**没有任何唯一标识**，
+   数不了「多少个不同的人」。
+
+于是自建了一整套，与上游**并存**、互不覆盖。
+
+### 41.3 服务端（新增 `server/`，已部署到 HK 服务器并公网验证）
+
+- 文件：`server/rebiliterminal_api.py`（单文件 FastAPI + SQLite，无 ORM）、`server/requirements.txt`、
+  `server/rebiliterminal-api.service`、`server/nginx/rebiliterminal.zsapp.asia.conf`、`server/README.md`。
+- 部署形态：`/opt/rebiliterminal-api/`（`rebiliterminal_api.py` + `env` + `data.db`），
+  systemd 单元 `rebiliterminal-api`，uvicorn 监听 `127.0.0.1:8788`，
+  nginx 反代 `https://rebiliterminal.zsapp.asia/terminal/`。
+  配置 `env`（chmod 600）里是 `REBILITERMINAL_DB` 与 `REBILITERMINAL_ADMIN_TOKEN`。
+- **发证书没用宝塔**：`/www/server/panel/class/acme_v2.py` 会查 `/www/server/panel/data/default.db`
+  的 `sites` 表，**必须先有宝塔站点记录**；本机也没有 acme.sh。最终选**自装 acme.sh 走 webroot 模式**
+  （`--issue -d rebiliterminal.zsapp.asia --webroot /www/wwwroot/rebiliterminal.zsapp.asia`）
+  再 `--install-cert` 到 `/www/server/panel/vhost/cert/rebiliterminal.zsapp.asia/` + `--reloadcmd "nginx -s reload"`，
+  续签靠 acme.sh 自带 cron。好处：可脚本化、可复现、不依赖面板 UI，也不往宝塔站点表里塞记录。
+- 接口（**成功一律 `code=0`，失败 `code!=0` + `msg`，HTTP 恒 2xx**——沿用上游的风格）：
+  | 接口 | 说明 |
+  |---|---|
+  | `GET /terminal/health` | 健康检查 |
+  | `GET /terminal/announcement/get_list[?from=<id>]` | `id` 是自增 id **+ 1000000000**，故意和上游 id 空间错开；不带 `from` 是列表页（倒序），带 `from` 是启动弹窗的差量（只回 `id>from`、正序，于是最新那条最后弹、最终显示在最上面） |
+  | `POST /terminal/telemetry/ping` | 按 `install_id` 聚合 + `daily_active(install_id, day)` 主键去重 → 唯一安装数与日活 |
+  | `POST /terminal/feedback/submit` | 落库，`category` 白名单 `bug\|suggestion\|other\|content\|performance`，`content ≤ 4000` 字，同 IP 每小时 10 次 |
+  | `POST /terminal/upload/stack` | 崩溃载荷，返回的 `id` 就是给用户看的报错编号 |
+- 限流：进程内滑动窗口（ping 480/时、feedback 10/时、crash 30/时，按 `X-Forwarded-For` 首段）。
+- 管理看板：`GET /admin?token=<REBILITERMINAL_ADMIN_TOKEN>`（HTML）+ `/admin/api/stats|feedback|crash`（JSON）
+  + `POST /admin/announcement`（发公告，无需进服务器）。
+- **隐私红线（重要）**：整套服务端**不存 IP**（只用 IP 做限流，不入库），不存 Cookie，
+  `install_id` 是客户端随机生成的 UUID、与账号无关、不读 `ANDROID_ID` 或任何设备指纹，卸载重装即换新。
+
+### 41.4 客户端
+
+新增：
+- `api/TerminalApi.java` —— 这条链路**唯一**的出口（`BASE_URL = https://rebiliterminal.zsapp.asia/terminal`）。
+  **请求与解析分离**：`buildPingPayload` / `buildFeedbackPayload` / `buildCrashPayload` /
+  `parseAnnouncements` / `mergeAnnouncements` / `dayKey` 都是纯函数，单测 `api/TerminalApiTest.kt`（14 例）。
+  改字段先改纯函数和测试。
+- `util/TelemetryReporter.kt` —— 启动时一天最多 ping 一次，**只有请求成功才写回日期**，断网启动不浪费当天机会。
+- `util/CrashReporter.kt` + `util/CrashTrail.kt` —— `ErrorCatch` 在崩溃瞬间把异常/消息/线程/
+  最近页面轨迹/uptime 塞进 Intent，`CatchActivity`（独立进程）在开关打开时自动上报。
+- `activity/FeedbackActivity.kt` + `res/layout/activity_feedback.xml` —— 反馈页（分类 / 内容 4000 字计数 /
+  联系方式选填 / 「附带账号 ID」开关 / QQ 群兜底 / 发送状态与报错号）。
+- `app/src/test/.../api/TerminalApiTest.kt` —— 14 例，其中**专门断言载荷里不出现
+  sessdata / bili_jct / dedeuserid / cookie / csrf**。
+
+改动：
+- `BiliTerminal.kt`（`onActivityResumed` 记页面轨迹）、`ErrorCatch.java`、`activity/CatchActivity.kt`、
+  `activity/SplashActivity.kt`（启动时并联两件事：自建公告差量 + 匿名日活，**各自包异常**，
+  自建服务器挂掉绝不能影响启动）、`activity/settings/AboutActivity.kt` + `activity_setting_about.xml`
+  （关于页入口）、`activity/settings/SettingGroupActivity.kt`（设置「关于与帮助」加「反馈与统计」组，
+  三个开关）、`activity/settings/AnnouncementsActivity.kt`、`util/SettingsKeys.kt`、
+  `res/layout/activity_catch.xml`、`AndroidManifest.xml`（`FeedbackActivity` 以
+  `android:exported="false"` 注册）。
+- **入口挂关于页，不只挂设置页**：菜单结构对老用户是缓存的，新分组不会自动出现，
+  只挂设置分组等于老用户看不到入口。
+- **上游手动上传按钮逻辑一行没动**，自动上报是独立的一条路——而且自动上报**故意不套上游那两道限制**
+  （「已登录 + 异常类型白名单」），否则最需要看的样本恰好会被挡掉。
+
+### 41.5 隐私文案（改这一块之前先读这一节）
+
+这个应用对用户有两句**公开承诺**，加遥测直接和它们冲突：
+- `strings.xml` 的 `about_to_uncle`：「…也不会收集任何用户隐私信息。」
+- `strings.xml` 的 `text_setup_introduction`：「…不会收集你的任何账号及隐私信息，请放心使用！」
+
+**已同步改写**这两句：明确说出「默认开启一项匿名使用统计，只包含随机安装号 / 版本号 / 机型，
+不含账号、Cookie 或任何设备唯一标识，可在设置里随时关闭」，并说明崩溃也会自动上报一份、同样可关。
+新增的设置项说明 `desc_setting_telemetry` / `desc_setting_crash_auto` / `desc_setting_feedback_attach_mid`
+也逐条列了上报字段。
+
+**以后往上报载荷里加任何字段，必须同时改这三处文案**，否则承诺又是假的。
+三个开关默认值：`TELEMETRY_ENABLE = true`、`CRASH_REPORT_AUTO = true`、`FEEDBACK_ATTACH_MID = false`
+（账号 ID **默认不带**；关掉时传 `0`，服务端那条记录里根本不会有这个值，不是「传了但不显示」）。
+
+> 光改文案还不够——用户要求「隐私要再同意一遍」，于是补了一道**可执行的**同意闸门，见 **41.8**。
+
+### 41.6 验证
+
+- `:app:testDebugUnitTest --rerun-tasks` → **48 个测试类 / 450 个用例全绿，0 failures 0 errors**
+  （含新增 `TerminalApiTest` 14 例）。此前该套为 327 例，本轮新增集中在 `TerminalApiTest`。
+- `:app:assembleDebug` → **BUILD SUCCESSFUL**（最后一次是在 `AnnouncementsActivity` 接线之后重跑的）。
+- 服务端公网验证（从本机发起）：`GET /terminal/health`、`POST /terminal/telemetry/ping`
+  （同 install_id 两次 → `daily_active` 只 1 行）、`POST /terminal/feedback/submit`、
+  `POST /terminal/upload/stack`、`GET /terminal/announcement/get_list`（含 `?from=` 两条分支）
+  全部按契约返回；http → 301 https；`nginx -t` 通过。
+- 测试数据已清理：`installs` / `daily_active` / `feedback` / `crash` 清零，改前已 `cp` 备份
+  `data.db.bak-<时间戳>`；公告表保留 **1 条真公告**（标题「欢迎使用 RE:哔哩终端」，
+  说明反馈入口与两个开关），同时充当启动弹窗的端到端验证样本。
+
+### 41.7 遗留与后续
+
+- **版本号没动**（仍是 `2610090` / `26.10.09`）。这批是给「下一个版本」的功能，
+  发版时按 `AGENTS.md` 与 `.dsh/skills/rebili-version-release/SKILL.md` 正常走：
+  bump `app/build.gradle` + 往 `strings.xml` 的 `update_log_current` 补本次条目，
+  否则 `.github/scripts/extract_update_log.py` 抽出来的 Release 说明会缺这一条（26.10.05 的教训见第四节）。
+- **没有在真机上跑过**：新增的反馈页 / 关于页入口 / 崩溃自动上报 / 启动弹窗都只过了编译与 JVM 单测，
+  真机回归清单（`docs/review/real-device-regression-checklist.md`）里应补：
+  ① 关于页 → 反馈页能进、分类选择、4000 字上限、断网发送的报错文案、成功后输入框清空；
+  ② 设置里三个开关关掉后，抓包确认不再有到 `rebiliterminal.zsapp.asia` 的请求；
+  ③ 故意崩溃一次，确认崩溃页显示「报错ID」且服务端 `/admin/api/crash` 里能看到；
+  ④ 公告列表页在**上游接口挂掉**时仍能显示自建公告（反向也要成立）。
+- 自建服务端与上游 `AppInfoApi` 的差异、以及那条「绝不要复用带 Cookie 的单参 `NetWorkUtil.getJson`」
+  的硬约束，已写进 `docs/architecture-map.md` **§6.5**（含 5 条红线），改这块之前先读那一节。
+
+### 41.8 26.10.09 补丁：隐私「再同意一遍」（启动闸门）
+
+**起因**：用户要求「隐私要再同意一遍」（m00722）。原实现里遥测与崩溃上报**默认就开着**，
+只有两处文案承认了这件事，用户此前从未被问过——「默认开」和「用户同意」是两回事。
+
+**取舍（用户拍的板）**：弹窗里点「不同意」= **App 照常使用，只是不上报**（不是拒绝进入应用），
+两个开关直接关掉，以后可在设置里手动打开；只有隐私说明改版才会再问一次。
+
+**两个 key 分开，是这一节的核心**
+- `SettingsKeys.PRIVACY_CONSENT_VERSION`（Int，0 = 从未同意）：同意到哪个版本 → 决定**能不能上报**
+- `SettingsKeys.PRIVACY_PROMPTED_VERSION`（Int，0 = 从未问过）：表过态到哪个版本（同意 / 不同意都算）
+  → 决定**还要不要弹**
+
+分开的理由：「不同意」也是一次回答，不该每次启动都再问一次；而同意版本号**保持原值**，
+「可以继续用但不上报」就是这一条的自然结果，不需要额外的「拒绝」状态位。
+`TerminalApi.PRIVACY_VERSION = 1`，**改隐私文案必须 +1**，否则老用户不会被再问一次。
+
+**闸门收在 `TerminalApi` 里，不靠调用点自觉**
+```java
+isTelemetryEnabled()      = hasPrivacyConsent() && getBoolean(TELEMETRY_ENABLE, true)
+isCrashReportAutoEnabled() = hasPrivacyConsent() && getBoolean(CRASH_REPORT_AUTO, true)
+```
+于是「没同意就绝不上报」对**所有**既有调用点（`TelemetryReporter`、`CatchActivity`）自动成立。
+新增 `hasPrivacyConsent()` / `needsPrivacyConsent()` / `acceptPrivacyConsent()` /
+`declinePrivacyConsent()` / `recordPrivacyConsentFromSettings()` 五个方法。
+`acceptPrivacyConsent()` 会把两个开关**复位为 true**（同意就是同意全部）；
+`declinePrivacyConsent()` 只记 prompted 版本 + 两个开关置 false；
+`recordPrivacyConsentFromSettings()` **只记版本号、不碰任何开关**——用户在设置里只点了一个开关，
+不能顺手把另一个也打开。
+
+**顺带修掉的真实缺陷：`TerminalDialog` 的按钮会滚出屏幕**
+`Sheet.addButton` 原本把按钮加进 `container`（= `terminal_dialog_list`，**在 ScrollView 内部**），
+而 `capScrollHeight()` 把滚动区高度**钉死**在屏高 45%、滚动条又是 `scrollbars="none"`。
+短正文没事，长正文会把按钮顶到看不见的地方——配上本次必要的 `setCancelable(false)`
+就是**用户彻底卡在闪屏上**。修法：`layout_dialog_terminal.xml` 在 ScrollView **外面**加固定底栏
+`@id/terminal_dialog_buttons`，`Sheet` 加构造参数 `bottomButtonBar: Boolean = false`
+（默认 false = 原行为，既有 12 处 `confirm/alert/menu` 调用点零影响），
+`addButton` 据它选容器；新增的 `TerminalDialog.choice(...)` 用 `bottomButtonBar = true`。
+
+**为什么必须新增 `choice()` 而不是复用 `confirm()`**：`confirm()` 的取消按钮被写死成
+`dismiss()`（没有回调），而且它内部是**先 `dismiss()` 再 `onConfirm()`**——
+`setOnDismissListener` 触发时还拿不到「用户点的其实是确定」，两条路都会走一遍。
+`choice(context, title, message, primaryText, secondaryText, hint, onPrimary, onSecondary)`
+让两个按钮各带自己的回调，`hint` 非空时用 `setHint` 提示「正文较长，可上下滑动阅读」
+（滚动条是隐藏的，不提示的话用户只会看到一段被截断的文字）。
+
+**其他落地点**
+- `SplashActivity.proceedSplashFlowWithPrivacyGate()`：`needsPrivacyConsent()` 为假直接 `proceedSplashFlow()`；
+  为真则 `TerminalDialog.choice(...).apply { setCancelable(false) }.show()`。
+  **两个调用点都改走闸门**（`onCreate` 的 UETool 权限之后、`onActivityResult` 的 UETool 分支）。
+  两条路都**继续启动流程**，不拦人。
+- 设置页 `TELEMETRY_ENABLE` / `CRASH_REPORT_AUTO` 两个 `switch(...)` 补 onChange：
+  **只在 `on == true` 时**`recordPrivacyConsentFromSettings()`。注意 `SettingsAdapter.kt:201-207`
+  的顺序是**先写 SharedPreferences、再回调 onChange**，回调里读到的已经是新值。
+- 「不同意」的提示用 `MsgUtil.showMsgLong(...)`：默认路径是 sticky `SnackEvent`，
+  闪屏（`class SplashActivity : Activity()`，**不是 BaseActivity**）不会消费它，
+  下一个 `BaseActivity` 在 `onResume`（`BaseActivity.kt:355-361`）取出来显示并
+  `removeStickyEvent`（`MsgUtil.java:121/125`）→ 刚好弹一次、弹在新页面上。**是有意为之，别改成 Toast。**
+- 新增文案：`privacy_consent_title` / `privacy_consent_message`（分四条写明：匿名统计、崩溃上报、
+  反馈不受影响、同意与否的后果；明确「不含账号、Cookie、位置，也不读 `ANDROID_ID` 等设备唯一标识，
+  一天最多一次」）/ `privacy_consent_agree` / `privacy_consent_decline` /
+  `privacy_consent_scroll_hint` / `privacy_consent_declined`。
+- **老用户不需要迁移**：`getInt(key, 0)` 在键不存在时返回 0，正好等价于「从未同意」，
+  于是升级后也会被问一次——这恰好就是「再同意一遍」想要的效果。
+
+**验证**：新增 `app/src/test/java/com/RobinNotBad/BiliClient/api/TerminalPrivacyConsentTest.kt`
+**7 例全绿**，关键断言是「全新安装即便两个开关默认 true 也不上报」
+和「点不同意后人为把 pref 置 true 仍不上报」。
+`:app:assembleDebug` + `:app:testDebugUnitTest` → BUILD SUCCESSFUL（布局改造前后各跑一轮）。
+真机回归清单里应再加一条：**全新安装/清数据后首次启动必须弹一次，点不同意能正常进主界面且抓包无请求**。
+
+---
+
+## 四十二、26.10.09：管理控制台 WebUI（遥测 / 反馈 / 崩溃 / 公告四合一）+ 服务端并发加固
+
+### 42.1 需求与决策
+
+用户原话：「能搞个webui吗，一边遥测一边发公告，搞新的地址和证书」，
+随后补一句「遥测/反馈/公告都放在一个webui里，对了，你就搞个python扛得住吗。。？」
+
+决策：域名 `console.zsapp.asia`（泛解析 `*.zsapp.asia` 已指向本机，**不需要另加 DNS 记录**）；
+登录用**登录页 + HttpOnly 会话 Cookie**，旧 `GET /admin?token=…` 保留作兜底。
+
+容量结论（回应用户的质疑）：`telemetry/ping` 每安装**每天最多 1 次**（客户端写回日期），
+公告每次启动 1 次差量 —— 日均请求 ≈ 2~3 × 日活。1 万日活 ≈ 0.3 req/s 均值、约 1 req/s 高峰；
+10 万日活 ≈ 3 req/s 均值、25~30 req/s 高峰。单 uvicorn worker 处理「小 JSON + 一次小写入」
+的天花板在几百 req/s，**瓶颈不是 Python 而是每次 commit 的 fsync**。所以真正要做的是下面两条加固。
+
+### 42.2 服务端并发加固（两个真实隐患，都已修）
+
+1. **阻塞 I/O 跑在事件循环上**。`telemetry_ping` / `feedback_submit` / `upload_stack`
+   都是 `async def`（因为要 `await request.body()`），却在里面直接 `conn.execute(...)` 调阻塞的 sqlite3。
+   平时亚毫秒没事，但一旦撞锁走 `busy_timeout=15000`，**整个事件循环会卡最多 15 秒**，
+   连 `/terminal/health` 都不响应。
+   修法：把所有库访问抽成同步函数 `_db_ping` / `_db_feedback` / `_db_crash` / `_db_announcement_list` /
+   `_db_announcement_add` / `_db_announcement_update` / `_db_announcement_delete`，
+   由 `from starlette.concurrency import run_in_threadpool` 调度。**api 层不再出现 `connect()`。**
+2. **`connect()` 没设 `synchronous`** → WAL 模式下默认仍是 `FULL` → 每次 commit 都 fsync。
+   改成 `PRAGMA synchronous=NORMAL`（WAL 下掉电最多丢最后一个事务，不会坏库），写吞吐提升数倍。
+
+### 42.3 会话认证（无状态签名 Cookie）
+
+- `_session_value(exp)` = `<exp>.<hmac_sha256(ADMIN_TOKEN, exp)>`，`exp = now + 7 天`。
+  **不存服务端状态**：进程重启会话不失效，改口令则所有会话立刻失效。
+- `_session_valid(request)` 拆出 `exp` 后先判过期、再用 `hmac.compare_digest` 比签名。
+- `_check_token(request, token)` 扩展成三种凭据任一通过：URL 里的 `token` / `X-Admin-Token` 头 /
+  会话 Cookie。**旧路径因此完全不用改**，12 处既有调用点一次都没动。
+- Cookie 属性：`HttpOnly; Secure; SameSite=strict; Max-Age=604800; Path=/`。
+- **CSRF 两道独立防线**：`SameSite=strict` 让跨站请求带不上 Cookie；状态变更接口额外要求
+  `Content-Type: application/json`（跨站表单只能发 urlencoded/plain，必须先过 CORS 预检），
+  不满足直接 415。登录接口另有 `rate_limit(ip,"login",20,3600)` 防爆破。
+- **踩坑**：本地 selftest 一开始用 `TestClient(api.app)` 默认的 `http://testserver`，
+  带 `Secure` 的 Cookie 在 http 下**不会被回发**，导致「登录成功但后续全 403」。
+  改成 `TestClient(api.app, base_url="https://console.test")` 才对 —— 反过来说，
+  这个假失败恰好证明了 `Secure` 确实生效了。
+
+### 42.4 WebUI 前端（`server/console.html`）
+
+单文件、**零外部依赖**：不引 CDN、不引图表库。理由是国内访问 jsdelivr / unpkg 不稳，
+后台不该因为外网抖动就打不开。折线图是手写内联 SVG（柱=活跃设备、线=新增安装），
+悬停数值用原生 `<title>`，不需要任何 JS 库。四个页签：公告 / 反馈 / 崩溃 + 顶部遥测卡片与图表。
+
+- 服务端用 `GET /` 原样吐出该文件，**带 mtime 缓存**：改前端只要覆盖文件，不用重启进程。
+- 会话失效（403/401）时 `location.reload()` 直接回登录页。
+- 所有服务端文本过 `esc()`；公告正文用 `white-space:pre-wrap` 保留换行但绝不 `innerHTML` 原始串。
+- 自动刷新只刷遥测卡片与图表（60s 一次），**不覆盖公告输入框内容**。
+- 登录页是服务端常量 `CONSOLE_LOGIN_HTML`（比 WebUI 短得多，没必要单独开文件）。
+
+### 42.5 新增接口
+
+`GET /admin/api/announcements`（返回**内部 id**，因为它要回传给 update/delete；
+客户端看到的仍是 `ANN_ID_OFFSET + 内部 id`）、`POST /admin/api/announcement`、
+`POST /admin/api/announcement/update`（`{id, pinned?, active?}`）、`POST /admin/api/announcement/delete`。
+`GET /admin/api/stats` 顺带扩了 `week_active` / `today_new` / `feedback_pending` / `crash_pending` /
+`brands`，`daily` 每条多了 `new_installs`（**纯增量，旧字段一个没改**）。
+
+### 42.6 nginx + 证书
+
+新 vhost `server/nginx/console.zsapp.asia.conf`：80 + 443、HTTP 跳 HTTPS、
+`/terminal/` 直接 `return 404`（控制台域名不开放客户端接口）、其余全部反代 `127.0.0.1:8788`。
+安全头：HSTS、`X-Content-Type-Options`、`X-Frame-Options DENY`、`Referrer-Policy: no-referrer`，
+以及一条很紧的 CSP（页面零外部资源，所以允许 inline 即可）。
+
+**签证书的坑**：证书还没签出来时 vhost 不能引用证书文件，得先用一个只 `listen 80` 的引导配置。
+第一版引导配置写了 `location / { return 404; }` 却**没给 `/.well-known/` 单独开口**，
+于是 acme 的 http-01 挑战拿到 404（`Invalid response from http://console.zsapp.asia/.well-known/acme-challenge/…: 404`）。
+补上 `location ^~ /.well-known/ { root /www/wwwroot/console.zsapp.asia; allow all; }` 后签发成功，
+再换成完整配置。`acme.sh --install-cert` 的 `--reloadcmd "nginx -s reload"` 保证续签后自动生效。
+
+### 42.7 备份与探活
+
+`server/backup.sh` + cron `7 4 * * *`：用 `sqlite3 .backup`（**不是 `cp`** —— WAL 模式下
+最近写入还在 `-wal` 里，直接拷会丢数据），存 `/opt/rebiliterminal-api/backups/data-<YYYYMMDD>.db`，
+保留 14 天，并校验备份里的表数量（少于 5 张就非零退出）。
+另加 `*/10` 的探活 cron，失败往 `health.log` 追加一行 —— **只留痕，不告警**，
+要真告警还得接通知渠道（当前没有）；服务本身有 systemd `Restart` 兜底。
+
+### 42.8 验证
+
+- 本地 `server/selftest.py`（临时 sqlite + 临时口令，**不碰生产数据**）：**39 项断言全通过**，
+  覆盖未登录 403、错误口令 401、正确口令 303 + Cookie 三个属性、会话伪造/过期被拒、
+  旧 `?token=` 仍可用、表单 Content-Type 被拒 415、公告增删改 + 客户端可见性 +
+  **停用后客户端拉不到**、遥测三次 ping 只算 1 安装 1 日活、反馈/崩溃入库与列表可读、退出清 Cookie。
+- 公网端到端（从本机直接打，`--noproxy '*'` 绕过本机那个没启动的 10808 代理）：
+  `https://console.zsapp.asia/` 200 + 证书校验通过 + 5 个安全头齐全；
+  登录 401/303 与 `set-cookie: rbt_console=…; HttpOnly; Max-Age=604800; Path=/; SameSite=strict; Secure`；
+  带 Cookie 取 stats `code=0`，无 Cookie 403；发布公告 `{"code":0,"id":2,"public_id":1000000002}`
+  → **`rebiliterminal.zsapp.asia/terminal/announcement/get_list` 立刻能拉到** → 置顶/停用/删除全部 `code=0`，
+  停用后客户端只剩 1 条，重复删除 404；`console…/terminal/health` 404、`http→https` 301、
+  旧 `/admin?token=` 200；WebUI HTML 21491 字节、外部资源引用 **0** 个、全部关键 DOM 节点齐备。
+  验证用的遥测行与测试公告**已从生产库清掉**，`sqlite_sequence` 复位。
+- **PowerShell 传 JSON 的坑**：`curl.exe --data-raw '{"title":"中文…"}'` 里含中文时会被 Windows
+  控制台代码页搞坏 → 服务端 `json.loads` 失败 → `read_json` 返回 `{}` → 报「标题和正文都不能为空」。
+  正确姿势是**把请求体写成无 BOM 的 UTF-8 文件，再用 `--data-binary @file`**。
+
+### 42.9 遗留
+
+- 服务端 **没有告警渠道**（只有 systemd `Restart` + `health.log` 留痕）。
+- 控制台目前**只有口令登录**，没有 TOTP / IP 白名单；口令泄露 = 全部后台能力。
+- WebUI **没有真机/真浏览器回归记录**（环境里没有浏览器），只验证了 HTML 结构与接口联通。
+

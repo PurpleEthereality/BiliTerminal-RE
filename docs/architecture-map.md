@@ -72,11 +72,16 @@ BiliTerminal.onCreate()
         ↓
 SplashActivity（LAUNCHER，typewriter 动画）
    ├─ Debug 包先要悬浮窗权限（UETool）
-   └─ proceedSplashFlow()
-        ├─ 未完成初始设置 → SetupUIActivity
-        ├─ 已完成 → SharedPreferencesUtil.loadMenuEnabled().firstOrNull()
-        │            → MenuActivity.btnNames[key].second  ← 用"第一个启用的菜单项"当首屏
-        └─ 异步：App token / Cookie 刷新、CookiesApi.checkCookies、AppInfoApi.check
+   └─ proceedSplashFlowWithPrivacyGate()
+        ├─ needsPrivacyConsent() → TerminalDialog.choice 弹一次隐私说明
+        │    （同意/不同意都继续启动，不拦人；不同意 = 关掉两个上报开关）
+        └─ proceedSplashFlow()
+             ├─ 未完成初始设置 → SetupUIActivity
+             ├─ 已完成 → SharedPreferencesUtil.loadMenuEnabled().firstOrNull()
+             │            → MenuActivity.btnNames[key].second  ← 用"第一个启用的菜单项"当首屏
+             └─ 异步：App token / Cookie 刷新、CookiesApi.checkCookies、AppInfoApi.check
+                       + TerminalApi.checkAnnouncement()（自建公告差量）
+                       + TelemetryReporter.reportIfNeeded()（匿名日活，一天一次）
 ```
 
 **改功能注意**：
@@ -242,7 +247,7 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 
 三条要求，改动时别破坏：
 
-1. **不新增明文接口**。`AppInfoApi` 原先 4 处 `http://api.biliterminal.cn` 已全部改为 `https://`（实测该域 https 正常返回 200）。新的自建接口一律用 https。
+1. **不新增明文接口**。`AppInfoApi` 原先 4 处 `http://api.biliterminal.cn` 已全部改为 `https://`（实测该域 https 正常返回 200）。新的自建接口一律用 https（26.10.09 新增的 `rebiliterminal.zsapp.asia` 就是 https，见 §6.5）。
 2. **`AndroidManifest.xml` 不再全局开 `usesCleartextTraffic`**，改走
    `res/xml/network_security_config.xml`：`base-config` 禁止明文，只对 `bilibili.com` /
    `hdslb.com` / `bilivideo.com` / `afdiancdn.com` 放行。之所以不能一刀切禁明文，是因为解析层
@@ -258,6 +263,87 @@ CenterThreadPool.supplyAsyncWithLiveData { fetch...().getOrThrow() }
 > 组件导出面已收敛：除 `SplashActivity`（LAUNCHER）与 `GetIntentActivity`（外链/分享，
 > 二者有 `<intent-filter>`）外，其余 Activity 一律 `android:exported="false"`。
 > **新增 Activity 默认写 false**，只有确实要被外部应用拉起时才开，并说明理由。
+
+### 6.5 自建反馈 / 公告 / 匿名统计（26.10.09 新增，动这一块之前必读）
+
+这条链路和上游 `api.biliterminal.cn` **完全独立**：域名、服务端、code 约定、已读计数都是分开的，
+两者并存、互不覆盖。
+
+**服务端**（在本项目自己的 HK 服务器上，不在本仓库运行时里）
+- 代码 `server/rebiliterminal_api.py`（FastAPI + SQLite，无 ORM）、`server/console.html`（管理控制台前端）、
+  `server/selftest.py`、`server/backup.sh`、`server/requirements.txt`、`server/rebiliterminal-api.service`、
+  `server/nginx/rebiliterminal.zsapp.asia.conf`、`server/nginx/console.zsapp.asia.conf`、`server/README.md`
+- 部署形态：`/opt/rebiliterminal-api/`，systemd 单元 `rebiliterminal-api`，uvicorn 监听 `127.0.0.1:8788`。
+  **两个域名共用一个进程**，靠 nginx 分工：
+  - `https://rebiliterminal.zsapp.asia/terminal/` 只给客户端用（证书走 acme.sh，非宝塔站点表）
+  - `https://console.zsapp.asia/` 是管理控制台，`/terminal/*` 在这里返回 404
+  数据在 `/opt/rebiliterminal-api/data.db`；改服务端代码后要 `systemctl restart rebiliterminal-api`，
+  **只改 `console.html` 不用重启**（服务端按 mtime 缓存，覆盖文件即可生效）；改 nginx 后
+  `nginx -t && nginx -s reload`。
+- 后台入口有三个，凭据任一即可：WebUI 登录（`console.zsapp.asia`，口令换 HttpOnly 会话 Cookie，
+  前端零外部依赖、手写内联 SVG 图表）、旧的 `GET /admin?token=<REBILITERMINAL_ADMIN_TOKEN>` 纯 HTML 看板、
+  或 `X-Admin-Token` 头。**WebUI 的 CSRF 防线**是 `SameSite=strict` + 状态变更接口强制
+  `Content-Type: application/json`（两道互相独立）。
+- 接口（成功一律 `code=0`，HTTP 恒 2xx）：
+  - `GET /terminal/health`
+  - `GET /terminal/announcement/get_list[?from=<id>]` → `{code:0,data:[{id,ctime,title,content}]}`。
+    `id` 是自增 id **+ 1000000000**，故意和上游公告 id 空间错开；
+    不带 `from` 是列表页（倒序），带 `from` 是启动弹窗的差量（只回 `id>from`，正序）。
+  - `POST /terminal/telemetry/ping` ← `{install_id, version_code, version_name, is_beta, sdk, brand, device, abi}`
+  - `POST /terminal/feedback/submit` ← `{install_id, category, content, contact?, mid?, version_code, version_name, sdk, brand, device}`
+  - `POST /terminal/upload/stack` ← 崩溃载荷（见下）
+
+**客户端**
+- `api/TerminalApi.java` 是这条链路唯一的出口：`BASE_URL = https://rebiliterminal.zsapp.asia/terminal`。
+  请求与解析分离——`buildPingPayload` / `buildFeedbackPayload` / `buildCrashPayload` /
+  `parseAnnouncements` / `mergeAnnouncements` 都是可在 JVM 上跑的纯函数，
+  单测在 `app/src/test/java/com/RobinNotBad/BiliClient/api/TerminalApiTest.kt`。**改字段先改纯函数和测试。**
+- `util/TelemetryReporter.kt`：启动时一天最多 ping 一次，**只有请求成功才写回日期**（断网启动不浪费当天机会）。
+- `util/CrashReporter.kt` + `util/CrashTrail.kt`：`ErrorCatch` 在崩溃瞬间把 `exception/message/thread/trail/uptime`
+  塞进 Intent → `CatchActivity`（独立进程）在 `isCrashReportAutoEnabled()` 时自动上报，
+  **与上游那个手动上传按钮互相独立**（自动上报故意不套上游的「已登录 + 异常类型白名单」两道限制，
+  否则最需要看的样本恰好会被挡掉）。
+- 关于页 / 设置页入口：`activity/FeedbackActivity.kt` + `res/layout/activity_feedback.xml`。
+  入口挂在**关于页**（`activity_setting_about.xml` 的 `@id/feedback_entry`）与设置「关于与帮助」
+  分组（`SettingGroupActivity.buildAboutGroup`）。挂关于页是因为**菜单结构对老用户是缓存的，新分组不会自动出现**。
+- **隐私同意闸门**（26.10.09 二次确认）：启动时 `SplashActivity.proceedSplashFlowWithPrivacyGate()`
+  先看 `TerminalApi.needsPrivacyConsent()`，为真就弹一次 `TerminalDialog.choice`（`setCancelable(false)`，
+  两条路都继续启动，不拦人）。状态由两个键**分开**表示：
+  `SettingsKeys.PRIVACY_CONSENT_VERSION`（同意到哪个版本 → 决定**能不能上报**）与
+  `SettingsKeys.PRIVACY_PROMPTED_VERSION`（表过态到哪个版本 → 决定**还要不要弹**）。
+  分开的理由：「不同意」也是一次回答，不该每次启动再问；而同意版本号保持原值，
+  就自然实现了「App 照常用，只是不上报」。于是：
+  `isTelemetryEnabled() = hasPrivacyConsent() && getBoolean(TELEMETRY_ENABLE, true)`，
+  `isCrashReportAutoEnabled()` 同理——**没同意就绝不上报这件事不依赖任何调用点自觉**，闸门收在 `TerminalApi` 里。
+  设置页里用户**主动打开**开关时回调 `recordPrivacyConsentFromSettings()`（打开即重新同意，
+  且只记版本号、不碰另一个开关）。**改隐私文案就要把 `TerminalApi.PRIVACY_VERSION` +1**，
+  否则老用户不会被再问一次。单测：`app/src/test/java/com/RobinNotBad/BiliClient/api/TerminalPrivacyConsentTest.kt`。
+
+**红线（改这里时不要踩）**
+1. **绝不复用带 Cookie 的重载**。`NetWorkUtil.getJson(String)` / `postJson(String,String)` 单参重载用的是
+   `webHeaders`，第一项就是 `Cookie`，会把 SESSDATA 发到自建服务器。自建请求必须显式传
+   `TerminalApi.headers()`（是 `AppInfoApi.customHeaders` 的**副本**，加 `X-Install-Id` 后使用；
+   用副本是为了不污染上游那份共享静态列表）。
+2. **隐私承诺与开关必须一致**。加遥测时同步改了两处用户可见文案：
+   `strings.xml` 的 `about_to_uncle` 与 `text_setup_introduction`（原本写的是「不会收集任何…隐私信息」），
+   并且加了一道**可执行的**同意闸门（见上一条「隐私同意闸门」，`TerminalApi.PRIVACY_VERSION`）。
+   三个开关 `SettingsKeys.TELEMETRY_ENABLE` / `CRASH_REPORT_AUTO` / `FEEDBACK_ATTACH_MID`
+   默认分别是 `true` / `true` / `false`，都能在设置里关。**以后再往上报载荷里加字段，
+   先把 `about_to_uncle`、`text_setup_introduction`、`privacy_consent_message`、以及三条
+   `desc_setting_*` 说明一起改掉，并把 `PRIVACY_VERSION` +1。**
+3. **账号 ID 默认不带**。`mid` 只在 `FEEDBACK_ATTACH_MID` 打开时才有值，关掉时传 `0`
+   （服务端那条记录里根本不会有这个值，不是「传了但不显示」）。
+4. `install_id` 是首次调用 `getInstallId()` 时生成的随机 UUID（`SettingsKeys.TELEMETRY_INSTALL_ID`），
+   与账号无关、不读 `ANDROID_ID` 或任何设备指纹，卸载重装即换新。
+5. 启动链路里 `TerminalApi.checkAnnouncement()` 与 `TelemetryReporter.reportIfNeeded()` 都**各自包了异常**：
+   自建服务器挂了不能影响启动（`SplashActivity` 那一整段本来就有「任何失败都退化成进本地列表页」的约定）。
+6. **服务端别把 sqlite3 直接写在 `async def` 里**。业务函数是 `async def`（要 `await request.body()`），
+   但 sqlite3 是阻塞库 —— 所有库访问都走 `run_in_threadpool`（`server/rebiliterminal_api.py` 里
+   `_db_*` 那批同步函数就是干这个的）。否则一旦撞上 `busy_timeout=15000`，整个事件循环卡 15 秒，
+   连健康检查都不响应。同理 `connect()` 里的 `PRAGMA synchronous=NORMAL` 是写吞吐的关键，别删。
+7. **控制台前端不引任何外部资源**（无 CDN、无图表库），否则国内外网一抖后台就打不开；
+   口令只出现在 `POST /console/login` 的表单里，会话 Cookie 是 `HttpOnly`，
+   前端 JS 读不到、URL 里也不带。旧 `?token=` 入口保留但只作兜底。
 
 ---
 
@@ -968,6 +1054,7 @@ TTF/OTF/TTC，应用把它**拷进私有目录**（`filesDir/custom_font/custom_
 | `AppTokenRefreshApi` | access_token 续期 | `refreshAppToken` |
 | `ConfInfoApi` | **WBI 签名**（全 api 层依赖） | `signWBI`、`getWBIMixinKey`、`sortUrlParams` |
 | `AppInfoApi` | 公告/崩溃上报/赞助/检查更新 | `check`、`getAnnouncementList`、`uploadStack`、`getSponsors` |
+| `TerminalApi` | **自建**服务器：公告/反馈/匿名统计/崩溃上报（26.10.09 新增，见 §6.5） | `ping`、`submitFeedback`、`uploadCrash`、`checkAnnouncement`、`getOwnAnnouncementList`、`loadMergedAnnouncements` |
 | `BilibiliIDConverter` | av/bv 互转（纯函数） | ~~`bvtoaid`、`aidtobv`~~ **26.09.11 已删除**（全工程 0 调用） |
 
 ### 网络出口的 3 个例外
